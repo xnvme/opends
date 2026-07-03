@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-3-Clause
+doc: |
+  OpenDS Dataset Setup
+  ====================
+
+  Populates the lmcacheish reference dataset under
+  config.test.mount_point, mirroring how aisio's tasks/setup_dataset.yaml
+  populates filesize8gib, tiktokish, and imagenetish during target
+  provisioning. One-time: the generation step is idempotent and exits
+  early once the layout holds exactly N files.
+
+  Runs over the kernel nvme path (bind + mount). The bench suites read
+  the same files later through whichever mount their backend uses.
+
+steps:
+  - name: bind_nvme
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+
+  - name: mount
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: gen_lmcache
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/gen_lmcache_dataset.sh' '{{ config.test.mount_point }}/lmcacheish' 1820 14680064

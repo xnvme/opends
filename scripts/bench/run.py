@@ -10,8 +10,8 @@ opends/t<t>_q<q>/ with the aisio knobs passed through the environment,
 and the stack is torn down. Restrict with --suite, --mode, --dataset.
 
 aisio's tasks/setup_dataset.yaml must have populated the reference datasets
-(filesize8gib, tiktokish, imagenetish) under config.test.mount_point;
-the suites' gen_lmcache step generates lmcacheish.
+(filesize8gib, tiktokish, imagenetish) under config.test.mount_point, and
+scripts/bench/setup_dataset.py must have populated lmcacheish (both one-time).
 """
 
 import argparse

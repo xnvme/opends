@@ -20,8 +20,9 @@ doc: |
     * scripts/build.py has built OpenDS on the target.
     * aisio's tasks/setup_dataset.yaml has run on the target, formatting
       the NVMe with XFS and populating the first three reference datasets
-      (filesize8gib, tiktokish, imagenetish) under
-      config.test.mount_point (the gen_lmcache step generates lmcacheish).
+      (filesize8gib, tiktokish, imagenetish) under config.test.mount_point.
+    * OpenDS's tasks/setup_dataset.yaml (scripts/bench/setup_dataset.py) has
+      populated lmcacheish.
 
   bench_meta records the build commit + target platform to
   artifacts/meta.json; each bench_run stashes filperf's verbatim
@@ -39,10 +40,6 @@ steps:
   - name: homi_stack_up
     run: |
       '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
-
-  - name: gen_lmcache
-    run: |
-      '{{ config.test.repo_path }}/tasks/steps/gen_lmcache_dataset.sh' '{{ config.test.mount_point }}/lmcacheish' 1820 14680064
 
   - name: opends_filesize8gib
     uses: bench_run
