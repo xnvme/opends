@@ -17,6 +17,7 @@ passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
 
 import json
 import logging as log
+import os
 import re
 from pathlib import Path
 
@@ -46,13 +47,15 @@ def _parse_summary(text):
     return out
 
 
-def _append_record(cijoe, args, log_name, text):
+def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
+                   cpu_mask):
     artifacts = Path(cijoe.output_path) / "artifacts"
     meta_path = artifacts / "meta.json"
     if not meta_path.is_file():
         log.warning("no meta.json; skipping history record")
         return
     meta = json.loads(meta_path.read_text())
+    opends = args.backend == "opends"
     env_keys = ("hostname", "kernel", "cuda", "nvme_bdf", "nvme_model",
                 "gpu_model", "hugepages_2m")
     record = {
@@ -70,6 +73,9 @@ def _append_record(cijoe, args, log_name, text):
             "cold_cache": True,
             "batches": args.batches,
             "batch_size": args.batch_size,
+            "io_threads": int(io_threads) if opends and io_threads else None,
+            "queue_depth": int(queue_depth) if opends and queue_depth else None,
+            "cpu_mask": cpu_mask if opends and cpu_mask else None,
             "n": 1,
         },
         "result": _parse_summary(text),
@@ -77,6 +83,24 @@ def _append_record(cijoe, args, log_name, text):
     }
     with (artifacts / "history.jsonl").open("a") as f:
         f.write(json.dumps(record) + "\n")
+
+
+def _batches_override(data_dir, default):
+    """Per-dataset batches override from OPENDS_BENCH_BATCHES ("ds=N,ds=N").
+
+    Returns None (fails the step) on a matching entry whose count is not
+    a positive integer.
+    """
+    spec = os.environ.get("OPENDS_BENCH_BATCHES", "")
+    for item in spec.split(","):
+        ds, _, n = item.partition("=")
+        if ds.strip() == data_dir and n.strip():
+            if not n.strip().isdigit() or int(n) == 0:
+                log.error(f"OPENDS_BENCH_BATCHES: {item.strip()!r} is not "
+                          "<dataset>=<positive integer>")
+                return None
+            return int(n)
+    return default
 
 
 def add_args(parser):
@@ -89,8 +113,17 @@ def add_args(parser):
 
 
 def main(args, cijoe):
+    args.batches = _batches_override(args.data_dir, args.batches)
+    if args.batches is None:
+        return 1
+    io_threads = os.environ.get("OPENDS_AISIO_IO_THREADS")
+    queue_depth = os.environ.get("OPENDS_AISIO_QUEUE_DEPTH")
+    cpu_mask = os.environ.get("OPENDS_AISIO_CPU_MASK")
+    knobs = (f" io_threads={io_threads} queue_depth={queue_depth}"
+             f" cpu_mask={cpu_mask}"
+             if args.backend == "opends" else "")
     print(f"--- {args.backend} {args.data_dir} {args.mode} "
-          f"(batches={args.batches} batch_size={args.batch_size}) ---",
+          f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
           flush=True)
     bdf = cijoe.getconf("test.nvme_bdf")
     env = ""
@@ -118,6 +151,12 @@ def main(args, cijoe):
             f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
             f"OPENDS_HOMI_MNT='{mnt}' "
         )
+        if io_threads:
+            env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
+        if queue_depth:
+            env += f"OPENDS_AISIO_QUEUE_DEPTH='{queue_depth}' "
+        if cpu_mask:
+            env += f"OPENDS_AISIO_CPU_MASK='{cpu_mask}' "
     else:
         target = bdf
 
@@ -145,5 +184,6 @@ def main(args, cijoe):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(state.output())
     log.info(f"wrote {out}")
-    _append_record(cijoe, args, out.name, state.output())
+    _append_record(cijoe, args, out.name, state.output(), io_threads,
+                   queue_depth, cpu_mask)
     return 0

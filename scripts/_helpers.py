@@ -9,6 +9,18 @@ CONFIGS = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
            "-c", "configs/test.toml"]
 
 
+def iter_history(in_dirs):
+    """Yield (base_dir, history.jsonl path) under each dir, live legs only.
+
+    Skips cijoe-archive/ backups so stale snapshots don't double-count.
+    """
+    for d in in_dirs:
+        d = Path(d)
+        for p in sorted(d.rglob("history.jsonl")):
+            if "cijoe-archive" not in p.parts:
+                yield d, p
+
+
 def fail(msg):
     """Print a bold-red FAILED banner to stderr.
 
@@ -33,17 +45,19 @@ def ok(msg):
         sys.stdout.write(f"\n{banner}\n")
 
 
-def run_cijoe(task, *steps, out=None):
+def run_cijoe(task, *steps, out=None, check=True):
     """Run a cijoe task with the standard configs.
 
-    Output dir defaults to cijoe-output-<task-stem>. On nonzero rc, prints
-    a FAILED banner and exits; returns silently on success.
+    Output dir defaults to cijoe-output-<task-stem>. Returns the rc. When
+    check is true, a nonzero rc prints a FAILED banner and exits; pass
+    check=False to keep going (e.g. so a sweep still runs teardown).
     """
     out = out or f"cijoe-output-{Path(task).stem}"
     rc = subprocess.run(
         ["cijoe", "-m", "-s", "-o", out, *CONFIGS, task, *steps],
         cwd=ROOT,
     ).returncode
-    if rc:
+    if rc and check:
         fail(f"{task} (rc={rc})")
         sys.exit(rc)
+    return rc

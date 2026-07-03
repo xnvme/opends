@@ -28,7 +28,7 @@ def _steps_for(backends, tests):
     """Build the cijoe step list for the requested (backend, test) matrix.
 
     Returns an empty list (run every step in test.yaml) when the full
-    matrix is requested, matching run_bench.py's convention.
+    matrix is requested, matching bench/run.py's convention.
     """
     if set(backends) == set(BACKENDS) and set(tests) == set(ALL_TESTS):
         return []
