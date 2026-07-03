@@ -31,7 +31,7 @@ rc = subprocess.run(
     ["rsync", "-az", "--delete",
      "--filter=:- .gitignore",
      "--exclude=.git/",
-     "--exclude=cijoe-output/",
+     "--exclude=cijoe-output*/",
      "--exclude=cijoe-archive/",
      f"{root}/", f"{target}:{dest}/"],
 ).returncode
