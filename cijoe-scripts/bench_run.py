@@ -5,7 +5,7 @@ The artifact is the verbatim filperf output (CSV plus `--summary`
 block) written to
 artifacts/<backend>_<data_dir>[_async].log (the `_async` suffix is
 only appended when `mode: async`). Parsing is deferred to
-scripts/bench_report.py so the cijoe step stays oblivious to
+scripts/bench/report.py so the cijoe step stays oblivious to
 filperf's exact output shape.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is

@@ -21,7 +21,7 @@ doc: |
   bench_meta records the build commit + target platform to
   artifacts/meta.json; each bench_run stashes filperf's verbatim
   stdout to artifacts/<backend>_<data_dir>.log for downstream
-  parsing by scripts/bench_report.py.
+  parsing by scripts/bench/report.py.
 
 steps:
   - name: cpu_governor
