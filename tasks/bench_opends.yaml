@@ -75,23 +75,6 @@ steps:
       batch-size: 26
       mode: async
 
-  - name: opends_imagenetish
-    uses: bench_run
-    with:
-      backend: opends
-      data-dir: imagenetish
-      batches: 300
-      batch-size: 4096
-
-  - name: opends_imagenetish_async
-    uses: bench_run
-    with:
-      backend: opends
-      data-dir: imagenetish
-      batches: 300
-      batch-size: 4096
-      mode: async
-
   - name: opends_lmcacheish
     uses: bench_run
     with:
@@ -107,6 +90,23 @@ steps:
       data-dir: lmcacheish
       batches: 70
       batch-size: 26
+      mode: async
+
+  - name: opends_imagenetish
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
+
+  - name: opends_imagenetish_async
+    uses: bench_run
+    with:
+      backend: opends
+      data-dir: imagenetish
+      batches: 300
+      batch-size: 4096
       mode: async
 
   - name: homi_stack_down
