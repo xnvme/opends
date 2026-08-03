@@ -661,6 +661,26 @@ out:
 }
 
 static void
+release_gate(struct opends_stream *s, uint32_t seq)
+{
+	__atomic_store_n(s->gate, 2 * seq + 1, __ATOMIC_RELEASE);
+}
+
+static void
+park_gate_cb(void *arg)
+{
+	struct file_op *op = arg;
+	struct opends_stream *s = op->u.async.opends_stream;
+	uint32_t seq = op->u.async.seq;
+
+	__atomic_store_n(s->gate, 2 * seq, __ATOMIC_RELEASE);
+
+	while ((int32_t)(__atomic_load_n(s->gate, __ATOMIC_ACQUIRE) -
+	                 (2 * seq + 1)) < 0)
+		;
+}
+
+static void
 complete_read_op(struct io_worker *w, struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
@@ -670,7 +690,7 @@ complete_read_op(struct io_worker *w, struct file_op *op)
 		struct opends_stream *s = op->u.async.opends_stream;
 		*op->u.async.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
-		*s->gate = 2 * op->u.async.seq + 1;
+		release_gate(s, op->u.async.seq);
 		op->state = FILE_OP_FREE;
 		return;
 	}
@@ -711,7 +731,7 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 
 	if (op->mode == FILE_OP_ASYNC) {
 		*op->u.async.bytes_read_p = n;
-		*op->u.async.opends_stream->gate = 2 * op->u.async.seq + 1;
+		release_gate(op->u.async.opends_stream, op->u.async.seq);
 	} else {
 		op->u.sync.result = n;
 	}
@@ -743,14 +763,17 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 
 /* Service a PENDING async op: dispatch it once its stream gate has opened,
  * otherwise leave it for a later pass. Returns true while still gated. The gate
- * is a free-running +1 counter (the submitter's WriteValue then this thread's
- * release each tick it by one), so compare with serial/cyclic arithmetic to
- * match the device-side GEQ wait, keeping the sequence wrap-safe. */
+ * is a free-running +1 counter (the submitter's arrival publish then this
+ * thread's release each tick it by one), so compare with serial/cyclic
+ * arithmetic to match the device-side GEQ wait, keeping the sequence
+ * wrap-safe. */
 static bool
 poll_async_pending(struct io_worker *w, struct file_op *op)
 {
-	if ((int32_t)(*op->u.async.opends_stream->gate - 2 * op->u.async.seq) <
-	    0)
+	uint32_t gate = __atomic_load_n(op->u.async.opends_stream->gate,
+	                                __ATOMIC_ACQUIRE);
+
+	if ((int32_t)(gate - 2 * op->u.async.seq) < 0)
 		return true;
 	dispatch_pending(w, op);
 	return false;
@@ -830,6 +853,8 @@ async_setup(struct driver *d)
 	if (ds_accel->ctx_get(&d->accel_ctx) < 0)
 		return -1;
 
+	/* Mapped so the device-side gate can address the word; the host
+	 * callback path uses the host view only. */
 	void *host = NULL;
 	ds_accel_devptr_t dptr = 0;
 	if (ds_accel->host_alloc_mapped(STREAM_WORDS_BYTES, &host, &dptr) < 0)
@@ -839,11 +864,8 @@ async_setup(struct driver *d)
 	d->stream_words_dptr = dptr;
 
 	d->workers = calloc((size_t)d->n_io_threads, sizeof(*d->workers));
-	if (!d->workers) {
-		ds_accel->host_free(d->stream_words_host);
-		d->stream_words_host = NULL;
-		return -1;
-	}
+	if (!d->workers)
+		goto fail_words;
 
 	d->stop = false;
 	int started = 0;
@@ -893,6 +915,7 @@ fail:
 	}
 	free(d->workers);
 	d->workers = NULL;
+fail_words:
 	ds_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
 	return -1;
@@ -908,8 +931,9 @@ async_teardown(struct driver *d)
 	for (int i = 0; i < d->n_io_threads; i++)
 		pthread_join(d->workers[i].thread, NULL);
 
-	for (int i = 0; i < d->n_streams; i++)
+	for (int i = 0; i < d->n_streams; i++) {
 		stream_bounce_free(&d->streams[i], d->xdev);
+	}
 
 	for (int i = 0; i < d->n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
@@ -925,10 +949,8 @@ async_teardown(struct driver *d)
 	free(d->workers);
 	d->workers = NULL;
 
-	if (d->stream_words_host) {
-		ds_accel->host_free(d->stream_words_host);
-		d->stream_words_host = NULL;
-	}
+	ds_accel->host_free(d->stream_words_host);
+	d->stream_words_host = NULL;
 
 	d->async_ready = false;
 }
@@ -980,6 +1002,27 @@ read_env_config(struct driver *d)
 
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
+
+	/* The tail mode picks the async gate mechanism, and the vendor ops it
+	 * drives are required only for that mode (see ds_accel.h). A partial
+	 * port may leave the other mode's ops NULL; fail open instead of
+	 * crashing on the first submission. */
+	if (d->assume_aligned_only && !ds_accel->launch_host_func) {
+		fprintf(stderr,
+		        "aisio: %s=1 needs launch_host_func, which the vendor "
+		        "ops table does not provide\n",
+		        ENV_ASSUME_ALIGNED_ONLY);
+		return -EINVAL;
+	}
+	if (!d->assume_aligned_only && (!ds_accel->stream_write_value32 ||
+	                                !ds_accel->stream_wait_value32_geq)) {
+		fprintf(stderr,
+		        "aisio: the vendor ops table does not provide the "
+		        "stream gate ops; set %s=1 to gate via "
+		        "launch_host_func\n",
+		        ENV_ASSUME_ALIGNED_ONLY);
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -1348,17 +1391,31 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.async.seq = seq;
 
 	/* Order the I/O thread against the user's stream through a per-stream
-	 * gate word (strictly monotonic, two phases per op): the stream's
-	 * WriteValue(2*seq) signals arrival, the I/O thread's host store
-	 * 2*seq+1 releases the WaitValue(>= 2*seq+1) once the I/O is done (a
-	 * read's DMA landed, or a write's source was staged). Do not roll back
-	 * seq on failure: a reused seq would let the I/O thread's gate check
-	 * pass before the stream is ready. */
-	ds_accel_devptr_t gate = opends_stream->gate_dptr;
-	if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0)
-		return opends_err(OPENDS_INTERNAL_ERROR);
-	if (ds_accel->stream_wait_value32_geq(cus, gate, 2 * seq + 1) != 0)
-		return opends_err(OPENDS_INTERNAL_ERROR);
+	 * gate word (strictly monotonic, two phases per op): the submitter
+	 * publishes 2*seq on arrival and parks, and the I/O thread's store of
+	 * 2*seq+1 releases it once the I/O is done (a read's DMA landed, or a
+	 * write's source was staged). Do not roll back seq on failure: a reused
+	 * seq would let the I/O thread's gate check pass before the stream is
+	 * ready.
+	 *
+	 * launch_host_func is faster when no copy kernel is enqueued per op.
+	 * Otherwise stream_write/stream_wait is. The gate ops are commands the
+	 * GPU runs, so they wait for this context to be scheduled, and another
+	 * process using the GPU delays them by orders of magnitude. The
+	 * callback runs on the CPU and never waits. A copy kernel waits for
+	 * the GPU regardless, so once one is enqueued the callback wins
+	 * nothing. Hence the coupling to assume_aligned_only. */
+	if (d->assume_aligned_only) {
+		if (ds_accel->launch_host_func(cus, park_gate_cb, op) != 0)
+			return opends_err(OPENDS_INTERNAL_ERROR);
+	} else {
+		ds_accel_devptr_t gate = opends_stream->gate_dptr;
+		if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0)
+			return opends_err(OPENDS_INTERNAL_ERROR);
+		if (ds_accel->stream_wait_value32_geq(cus, gate, 2 * seq + 1) !=
+		    0)
+			return opends_err(OPENDS_INTERNAL_ERROR);
+	}
 
 	op->state = FILE_OP_PENDING;
 	w->queue_head = head + 1;

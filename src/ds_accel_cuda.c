@@ -85,6 +85,14 @@ cuda_stream_wait_value32_geq(ds_accel_stream_t s, ds_accel_devptr_t addr,
 	               : -1;
 }
 
+static int
+cuda_launch_host_func(ds_accel_stream_t s, void (*fn)(void *), void *arg)
+{
+	return cuLaunchHostFunc((CUstream)s, (CUhostFn)fn, arg) == CUDA_SUCCESS
+	               ? 0
+	               : -1;
+}
+
 static const struct ds_accel_ops cuda_ops = {
         .xnvme_be = "upcie-cuda",
         .ctx_get = cuda_ctx_get,
@@ -94,6 +102,7 @@ static const struct ds_accel_ops cuda_ops = {
         .copy = cuda_copy,
         .stream_write_value32 = cuda_stream_write_value32,
         .stream_wait_value32_geq = cuda_stream_wait_value32_geq,
+        .launch_host_func = cuda_launch_host_func,
         .copy_stream = cuda_copy_stream,
 };
 
