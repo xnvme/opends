@@ -49,7 +49,7 @@
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_PAGE 4096
-#define AISIO_QUEUE_DEPTH 512
+#define DEFAULT_QUEUE_DEPTH 512
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
 #define FILE_OP_QUEUE_SIZE 1024
@@ -69,7 +69,7 @@ struct buf_entry {
 	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
 };
 
-struct aisio_handle {
+struct registered_file {
 	int fd;
 };
 
@@ -113,7 +113,7 @@ struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
 	enum file_op_state state;
-	struct aisio_handle *h;
+	struct registered_file *h;
 	void *buf_base;
 	int chunks_remaining;
 	int bounces_outstanding;
@@ -135,7 +135,7 @@ struct read_cursor {
 	size_t remaining;
 };
 
-struct aisio_driver {
+struct driver {
 	char dev_uri[64];      ///< NVMe device (BDF) the HOMI daemon owns
 	char *attach_descpath; ///< HOMI-served qpair attach descriptor file
 	struct xnvme_dev *xdev;
@@ -166,7 +166,7 @@ struct aisio_driver {
 	bool stop;
 };
 
-static struct aisio_driver *drv;
+static struct driver *drv;
 static long use_count;
 
 static inline uint64_t
@@ -176,7 +176,7 @@ max_u64(uint64_t a, uint64_t b)
 }
 
 static int
-ensure_bounce_buf(struct aisio_driver *d, void **bounce_buf_p)
+ensure_bounce_buf(struct driver *d, void **bounce_buf_p)
 {
 	if (*bounce_buf_p)
 		return 0;
@@ -233,21 +233,21 @@ stream_bounce_free(struct opends_stream *s, struct xnvme_dev *xdev)
 	s->bounce_desc_dev = 0;
 }
 
-#define AISIO_ESTALE_RETRIES 6000
-#define AISIO_ESTALE_BACKOFF_US 50000
+#define ESTALE_RETRIES 6000
+#define ESTALE_BACKOFF_US 50000
 
 static int
-aisio_resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
+resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
 {
 	struct homic_extent *hx = NULL;
 	uint32_t n = 0;
 	int rc = -ESTALE;
 
-	for (int attempt = 0; attempt < AISIO_ESTALE_RETRIES; attempt++) {
+	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
 		rc = homic_get_extents(fd, &hx, &n);
 		if (rc != -ESTALE)
 			break;
-		usleep(AISIO_ESTALE_BACKOFF_US);
+		usleep(ESTALE_BACKOFF_US);
 	}
 	if (rc < 0)
 		return rc;
@@ -270,8 +270,8 @@ aisio_resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
 }
 
 static ssize_t
-aisio_pwrite_op(struct aisio_driver *d, struct aisio_handle *h, const void *src,
-                size_t size, off_t file_offset)
+pwrite_op(struct driver *d, struct registered_file *h, const void *src,
+          size_t size, off_t file_offset)
 {
 	if (size == 0)
 		return 0;
@@ -317,7 +317,7 @@ out:
 }
 
 static int
-open_device(struct aisio_driver *d, int fd)
+open_device(struct driver *d, int fd)
 {
 	(void)fd;
 
@@ -388,8 +388,8 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_middle(struct aisio_driver *d, struct read_cursor *c,
-                   struct file_op *op, uint64_t middle_lbas)
+submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
+                   uint64_t middle_lbas)
 {
 	uint32_t lba_nbytes = d->lba_size;
 	uint64_t max_chunk_lbas = d->mdts_nbytes >> d->lba_shift;
@@ -448,7 +448,7 @@ bounce_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
+submit_read_bounce(struct driver *d, struct file_op *op, uint8_t *abs_dst,
                    uint64_t cur_slba, size_t nbytes)
 {
 	struct opends_stream *s = op->u.async.opends_stream;
@@ -493,7 +493,7 @@ submit_read_bounce(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 }
 
 static int
-submit_sync_tail(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
+submit_sync_tail(struct driver *d, struct file_op *op, uint8_t *abs_dst,
                  uint64_t cur_slba, size_t nbytes)
 {
 	if (ensure_bounce_buf(d, &d->sync_bounce_buf) < 0) {
@@ -537,7 +537,7 @@ submit_sync_tail(struct aisio_driver *d, struct file_op *op, uint8_t *abs_dst,
 }
 
 static void
-start_read_op(struct aisio_driver *d, struct file_op *op)
+start_read_op(struct driver *d, struct file_op *op)
 {
 	if (d->lba_size == 0) {
 		op->err = OPENDS_INTERNAL_ERROR;
@@ -568,7 +568,7 @@ start_read_op(struct aisio_driver *d, struct file_op *op)
 
 	struct ds_extent *extents = NULL;
 	uint32_t extent_count = 0;
-	int frc = aisio_resolve_extents(op->h->fd, &extents, &extent_count);
+	int frc = resolve_extents(op->h->fd, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
@@ -632,7 +632,7 @@ out:
 }
 
 static void
-complete_read_op(struct aisio_driver *d, struct file_op *op)
+complete_read_op(struct driver *d, struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 	uint32_t tail_bytes = op->err ? 0 : (uint32_t)op->tail_nbytes;
@@ -656,7 +656,7 @@ complete_read_op(struct aisio_driver *d, struct file_op *op)
 }
 
 static void
-dispatch_write(struct aisio_driver *d, struct file_op *op)
+dispatch_write(struct driver *d, struct file_op *op)
 {
 	const void *src;
 	size_t size;
@@ -671,7 +671,7 @@ dispatch_write(struct aisio_driver *d, struct file_op *op)
 		file_offset = op->u.sync.file_offset;
 	}
 
-	ssize_t n = aisio_pwrite_op(d, op->h, src, size, file_offset);
+	ssize_t n = pwrite_op(d, op->h, src, size, file_offset);
 	if (n < 0)
 		n = (n == -(ssize_t)EINVAL)
 		            ? -(ssize_t)OPENDS_INVALID_VALUE
@@ -687,7 +687,7 @@ dispatch_write(struct aisio_driver *d, struct file_op *op)
 }
 
 static void
-dispatch_pending(struct aisio_driver *d, struct file_op *op)
+dispatch_pending(struct driver *d, struct file_op *op)
 {
 	if (op->is_write) {
 		dispatch_write(d, op);
@@ -703,7 +703,7 @@ dispatch_pending(struct aisio_driver *d, struct file_op *op)
 }
 
 static void
-reap_in_flight(struct aisio_driver *d, struct file_op *op)
+reap_in_flight(struct driver *d, struct file_op *op)
 {
 	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
 		complete_read_op(d, op);
@@ -715,7 +715,7 @@ reap_in_flight(struct aisio_driver *d, struct file_op *op)
  * release each tick it by one), so compare with serial/cyclic arithmetic to
  * match the device-side GEQ wait, keeping the sequence wrap-safe. */
 static bool
-poll_async_pending(struct aisio_driver *d, struct file_op *op)
+poll_async_pending(struct driver *d, struct file_op *op)
 {
 	if ((int32_t)(*op->u.async.opends_stream->gate - 2 * op->u.async.seq) <
 	    0)
@@ -727,7 +727,7 @@ poll_async_pending(struct aisio_driver *d, struct file_op *op)
 static void *
 io_thread_main(void *arg)
 {
-	struct aisio_driver *d = arg;
+	struct driver *d = arg;
 	ds_accel->ctx_set(d->accel_ctx);
 
 	for (;;) {
@@ -783,7 +783,7 @@ io_thread_main(void *arg)
 }
 
 static int
-async_setup(struct aisio_driver *d)
+async_setup(struct driver *d)
 {
 	if (ds_accel->ctx_get(&d->accel_ctx) < 0)
 		return -1;
@@ -796,7 +796,7 @@ async_setup(struct aisio_driver *d)
 	d->stream_words_host = host;
 	d->stream_words_dptr = dptr;
 
-	if (xnvme_queue_init(d->xdev, AISIO_QUEUE_DEPTH, 0, &d->queue) < 0) {
+	if (xnvme_queue_init(d->xdev, DEFAULT_QUEUE_DEPTH, 0, &d->queue) < 0) {
 		ds_accel->host_free(d->stream_words_host);
 		d->stream_words_host = NULL;
 		return -1;
@@ -816,7 +816,7 @@ async_setup(struct aisio_driver *d)
 }
 
 static void
-async_teardown(struct aisio_driver *d)
+async_teardown(struct driver *d)
 {
 	if (!d->async_ready)
 		return;
@@ -841,7 +841,7 @@ async_teardown(struct aisio_driver *d)
 }
 
 static struct opends_stream *
-opends_stream_get(struct aisio_driver *d, ds_accel_stream_t stream)
+opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 {
 	int idx = ds_stream_map_get(d->stream_map, STREAM_MAP_MASK, stream);
 	if (idx < 0)
@@ -868,7 +868,7 @@ opends_driver_open(void)
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
 
-	struct aisio_driver *d = calloc(1, sizeof(*d));
+	struct driver *d = calloc(1, sizeof(*d));
 	if (!d)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
@@ -988,7 +988,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		async_setup(drv);
 	}
 
-	struct aisio_handle *h = calloc(1, sizeof(*h));
+	struct registered_file *h = calloc(1, sizeof(*h));
 	if (!h)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	h->fd = fd;
@@ -1108,7 +1108,7 @@ opends_buf_deregister(const void *buf_base)
 /* ------------------------------------------------------------------ */
 
 static ssize_t
-submit_sync_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
+submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
                void *buf_base, size_t size, off_t file_offset, off_t buf_offset)
 {
 	if (!d)
@@ -1125,7 +1125,7 @@ submit_sync_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	struct file_op *op = &d->file_op_queue[head & FILE_OP_QUEUE_MASK];
 	op->mode = FILE_OP_SYNC;
 	op->is_write = is_write;
-	op->h = (struct aisio_handle *)fh;
+	op->h = (struct registered_file *)fh;
 	op->buf_base = buf_base;
 	op->u.sync.size = size;
 	op->u.sync.file_offset = file_offset;
@@ -1165,7 +1165,7 @@ opends_write(opends_handle_t fh, const void *buf_base, size_t size,
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
-submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
+submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
                 void *buf_base, size_t *size_p, off_t *file_offset_p,
                 off_t *buf_offset_p, ssize_t *bytes_p, opends_stream_t stream)
 {
@@ -1192,7 +1192,7 @@ submit_async_op(struct aisio_driver *d, bool is_write, opends_handle_t fh,
 	struct file_op *op = &d->file_op_queue[head & FILE_OP_QUEUE_MASK];
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
-	op->h = (struct aisio_handle *)fh;
+	op->h = (struct registered_file *)fh;
 	op->buf_base = buf_base;
 	op->u.async.size_p = size_p;
 	op->u.async.file_offset_p = file_offset_p;
