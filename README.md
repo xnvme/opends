@@ -262,14 +262,18 @@ python scripts/bench/artefacts.py --push
 `run.py` sweeps every suite over its own knob grid into
 `cijoe-output-bench/<suite>/`. The gds suite has no knobs, so its sweep is the
 singleton: one run of the whole suite. The opends suite sweeps io_threads x
-queue_depth: the HOMI/qublk stack comes up once, and each grid point runs into
-`cijoe-output-bench/opends/t<t>_q<q>/`; the grid comes from `--io-threads`
-(default 1,2,4,8) and `--queue-depth` (default 1..512). Restrict with
-`--suite`, `--mode`, and `--dataset`. The aisio knobs travel as environment
-variables (`OPENDS_AISIO_IO_THREADS`, `OPENDS_AISIO_QUEUE_DEPTH`,
-`OPENDS_AISIO_CPU_MASK`). `--cpu-mask` sets the last one: a hex mask whose
-CPUs the aisio IO workers are pinned to round-robin (`0x0` or unset leaves
-placement to the scheduler). Outside the sweep,
+queue_depth x assume_aligned_only: the HOMI/qublk stack comes up once, and
+each grid point runs into `cijoe-output-bench/opends/t<t>_q<q>[_aligned]/`;
+the grid comes from `--io-threads` (default 1,2,4,8), `--queue-depth` (default
+1..512) and `--assume-aligned-only` (default 0,1). Restrict with `--suite`,
+`--mode`, and `--dataset`. An aligned leg rejects any read with a sub-LBA
+tail, so datasets whose files are not LBA-multiples fail by construction;
+those legs are recorded with an empty result, the sweep continues to the
+datasets that do qualify, and `report.py` gives them their own section. The
+aisio knobs travel as environment variables (`OPENDS_AISIO_IO_THREADS`,
+`OPENDS_AISIO_QUEUE_DEPTH`, `OPENDS_AISIO_CPU_MASK`). `--cpu-mask` sets the
+last one: a hex mask whose CPUs the aisio IO workers are pinned to round-robin
+(`0x0` or unset leaves placement to the scheduler). Outside the sweep,
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
 reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
 and the async path stops enqueueing the per-read bounce kernel.

@@ -4,11 +4,16 @@
 
 Every suite sweeps its own knob grid into cijoe-output-bench/<suite>/.
 gds has no knobs: its sweep is the singleton, one run of the whole suite.
-opends sweeps io_threads x queue_depth (--io-threads, --queue-depth): the
-HOMI/qublk stack comes up once, each grid point runs the bench steps into
-opends/t<t>_q<q>/ with the aisio knobs passed through the environment,
-and the stack is torn down. Both suites set the CPU governor for the run
-and restore it in teardown. Restrict with --suite, --mode, --dataset.
+opends sweeps io_threads x queue_depth x assume_aligned_only (--io-threads,
+--queue-depth, --assume-aligned-only): the HOMI/qublk stack comes up once,
+each grid point runs the bench steps into opends/t<t>_q<q>[_aligned]/ with the
+aisio knobs passed through the environment, and the stack is torn down. Both
+suites set the CPU governor for the run and restore it in teardown. Restrict
+with --suite, --mode, --dataset.
+
+An assume_aligned_only leg rejects any read with a sub-LBA tail, so datasets
+whose files are not LBA-multiples fail by construction. Those legs are recorded
+with an empty result and the sweep carries on to the datasets that do qualify.
 
 aisio's tasks/setup_dataset.yaml must have populated the reference datasets
 (filesize8gib, tiktokish, imagenetish) under config.test.mount_point, and
@@ -66,17 +71,21 @@ def _run_opends(args, datasets):
     if not args.skip_setup:
         run_cijoe(suite, "cpu_governor", "homi_stack_up", out=f"{out}/_setup")
     try:
-        for t in args.io_threads:
-            for q in args.queue_depth:
-                os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
-                os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
-                print(f"\n=== opends io_threads={t} queue_depth={q}: "
-                      f"{', '.join(steps)} ===", flush=True)
-                rc = run_cijoe(suite, "meta", *steps,
-                               out=f"{out}/t{t}_q{q}", check=False)
-                if rc:
-                    print(f"leg t{t}_q{q} failed (rc={rc}); continuing",
+        for a in args.assume_aligned_only:
+            for t in args.io_threads:
+                for q in args.queue_depth:
+                    os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
+                    os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
+                    os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
+                    leg = f"t{t}_q{q}" + ("_aligned" if a else "")
+                    print(f"\n=== opends io_threads={t} queue_depth={q} "
+                          f"assume_aligned_only={a}: {', '.join(steps)} ===",
                           flush=True)
+                    rc = run_cijoe(suite, "meta", *steps,
+                                   out=f"{out}/{leg}", check=False)
+                    if rc:
+                        print(f"leg {leg} failed (rc={rc}); continuing",
+                              flush=True)
     finally:
         if not args.keep_stack:
             run_cijoe(suite, "homi_stack_down", "cpu_governor_restore",
@@ -115,6 +124,13 @@ grid.add_argument("--queue-depth", type=_int_list,
                   default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
                   help="Comma-separated NVMe queue depths. Default 1..512 "
                        "(>512 may exceed the device MQES and fail).")
+grid.add_argument("--assume-aligned-only", type=_int_list, default=[0, 1],
+                  metavar="LIST",
+                  help="Comma-separated OPENDS_AISIO_ASSUME_ALIGNED_ONLY "
+                       "values. Default 0,1 (both), which doubles the grid; "
+                       "pass 0 for the tail-fixup sweep alone. An aligned leg "
+                       "writes to t<t>_q<q>_aligned/, so 0-legs keep their "
+                       "paths.")
 grid.add_argument("--skip-setup", action="store_true",
                   help="Assume the HOMI stack is already up.")
 grid.add_argument("--keep-stack", action="store_true",

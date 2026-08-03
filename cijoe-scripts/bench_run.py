@@ -48,7 +48,7 @@ def _parse_summary(text):
 
 
 def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
-                   cpu_mask):
+                   cpu_mask, assume_aligned_only, error=None):
     artifacts = Path(cijoe.output_path) / "artifacts"
     meta_path = artifacts / "meta.json"
     if not meta_path.is_file():
@@ -76,11 +76,14 @@ def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
             "io_threads": int(io_threads) if opends and io_threads else None,
             "queue_depth": int(queue_depth) if opends and queue_depth else None,
             "cpu_mask": cpu_mask if opends and cpu_mask else None,
+            "assume_aligned_only": bool(assume_aligned_only) if opends else None,
             "n": 1,
         },
         "result": _parse_summary(text),
         "raw_log": log_name,
     }
+    if error is not None:
+        record["error"] = error
     with (artifacts / "history.jsonl").open("a") as f:
         f.write(json.dumps(record) + "\n")
 
@@ -119,8 +122,11 @@ def main(args, cijoe):
     io_threads = os.environ.get("OPENDS_AISIO_IO_THREADS")
     queue_depth = os.environ.get("OPENDS_AISIO_QUEUE_DEPTH")
     cpu_mask = os.environ.get("OPENDS_AISIO_CPU_MASK")
+    aligned = os.environ.get("OPENDS_AISIO_ASSUME_ALIGNED_ONLY")
+    assume_aligned_only = bool(aligned and aligned != "0")
     knobs = (f" io_threads={io_threads} queue_depth={queue_depth}"
              f" cpu_mask={cpu_mask}"
+             f" assume_aligned_only={int(assume_aligned_only)}"
              if args.backend == "opends" else "")
     print(f"--- {args.backend} {args.data_dir} {args.mode} "
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
@@ -157,6 +163,8 @@ def main(args, cijoe):
             env += f"OPENDS_AISIO_QUEUE_DEPTH='{queue_depth}' "
         if cpu_mask:
             env += f"OPENDS_AISIO_CPU_MASK='{cpu_mask}' "
+        if assume_aligned_only:
+            env += "OPENDS_AISIO_ASSUME_ALIGNED_ONLY='1' "
     else:
         target = bdf
 
@@ -175,7 +183,10 @@ def main(args, cijoe):
 
     cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
     err, state = cijoe.run(cmd)
-    if err:
+    # assume_aligned_only rejects any read with a sub-LBA tail, so a dataset
+    # whose files are not LBA-multiples fails by construction. Record it and
+    # let the sweep reach the datasets that do qualify.
+    if err and not assume_aligned_only:
         return err
 
     suffix = "_async" if args.mode == "async" else ""
@@ -185,5 +196,9 @@ def main(args, cijoe):
     out.write_text(state.output())
     log.info(f"wrote {out}")
     _append_record(cijoe, args, out.name, state.output(), io_threads,
-                   queue_depth, cpu_mask)
+                   queue_depth, cpu_mask, assume_aligned_only,
+                   error=f"filperf rc={err}" if err else None)
+    if err:
+        log.warning(f"{args.data_dir}/{args.mode}: filperf rc={err} under "
+                    f"assume_aligned_only; recorded and continuing")
     return 0

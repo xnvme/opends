@@ -4,7 +4,9 @@
 
 Reads every history.jsonl under the input dirs (one record per leg, written by
 cijoe-scripts/bench_run.py) and, per opends (dataset, mode), renders a MiB/s
-matrix over (io_threads x queue_depth). When gds legs are present among the
+matrix over (io_threads x queue_depth). Legs run with
+OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 get their own section rather than sharing
+those cells, and stay out of the plot. When gds legs are present among the
 records, also renders a GDS-vs-OpenDS table per (queue_depth, io_threads)
 point. Writes report.md and sweep.csv (all backends) to the output dir, plus
 report.png unless --no-plot (needs matplotlib).
@@ -43,6 +45,7 @@ def _records(in_dirs):
 
 def _collect(in_dirs):
     grids = {}          # (dataset, mode) -> {(io_threads, queue_depth): mib_s}
+    aligned = {}        # same, for OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 legs
     gds = {}            # (dataset, mode) -> mib_s
     rows = []
     threads_seen, depths_seen = set(), set()
@@ -50,12 +53,18 @@ def _collect(in_dirs):
         cfg = rec.get("config", {})
         res = rec.get("result", {})
         t, q = cfg.get("io_threads"), cfg.get("queue_depth")
+        aa = cfg.get("assume_aligned_only")
         rows.append({"backend": cfg.get("backend"),
                      "dataset": cfg.get("dataset"), "mode": cfg.get("mode"),
                      "io_threads": t, "queue_depth": q,
-                     "mib_s": res.get("mib_s"), "iops": res.get("iops")})
+                     "assume_aligned_only": int(bool(aa)),
+                     "mib_s": res.get("mib_s"), "iops": res.get("iops"),
+                     "error": rec.get("error")})
         if cfg.get("backend") == "opends":
-            grids.setdefault((cfg.get("dataset"), cfg.get("mode")), {})[
+            # An aligned leg is a different contract, not another cell in the
+            # sweep matrix: keep it out of the default grid (and the plot).
+            dst = aligned if aa else grids
+            dst.setdefault((cfg.get("dataset"), cfg.get("mode")), {})[
                 (t, q)] = res.get("mib_s")
             threads_seen.add(t)
             depths_seen.add(q)
@@ -67,7 +76,7 @@ def _collect(in_dirs):
             gds[key] = res.get("mib_s")
     threads = sorted(x for x in threads_seen if x is not None)
     depths = sorted(x for x in depths_seen if x is not None)
-    return grids, gds, rows, threads, depths
+    return grids, aligned, gds, rows, threads, depths
 
 
 def _pivot_md(ds, mode, grid, threads, depths):
@@ -253,7 +262,7 @@ def main():
     out_dir = (Path(a.out) if a.out else in_dirs[0])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    grids, gds, rows, threads, depths = _collect(in_dirs)
+    grids, aligned, gds, rows, threads, depths = _collect(in_dirs)
     if not rows:
         sys.exit("no history.jsonl records found under: "
                  + ", ".join(str(d) for d in in_dirs))
@@ -263,6 +272,15 @@ def main():
                                    key=lambda kv: (kv[0][0] or "",
                                                    kv[0][1] or "")):
         md += _pivot_md(ds, mode, grid, threads, depths)
+    if aligned:
+        md += ["## Aligned-only (OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1)",
+               "",
+               "Datasets whose files are not LBA-multiples fail by "
+               "construction and show as `-`.", ""]
+        for (ds, mode), grid in sorted(aligned.items(),
+                                       key=lambda kv: (kv[0][0] or "",
+                                                       kv[0][1] or "")):
+            md += _pivot_md(ds, mode, grid, threads, depths)
     if gds:
         md += ["## GDS vs OpenDS", ""]
         md += _compare_md(grids, gds, threads, depths)
@@ -273,7 +291,8 @@ def main():
     with csv_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["backend", "dataset", "mode",
                                           "io_threads", "queue_depth",
-                                          "mib_s", "iops"])
+                                          "assume_aligned_only",
+                                          "mib_s", "iops", "error"])
         w.writeheader()
         w.writerows(rows)
 
