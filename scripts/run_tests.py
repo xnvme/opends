@@ -58,8 +58,6 @@ def _steps_for(backends, tests):
             if b == "aisio":
                 steps.append(f"test_{t}_{b}")
         steps.append("homi_stack_down")
-    else:
-        steps.append("rebind_nvme")
     return steps
 
 
