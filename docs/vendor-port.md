@@ -30,7 +30,10 @@ validating on real hardware before trusting a port:
 `copy_stream` is a deferred copy on the user's stream: its parameters are
 published after it is enqueued. CUDA needs a kernel for that, shipped in
 `ds_bounce_kernel_cuda.cu`; a vendor whose runtime can defer a stream copy
-may not need a separate kernel translation unit at all.
+may not need a separate kernel translation unit at all. Setting
+`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` drops the tail fixup entirely
+(unaligned reads then fail with `OPENDS_INVALID_VALUE`), so a port can be
+brought up and measured on LBA-aligned workloads before `copy_stream` works.
 
 Beyond the backend, the Python loader and the test harness still assume
 CUDA and would need the same vendor-awareness.

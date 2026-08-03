@@ -46,6 +46,7 @@
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
+#define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
 #define DEFAULT_IO_THREADS 1
 #define MAX_IO_THREADS 15
@@ -176,6 +177,7 @@ struct driver {
 	int n_io_threads;
 	uint32_t queue_depth;
 	uint64_t cpu_mask;
+	bool assume_aligned_only;
 	struct io_worker *workers;
 	uint32_t rr_next;
 	bool stop;
@@ -639,6 +641,10 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		}
 
 		if (tail_bytes) {
+			if (d->assume_aligned_only) {
+				op->err = OPENDS_INVALID_VALUE;
+				goto out;
+			}
 			int trc;
 			if (op->mode == FILE_OP_ASYNC)
 				trc = submit_read_bounce(w, op, abs_dst,
@@ -971,6 +977,9 @@ read_env_config(struct driver *d)
 
 	const char *mask = getenv(ENV_CPU_MASK);
 	d->cpu_mask = mask && mask[0] ? strtoull(mask, NULL, 0) : 0;
+
+	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
+	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
 
 	return 0;
 }
@@ -1359,7 +1368,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * copy_stream no-ops when it is zero. Enqueue after publishing so a
 	 * failed enqueue is still drained by the I/O thread (which releases the
 	 * gate); only this read is lost. */
-	if (!is_write &&
+	if (!d->assume_aligned_only && !is_write &&
 	    ds_accel->copy_stream(opends_stream->bounce_desc_dev, cus) != 0)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 

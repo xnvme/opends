@@ -269,7 +269,10 @@ queue_depth: the HOMI/qublk stack comes up once, and each grid point runs into
 variables (`OPENDS_AISIO_IO_THREADS`, `OPENDS_AISIO_QUEUE_DEPTH`,
 `OPENDS_AISIO_CPU_MASK`). `--cpu-mask` sets the last one: a hex mask whose
 CPUs the aisio IO workers are pinned to round-robin (`0x0` or unset leaves
-placement to the scheduler).
+placement to the scheduler). Outside the sweep,
+`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` declares that every read is LBA-aligned:
+reads whose span ends off an LBA boundary fail with `OPENDS_INVALID_VALUE`,
+and the async path stops enqueueing the per-read bounce kernel.
 
 Every leg appends a structured record to
 `<out>/**/artifacts/history.jsonl`: config (backend, dataset, mode,
