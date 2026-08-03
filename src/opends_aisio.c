@@ -180,6 +180,7 @@ struct driver {
 	bool assume_aligned_only;
 	struct io_worker *workers;
 	uint32_t rr_next;
+	pthread_mutex_t submit_lock;
 	bool stop;
 };
 
@@ -1033,6 +1034,25 @@ route_op(struct driver *d)
 	return &d->workers[d->rr_next++ % (uint32_t)d->n_io_threads];
 }
 
+static struct file_op *
+claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
+{
+	for (;;) {
+		struct io_worker *w = route_op(d);
+		uint32_t head = w->queue_head;
+
+		if (head - w->queue_tail < FILE_OP_QUEUE_SIZE) {
+			*wp = w;
+			*headp = head;
+			return &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
+		}
+
+		pthread_mutex_unlock(&d->submit_lock);
+		sched_yield();
+		pthread_mutex_lock(&d->submit_lock);
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /*  Driver lifecycle                                                  */
 /* ------------------------------------------------------------------ */
@@ -1061,11 +1081,13 @@ opends_driver_open(void)
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
+	pthread_mutex_init(&d->submit_lock, NULL);
 
 	const char *sock = getenv(ENV_HOMI_SOCKET);
 	int rc = homic_connect(
 	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
 	if (rc < 0) {
+		pthread_mutex_destroy(&d->submit_lock);
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1076,6 +1098,7 @@ opends_driver_open(void)
 	if (orc < 0) {
 		homic_disconnect();
 		free(d->attach_descpath);
+		pthread_mutex_destroy(&d->submit_lock);
 		free(d);
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
@@ -1086,6 +1109,7 @@ opends_driver_open(void)
 		homic_detach_qpair();
 		homic_disconnect();
 		free(d->attach_descpath);
+		pthread_mutex_destroy(&d->submit_lock);
 		free(d);
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
@@ -1118,6 +1142,7 @@ opends_driver_close(void)
 	homic_disconnect();
 	free(drv->attach_descpath);
 
+	pthread_mutex_destroy(&drv->submit_lock);
 	free(drv);
 	drv = NULL;
 	return opends_ok();
@@ -1305,12 +1330,11 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!d->async_ready)
 		return -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
-	struct io_worker *w = route_op(d);
-	uint32_t head = w->queue_head;
-	while (head - w->queue_tail >= FILE_OP_QUEUE_SIZE)
-		sched_yield();
+	struct io_worker *w;
+	uint32_t head;
 
-	struct file_op *op = &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
+	pthread_mutex_lock(&d->submit_lock);
+	struct file_op *op = claim_slot_locked(d, &w, &head);
 	op->mode = FILE_OP_SYNC;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
@@ -1320,6 +1344,7 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.sync.buf_offset = buf_offset;
 	op->state = FILE_OP_PENDING;
 	w->queue_head = head + 1;
+	pthread_mutex_unlock(&d->submit_lock);
 
 	while (op->state != FILE_OP_FREE)
 		sched_yield();
@@ -1372,13 +1397,12 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!opends_stream)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	struct io_worker *w = route_op(d);
-	uint32_t head = w->queue_head;
-	while (head - w->queue_tail >= FILE_OP_QUEUE_SIZE)
-		sched_yield();
+	struct io_worker *w;
+	uint32_t head;
 
+	pthread_mutex_lock(&d->submit_lock);
+	struct file_op *op = claim_slot_locked(d, &w, &head);
 	uint32_t seq = ++opends_stream->next_seq;
-	struct file_op *op = &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
@@ -1406,19 +1430,26 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * the GPU regardless, so once one is enqueued the callback wins
 	 * nothing. Hence the coupling to assume_aligned_only. */
 	if (d->assume_aligned_only) {
-		if (ds_accel->launch_host_func(cus, park_gate_cb, op) != 0)
+		if (ds_accel->launch_host_func(cus, park_gate_cb, op) != 0) {
+			pthread_mutex_unlock(&d->submit_lock);
 			return opends_err(OPENDS_INTERNAL_ERROR);
+		}
 	} else {
 		ds_accel_devptr_t gate = opends_stream->gate_dptr;
-		if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0)
+		if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0) {
+			pthread_mutex_unlock(&d->submit_lock);
 			return opends_err(OPENDS_INTERNAL_ERROR);
+		}
 		if (ds_accel->stream_wait_value32_geq(cus, gate, 2 * seq + 1) !=
-		    0)
+		    0) {
+			pthread_mutex_unlock(&d->submit_lock);
 			return opends_err(OPENDS_INTERNAL_ERROR);
+		}
 	}
 
 	op->state = FILE_OP_PENDING;
 	w->queue_head = head + 1;
+	pthread_mutex_unlock(&d->submit_lock);
 
 	/* Reads enqueue the deferred tail copy (writes run none): offsets
 	 * resolve behind the gate, so the copy size is unknown here, and
