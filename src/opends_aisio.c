@@ -43,13 +43,17 @@
 
 #define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
 #define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
+#define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
+#define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
-#define AISIO_ATTACH_QPAIRS 3
+#define DEFAULT_IO_THREADS 1
+#define MAX_IO_THREADS 15
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_PAGE 4096
 #define DEFAULT_QUEUE_DEPTH 512
+#define MAX_QUEUE_DEPTH 4096
 #define MAX_STREAMS 8192
 #define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
 #define FILE_OP_QUEUE_SIZE 1024
@@ -135,11 +139,22 @@ struct read_cursor {
 	size_t remaining;
 };
 
+struct driver;
+
+struct io_worker {
+	struct driver *drv;
+	struct xnvme_queue *queue;
+	void *sync_bounce_buf;
+	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
+	uint32_t queue_head;
+	uint32_t queue_tail;
+	pthread_t thread;
+};
+
 struct driver {
 	char dev_uri[64];      ///< NVMe device (BDF) the HOMI daemon owns
 	char *attach_descpath; ///< HOMI-served qpair attach descriptor file
 	struct xnvme_dev *xdev;
-	struct xnvme_queue *queue;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
@@ -147,7 +162,6 @@ struct driver {
 	struct buf_entry bufs[MAX_BUF_ENTRIES];
 	int buf_count;
 
-	void *sync_bounce_buf;
 	bool async_ready;
 	ds_accel_ctx_t accel_ctx;
 
@@ -158,11 +172,10 @@ struct driver {
 
 	struct ds_stream_map_entry stream_map[STREAM_MAP_SIZE];
 
-	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
-	uint32_t queue_head;
-	uint32_t queue_tail;
-
-	pthread_t io_thread;
+	int n_io_threads;
+	uint32_t queue_depth;
+	struct io_worker *workers;
+	uint32_t rr_next;
 	bool stop;
 };
 
@@ -321,12 +334,17 @@ open_device(struct driver *d, int fd)
 {
 	(void)fd;
 
-	int rc = homic_attach_qpair(d->dev_uri, AISIO_ATTACH_QPAIRS,
-	                            &d->attach_descpath);
+	int nqpairs = 1 + d->n_io_threads;
+	int rc = homic_attach_qpair(d->dev_uri, nqpairs, &d->attach_descpath);
 	if (rc < 0) {
 		fprintf(stderr,
 		        "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
 		        d->dev_uri, rc);
+		if (rc == -ENOMEM || rc == -EINVAL)
+			fprintf(stderr,
+			        "aisio: HOMI refused %d qpairs "
+			        "(1 producer + %d IO threads); lower %s\n",
+			        nqpairs, d->n_io_threads, ENV_IO_THREADS);
 		return rc;
 	}
 
@@ -448,9 +466,10 @@ bounce_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_bounce(struct driver *d, struct file_op *op, uint8_t *abs_dst,
+submit_read_bounce(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
                    uint64_t cur_slba, size_t nbytes)
 {
+	struct driver *d = w->drv;
 	struct opends_stream *s = op->u.async.opends_stream;
 	void *bounce_src = s->bounce_buf;
 
@@ -460,22 +479,22 @@ submit_read_bounce(struct driver *d, struct file_op *op, uint8_t *abs_dst,
 	for (;;) {
 		struct xnvme_cmd_ctx *ctx;
 		for (;;) {
-			ctx = xnvme_queue_get_cmd_ctx(d->queue);
+			ctx = xnvme_queue_get_cmd_ctx(w->queue);
 			if (ctx)
 				break;
-			xnvme_queue_poke(d->queue, 0);
+			xnvme_queue_poke(w->queue, 0);
 		}
 		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
 
 		int srv = xnvme_nvm_read(ctx, d->nsid, cur_slba, nlb,
 		                         bounce_src, NULL);
 		if (srv == -EBUSY) {
-			xnvme_queue_put_cmd_ctx(d->queue, ctx);
-			xnvme_queue_poke(d->queue, 0);
+			xnvme_queue_put_cmd_ctx(w->queue, ctx);
+			xnvme_queue_poke(w->queue, 0);
 			continue;
 		}
 		if (srv < 0) {
-			xnvme_queue_put_cmd_ctx(d->queue, ctx);
+			xnvme_queue_put_cmd_ctx(w->queue, ctx);
 			op->err = OPENDS_DEVICE_DRIVER_ERROR;
 			return -1;
 		}
@@ -493,10 +512,12 @@ submit_read_bounce(struct driver *d, struct file_op *op, uint8_t *abs_dst,
 }
 
 static int
-submit_sync_tail(struct driver *d, struct file_op *op, uint8_t *abs_dst,
+submit_sync_tail(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
                  uint64_t cur_slba, size_t nbytes)
 {
-	if (ensure_bounce_buf(d, &d->sync_bounce_buf) < 0) {
+	struct driver *d = w->drv;
+
+	if (ensure_bounce_buf(d, &w->sync_bounce_buf) < 0) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return -1;
 	}
@@ -507,22 +528,22 @@ submit_sync_tail(struct driver *d, struct file_op *op, uint8_t *abs_dst,
 	for (;;) {
 		struct xnvme_cmd_ctx *ctx;
 		for (;;) {
-			ctx = xnvme_queue_get_cmd_ctx(d->queue);
+			ctx = xnvme_queue_get_cmd_ctx(w->queue);
 			if (ctx)
 				break;
-			xnvme_queue_poke(d->queue, 0);
+			xnvme_queue_poke(w->queue, 0);
 		}
 		xnvme_cmd_ctx_set_cb(ctx, bounce_cb, op);
 
 		int srv = xnvme_nvm_read(ctx, d->nsid, cur_slba, nlb,
-		                         d->sync_bounce_buf, NULL);
+		                         w->sync_bounce_buf, NULL);
 		if (srv == -EBUSY) {
-			xnvme_queue_put_cmd_ctx(d->queue, ctx);
-			xnvme_queue_poke(d->queue, 0);
+			xnvme_queue_put_cmd_ctx(w->queue, ctx);
+			xnvme_queue_poke(w->queue, 0);
 			continue;
 		}
 		if (srv < 0) {
-			xnvme_queue_put_cmd_ctx(d->queue, ctx);
+			xnvme_queue_put_cmd_ctx(w->queue, ctx);
 			op->err = OPENDS_DEVICE_DRIVER_ERROR;
 			return -1;
 		}
@@ -537,8 +558,10 @@ submit_sync_tail(struct driver *d, struct file_op *op, uint8_t *abs_dst,
 }
 
 static void
-start_read_op(struct driver *d, struct file_op *op)
+start_read_op(struct io_worker *w, struct file_op *op)
 {
+	struct driver *d = w->drv;
+
 	if (d->lba_size == 0) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return;
@@ -566,8 +589,8 @@ start_read_op(struct driver *d, struct file_op *op)
 	}
 	uint64_t req_end = req_start + size;
 
-	struct ds_extent *extents = NULL;
-	uint32_t extent_count = 0;
+	struct ds_extent *extents;
+	uint32_t extent_count;
 	int frc = resolve_extents(op->h->fd, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
@@ -603,7 +626,7 @@ start_read_op(struct driver *d, struct file_op *op)
 		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
 		if (middle_lbas) {
 			struct read_cursor c = {
-			        .queue = d->queue,
+			        .queue = w->queue,
 			        .cur_slba = cur_slba,
 			        .abs_dst = abs_dst,
 			        .remaining = remaining,
@@ -618,10 +641,10 @@ start_read_op(struct driver *d, struct file_op *op)
 		if (tail_bytes) {
 			int trc;
 			if (op->mode == FILE_OP_ASYNC)
-				trc = submit_read_bounce(d, op, abs_dst,
+				trc = submit_read_bounce(w, op, abs_dst,
 				                         cur_slba, tail_bytes);
 			else
-				trc = submit_sync_tail(d, op, abs_dst, cur_slba,
+				trc = submit_sync_tail(w, op, abs_dst, cur_slba,
 				                       tail_bytes);
 			if (trc < 0)
 				goto out;
@@ -632,7 +655,7 @@ out:
 }
 
 static void
-complete_read_op(struct driver *d, struct file_op *op)
+complete_read_op(struct io_worker *w, struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 	uint32_t tail_bytes = op->err ? 0 : (uint32_t)op->tail_nbytes;
@@ -642,22 +665,25 @@ complete_read_op(struct driver *d, struct file_op *op)
 		*op->u.async.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
 		*s->gate = 2 * op->u.async.seq + 1;
-	} else {
-		if (tail_bytes) {
-			int rc =
-			        ds_accel->copy(op->tail_dst, d->sync_bounce_buf,
-			                       op->tail_nbytes);
-			if (rc != 0)
-				n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
-		}
-		op->u.sync.result = n;
+		op->state = FILE_OP_FREE;
+		return;
 	}
+
+	if (tail_bytes) {
+		int rc = ds_accel->copy(op->tail_dst, w->sync_bounce_buf,
+		                        op->tail_nbytes);
+		if (rc != 0)
+			n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	}
+
+	op->u.sync.result = n;
 	op->state = FILE_OP_FREE;
 }
 
 static void
-dispatch_write(struct driver *d, struct file_op *op)
+dispatch_write(struct io_worker *w, struct file_op *op)
 {
+	struct driver *d = w->drv;
 	const void *src;
 	size_t size;
 	off_t file_offset;
@@ -687,10 +713,10 @@ dispatch_write(struct driver *d, struct file_op *op)
 }
 
 static void
-dispatch_pending(struct driver *d, struct file_op *op)
+dispatch_pending(struct io_worker *w, struct file_op *op)
 {
 	if (op->is_write) {
-		dispatch_write(d, op);
+		dispatch_write(w, op);
 		return;
 	}
 	op->chunks_remaining = 0;
@@ -699,14 +725,14 @@ dispatch_pending(struct driver *d, struct file_op *op)
 	op->err = 0;
 	op->tail_nbytes = 0;
 	op->state = FILE_OP_IN_FLIGHT;
-	start_read_op(d, op);
+	start_read_op(w, op);
 }
 
 static void
-reap_in_flight(struct driver *d, struct file_op *op)
+reap_in_flight(struct io_worker *w, struct file_op *op)
 {
 	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
-		complete_read_op(d, op);
+		complete_read_op(w, op);
 }
 
 /* Service a PENDING async op: dispatch it once its stream gate has opened,
@@ -715,63 +741,64 @@ reap_in_flight(struct driver *d, struct file_op *op)
  * release each tick it by one), so compare with serial/cyclic arithmetic to
  * match the device-side GEQ wait, keeping the sequence wrap-safe. */
 static bool
-poll_async_pending(struct driver *d, struct file_op *op)
+poll_async_pending(struct io_worker *w, struct file_op *op)
 {
 	if ((int32_t)(*op->u.async.opends_stream->gate - 2 * op->u.async.seq) <
 	    0)
 		return true;
-	dispatch_pending(d, op);
+	dispatch_pending(w, op);
 	return false;
 }
 
 static void *
 io_thread_main(void *arg)
 {
-	struct driver *d = arg;
+	struct io_worker *w = arg;
+	struct driver *d = w->drv;
 	ds_accel->ctx_set(d->accel_ctx);
 
 	for (;;) {
 		bool busy = false;
 
-		uint32_t head = d->queue_head;
-		for (uint32_t i = d->queue_tail; i != head; i++) {
+		uint32_t head = w->queue_head;
+		for (uint32_t i = w->queue_tail; i != head; i++) {
 			struct file_op *op =
-			        &d->file_op_queue[i & FILE_OP_QUEUE_MASK];
+			        &w->file_op_queue[i & FILE_OP_QUEUE_MASK];
 			switch (op->state) {
 			case FILE_OP_PENDING:
 				switch (op->mode) {
 				case FILE_OP_SYNC:
-					dispatch_pending(d, op);
+					dispatch_pending(w, op);
 					break;
 				case FILE_OP_ASYNC:
-					if (poll_async_pending(d, op))
+					if (poll_async_pending(w, op))
 						busy = true;
 					break;
 				case FILE_OP_BATCH: break;
 				}
 				break;
-			case FILE_OP_IN_FLIGHT: reap_in_flight(d, op); break;
+			case FILE_OP_IN_FLIGHT: reap_in_flight(w, op); break;
 			default: break;
 			}
 		}
 
-		while (d->queue_tail != head) {
+		while (w->queue_tail != head) {
 			struct file_op *op =
-			        &d->file_op_queue[d->queue_tail &
+			        &w->file_op_queue[w->queue_tail &
 			                          FILE_OP_QUEUE_MASK];
 			if (op->state != FILE_OP_FREE)
 				break;
-			d->queue_tail++;
+			w->queue_tail++;
 		}
 
-		if (d->queue_tail != head)
+		if (w->queue_tail != head)
 			busy = true;
 
 		if (d->stop && !busy)
 			break;
 
 		if (busy) {
-			xnvme_queue_poke(d->queue, 0);
+			xnvme_queue_poke(w->queue, 0);
 			sched_yield();
 		} else {
 			struct timespec ts = {0, 100000};
@@ -796,23 +823,50 @@ async_setup(struct driver *d)
 	d->stream_words_host = host;
 	d->stream_words_dptr = dptr;
 
-	if (xnvme_queue_init(d->xdev, DEFAULT_QUEUE_DEPTH, 0, &d->queue) < 0) {
+	d->workers = calloc((size_t)d->n_io_threads, sizeof(*d->workers));
+	if (!d->workers) {
 		ds_accel->host_free(d->stream_words_host);
 		d->stream_words_host = NULL;
 		return -1;
 	}
 
 	d->stop = false;
-	if (pthread_create(&d->io_thread, NULL, io_thread_main, d) != 0) {
-		xnvme_queue_term(d->queue);
-		d->queue = NULL;
-		ds_accel->host_free(d->stream_words_host);
-		d->stream_words_host = NULL;
-		return -1;
+	int started = 0;
+	for (int i = 0; i < d->n_io_threads; i++) {
+		struct io_worker *w = &d->workers[i];
+		w->drv = d;
+		if (xnvme_queue_init(d->xdev, d->queue_depth, 0, &w->queue) <
+		    0) {
+			w->queue = NULL;
+			goto fail;
+		}
+		if (pthread_create(&w->thread, NULL, io_thread_main, w) != 0) {
+			xnvme_queue_term(w->queue);
+			w->queue = NULL;
+			goto fail;
+		}
+		started++;
 	}
 
 	d->async_ready = true;
 	return 0;
+
+fail:
+	d->stop = true;
+	for (int i = 0; i < started; i++)
+		pthread_join(d->workers[i].thread, NULL);
+	for (int i = 0; i < d->n_io_threads; i++) {
+		struct io_worker *w = &d->workers[i];
+		if (w->sync_bounce_buf)
+			xnvme_buf_free(d->xdev, w->sync_bounce_buf);
+		if (w->queue)
+			xnvme_queue_term(w->queue);
+	}
+	free(d->workers);
+	d->workers = NULL;
+	ds_accel->host_free(d->stream_words_host);
+	d->stream_words_host = NULL;
+	return -1;
 }
 
 static void
@@ -822,15 +876,25 @@ async_teardown(struct driver *d)
 		return;
 
 	d->stop = true;
-	pthread_join(d->io_thread, NULL);
+	for (int i = 0; i < d->n_io_threads; i++)
+		pthread_join(d->workers[i].thread, NULL);
 
 	for (int i = 0; i < d->n_streams; i++)
 		stream_bounce_free(&d->streams[i], d->xdev);
 
-	if (d->queue) {
-		xnvme_queue_term(d->queue);
-		d->queue = NULL;
+	for (int i = 0; i < d->n_io_threads; i++) {
+		struct io_worker *w = &d->workers[i];
+		if (w->sync_bounce_buf) {
+			xnvme_buf_free(d->xdev, w->sync_bounce_buf);
+			w->sync_bounce_buf = NULL;
+		}
+		if (w->queue) {
+			xnvme_queue_term(w->queue);
+			w->queue = NULL;
+		}
 	}
+	free(d->workers);
+	d->workers = NULL;
 
 	if (d->stream_words_host) {
 		ds_accel->host_free(d->stream_words_host);
@@ -847,6 +911,48 @@ opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 	if (idx < 0)
 		return NULL;
 	return &d->streams[idx];
+}
+
+static int
+env_int(const char *name, int def, int lo, int hi, int *out)
+{
+	const char *v = getenv(name);
+	if (!v || !v[0]) {
+		*out = def;
+		return 0;
+	}
+	long n = strtol(v, NULL, 10);
+	if (n < lo || n > hi) {
+		fprintf(stderr, "aisio: %s=%s out of range [%d, %d]\n", name, v,
+		        lo, hi);
+		return -EINVAL;
+	}
+	*out = (int)n;
+	return 0;
+}
+
+static int
+read_env_config(struct driver *d)
+{
+	int n;
+
+	if (env_int(ENV_IO_THREADS, DEFAULT_IO_THREADS, 1, MAX_IO_THREADS, &n) <
+	    0)
+		return -EINVAL;
+	d->n_io_threads = n;
+
+	if (env_int(ENV_QUEUE_DEPTH, DEFAULT_QUEUE_DEPTH, 1, MAX_QUEUE_DEPTH,
+	            &n) < 0)
+		return -EINVAL;
+	d->queue_depth = (uint32_t)n;
+
+	return 0;
+}
+
+static struct io_worker *
+route_op(struct driver *d)
+{
+	return &d->workers[d->rr_next++ % (uint32_t)d->n_io_threads];
 }
 
 /* ------------------------------------------------------------------ */
@@ -873,6 +979,10 @@ opends_driver_open(void)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", dev);
+	if (read_env_config(d) < 0) {
+		free(d);
+		return opends_err(OPENDS_FS_SETUP_ERROR);
+	}
 
 	const char *sock = getenv(ENV_HOMI_SOCKET);
 	int rc = homic_connect(
@@ -913,9 +1023,6 @@ opends_driver_close(void)
 			xnvme_mem_unmap(drv->xdev, (void *)e->base);
 	}
 	drv->buf_count = 0;
-
-	if (drv->sync_bounce_buf)
-		xnvme_buf_free(drv->xdev, drv->sync_bounce_buf);
 
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
@@ -1118,11 +1225,12 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!d->async_ready)
 		return -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
-	uint32_t head = d->queue_head;
-	while (head - d->queue_tail >= FILE_OP_QUEUE_SIZE)
+	struct io_worker *w = route_op(d);
+	uint32_t head = w->queue_head;
+	while (head - w->queue_tail >= FILE_OP_QUEUE_SIZE)
 		sched_yield();
 
-	struct file_op *op = &d->file_op_queue[head & FILE_OP_QUEUE_MASK];
+	struct file_op *op = &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
 	op->mode = FILE_OP_SYNC;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
@@ -1131,7 +1239,7 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.sync.file_offset = file_offset;
 	op->u.sync.buf_offset = buf_offset;
 	op->state = FILE_OP_PENDING;
-	d->queue_head = head + 1;
+	w->queue_head = head + 1;
 
 	while (op->state != FILE_OP_FREE)
 		sched_yield();
@@ -1184,12 +1292,13 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!opends_stream)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	uint32_t head = d->queue_head;
-	while (head - d->queue_tail >= FILE_OP_QUEUE_SIZE)
+	struct io_worker *w = route_op(d);
+	uint32_t head = w->queue_head;
+	while (head - w->queue_tail >= FILE_OP_QUEUE_SIZE)
 		sched_yield();
 
 	uint32_t seq = ++opends_stream->next_seq;
-	struct file_op *op = &d->file_op_queue[head & FILE_OP_QUEUE_MASK];
+	struct file_op *op = &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
@@ -1215,7 +1324,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	op->state = FILE_OP_PENDING;
-	d->queue_head = head + 1;
+	w->queue_head = head + 1;
 
 	/* Reads enqueue the deferred tail copy (writes run none): offsets
 	 * resolve behind the gate, so the copy size is unknown here, and
