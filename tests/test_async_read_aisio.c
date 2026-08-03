@@ -60,6 +60,9 @@ main(int argc, char **argv)
 
 	fprintf(stderr, "opends_read_async tests (aisio backend, HOMI)\n");
 
+	const char *aligned = getenv("OPENDS_AISIO_ASSUME_ALIGNED_ONLY");
+	bool no_sub_lba = aligned && aligned[0] && aligned[0] != '0';
+
 	struct async_test_env env_alloc = {
 	        .fh = a.fh,
 	        .stream = main_stream,
@@ -70,6 +73,7 @@ main(int argc, char **argv)
 	        .buf_acquire = cuda_alloc_acquire,
 	        .buf_release = cuda_alloc_release,
 	        .mode_label = "alloc",
+	        .sub_lba_unsupported = no_sub_lba,
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_alloc.extra_streams[i] = extras[i];
@@ -93,6 +97,7 @@ main(int argc, char **argv)
 	        .buf_acquire = cuda_register_acquire,
 	        .buf_release = cuda_register_release,
 	        .mode_label = "register",
+	        .sub_lba_unsupported = no_sub_lba,
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_register.extra_streams[i] = extras[i];

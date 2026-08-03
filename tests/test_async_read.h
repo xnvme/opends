@@ -21,6 +21,7 @@
 
 #include <cuda.h>
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +75,7 @@ struct async_test_env {
 	void *(*buf_acquire)(size_t size);
 	void (*buf_release)(void *buf);
 	const char *mode_label;
+	bool sub_lba_unsupported;
 };
 
 static ssize_t
@@ -941,6 +943,7 @@ out:
 struct async_test_entry {
 	const char *name;
 	int (*fn)(struct async_test_env *);
+	bool needs_sub_lba;
 };
 
 /* clang-format off */
@@ -958,7 +961,7 @@ static const struct async_test_entry async_read_tests[] = {
 	{"stream_consumer",     async_test_stream_consumer},
 	{"deferred_eval",       async_test_deferred_eval},
 	{"concurrent_streams",      async_test_concurrent_streams},
-	{"concurrent_short_reads",  async_test_concurrent_short_reads},
+	{"concurrent_short_reads",  async_test_concurrent_short_reads, true},
 	{"burst_single_stream",     async_test_burst_single_stream},
 	{"multi_stream_burst",      async_test_multi_stream_burst},
 };
@@ -985,6 +988,12 @@ run_async_read_tests(struct async_test_env *env)
 
 	int failed = 0;
 	for (size_t i = 0; i < NASYNC_READ_TESTS; i++) {
+		if (async_read_tests[i].needs_sub_lba &&
+		    env->sub_lba_unsupported) {
+			fprintf(stderr, "  %-24s skip\n",
+			        async_read_tests[i].name);
+			continue;
+		}
 		int rc = async_read_tests[i].fn(env);
 		fprintf(stderr, "  %-24s %s\n", async_read_tests[i].name,
 		        rc ? "FAIL" : "ok");
