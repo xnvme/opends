@@ -160,10 +160,15 @@ def main():
 
         _git("add", "-A", where=WORKTREE)
         c = _git("commit", "-m", msg, where=WORKTREE)
-        if c.returncode and "nothing to commit" not in (c.stdout + c.stderr):
+        unchanged = "nothing to commit" in (c.stdout + c.stderr)
+        if c.returncode and not unchanged:
             sys.exit((c.stderr or c.stdout).strip())
         head = _git("rev-parse", "--short", BRANCH).stdout.strip()
-        print(f"committed {n} files to {BRANCH}:{SNAP_DIR}/{label} ({head})")
+        if unchanged:
+            print(f"no change to {BRANCH}:{SNAP_DIR}/{label} ({head})")
+        else:
+            print(f"wrote {BRANCH}:{SNAP_DIR}/{label} "
+                  f"from {n} source files ({head})")
         if a.push:
             p = _git("push", "origin", BRANCH)
             sys.stdout.write(p.stdout)
