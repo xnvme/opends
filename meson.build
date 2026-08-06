@@ -141,6 +141,8 @@ if aisio_enabled
 endif
 
 # Test binaries
+threads_dep = dependency('threads')
+
 executable('test_smoke_ref',
   'tests/test_smoke_ref.c',
   dependencies : [opends_ref_dep],
@@ -158,6 +160,11 @@ executable('test_sync_read_prep',
 executable('test_sync_read_ref',
   'tests/test_sync_read_ref.c',
   dependencies : [opends_ref_dep],
+)
+
+executable('test_mt_read_ref',
+  'tests/test_mt_read_ref.c',
+  dependencies : [opends_ref_dep, threads_dep],
 )
 
 if gds_enabled
@@ -178,6 +185,11 @@ if aisio_test_enabled
     'tests/test_sync_read_aisio.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
+  )
+  executable('test_mt_read_aisio',
+    'tests/test_mt_read_aisio.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep, threads_dep],
   )
   executable('test_register_large_aisio',
     'tests/test_register_large_aisio.c',
@@ -217,6 +229,7 @@ if aisio_test_enabled
   )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
+  executable('test_mt_read_aisio', 'tests/skip.c')
   executable('test_register_large_aisio', 'tests/skip.c')
   executable('test_coherency_aisio', 'tests/skip.c')
   executable('test_async_read_aisio', 'tests/skip.c')

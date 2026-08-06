@@ -63,6 +63,10 @@ steps:
     run: |
       '{{ config.test.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
+  - name: test_mt_read_ref
+    run: |
+      '{{ config.test.build_dir }}/test_mt_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+
   - name: test_sync_read_gds
     run: |
       '{{ config.test.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -76,6 +80,13 @@ steps:
       OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+
+  - name: test_mt_read_aisio
+    run: |
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_mt_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_register_large_aisio
