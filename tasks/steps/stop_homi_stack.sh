@@ -23,6 +23,8 @@ sleep 2
 pkill -KILL -x qublk 2>/dev/null || true
 pkill -KILL -x homid 2>/dev/null || true
 
+rm -f /run/homi/*.desc /dev/shm/homid_dev*
+
 # Reload ublk_drv to drop stale device ids a killed qublk may have left behind.
 rmmod ublk_drv 2>/dev/null || true
 modprobe ublk_drv 2>/dev/null || true
