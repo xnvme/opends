@@ -243,6 +243,7 @@ python scripts/run_bench.py [--suite gds|opends]
 python scripts/bench_report.py
 ```
 
+
 Each suite writes artifacts to `cijoe-output-bench-<backend>/artifacts/`:
 `meta.json` (commit plus host/kernel/NVMe/GPU info) and
 `<backend>_<dataset>.log` (verbatim `filperf` stdout). `bench_report.py` parses
