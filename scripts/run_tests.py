@@ -18,8 +18,8 @@ BACKENDS = ["ref", "gds", "aisio"]
 TESTS_BY_BACKEND = {
     "ref":   ["smoke", "sync_read"],
     "gds":   ["sync_read"],
-    "aisio": ["sync_read", "register_large", "async_read",
-              "sync_write", "async_write", "block_alloc"],
+    "aisio": ["sync_read", "register_large", "coherency",
+              "async_read", "sync_write", "async_write", "block_alloc"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})
 
@@ -46,6 +46,8 @@ def _steps_for(backends, tests):
     steps = ["bind_nvme", "mount", "prepare_test_dir"]
     if needs_prep:
         steps.append("test_sync_read_prep")
+    if any(t == "coherency" for _, t in selected):
+        steps.append("test_coherency_prep")
     for b, t in selected:
         if b == "aisio":
             continue

@@ -53,6 +53,12 @@ steps:
       '{{ config.test.build_dir }}/test_sync_read_prep' \
         '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
+  - name: test_coherency_prep
+    run: |
+      dd if=/dev/urandom \
+        of='{{ config.test.mount_point }}/opends_tests/coherency_large.bin' \
+        bs=1M count=64 status=none conv=fsync
+
   - name: test_sync_read_ref
     run: |
       '{{ config.test.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -86,6 +92,13 @@ steps:
         prlimit --nofile=1048576:1048576 -- \
           '{{ config.test.build_dir }}/test_register_large_aisio' \
             '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+
+  - name: test_coherency_aisio
+    run: |
+      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_coherency_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/coherency_large.bin'
 
   - name: test_async_read_aisio
     run: |
