@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: BSD-3-Clause
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update -q && sudo apt-get install -qy --no-install-recommends clang-format
+      - run: scripts/lint_check.py
+
+  build-ref:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install meson
+        run: sudo apt-get update -q && sudo apt-get install -qy --no-install-recommends meson ninja-build
+      - run: meson setup build
+      - run: meson compile -C build
+      - name: Run ref tests
+        run: |
+          ./build/test_smoke_ref
+          mkdir -p build/testdir
+          ./build/test_sync_read_prep build/testdir/sync_read_pattern.bin
+          ./build/test_sync_read_ref build/testdir/sync_read_pattern.bin
