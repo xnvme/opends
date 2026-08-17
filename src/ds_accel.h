@@ -58,8 +58,8 @@ struct ds_accel_ops {
 	void (*host_free)(void *host);
 
 	/* Host/device bulk copy (direction inferred from the pointers). the
-         * calling thread must bind the accelerator context via ctx_set before
-         * using copy. */
+	 * calling thread must bind the accelerator context via ctx_set before
+	 * using copy. */
 	int (*copy)(void *dst, const void *src, size_t bytes);
 
 	/* Per-stream gate: write a gate word in stream order. */
