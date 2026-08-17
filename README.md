@@ -22,6 +22,20 @@ NVMe straight into GPU memory.
   device). Reads and writes are supported. Requires xNVMe, the CUDA toolkit, and
   the HOMI/qublk stack.
 
+## aisio configuration
+
+The aisio backend reads its configuration from environment variables at
+`opends_driver_open`. Out-of-range values fail the open.
+
+- `OPENDS_HOMI_DEV` (required): The NVMe device the HOMI daemon owns (PCI BDF).
+- `OPENDS_HOMI_SOCKET`: HOMI daemon socket. Default `/run/homi/homi.sock`.
+- `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 1.
+  Driver open attaches one NVMe qpair per worker.
+- `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 512.
+- `OPENDS_AISIO_CPU_MASK`: CPU affinity mask for the workers (e.g. `0xf0`).
+  Worker i is pinned to the i-th set bit, round-robin. Unset or `0` leaves
+  workers unpinned.
+
 ## Performance
 
 Headline read throughput across the four reference datasets, cold-cache, N=1.
