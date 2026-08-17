@@ -332,10 +332,8 @@ out:
 }
 
 static int
-open_device(struct driver *d, int fd)
+open_device(struct driver *d)
 {
-	(void)fd;
-
 	int nqpairs = 1 + d->n_io_threads;
 	int rc = homic_attach_qpair(d->dev_uri, nqpairs, &d->attach_descpath);
 	if (rc < 0) {
@@ -1022,7 +1020,7 @@ opends_driver_open(void)
 
 	drv = d;
 
-	int orc = open_device(d, -1);
+	int orc = open_device(d);
 	if (orc < 0) {
 		homic_disconnect();
 		free(d->attach_descpath);
@@ -1124,13 +1122,6 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!fh)
 		return opends_err(OPENDS_INVALID_VALUE);
-
-	if (!drv->xdev) {
-		int rc = open_device(drv, fd);
-		if (rc < 0)
-			return opends_err(OPENDS_DEVICE_NOT_FOUND);
-		async_setup(drv);
-	}
 
 	struct registered_file *h = calloc(1, sizeof(*h));
 	if (!h)
