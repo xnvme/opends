@@ -118,3 +118,7 @@ steps:
       batch-size: 26
       mode: async
       mnt: "{{ config.test.mount_point }}"
+
+  - name: cpu_governor_restore
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh' restore

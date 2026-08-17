@@ -7,7 +7,8 @@ gds has no knobs: its sweep is the singleton, one run of the whole suite.
 opends sweeps io_threads x queue_depth (--io-threads, --queue-depth): the
 HOMI/qublk stack comes up once, each grid point runs the bench steps into
 opends/t<t>_q<q>/ with the aisio knobs passed through the environment,
-and the stack is torn down. Restrict with --suite, --mode, --dataset.
+and the stack is torn down. Both suites set the CPU governor for the run
+and restore it in teardown. Restrict with --suite, --mode, --dataset.
 
 aisio's tasks/setup_dataset.yaml must have populated the reference datasets
 (filesize8gib, tiktokish, imagenetish) under config.test.mount_point, and
@@ -51,7 +52,11 @@ def _run_gds(args, datasets):
         steps = GDS_SETUP + _bench_steps("gds", args.mode, datasets)
     print(f"\n=== gds suite: "
           f"{', '.join(steps) if steps else 'all steps'} ===", flush=True)
-    run_cijoe(SUITES["gds"], *steps, out=f"{args.out}/gds")
+    try:
+        run_cijoe(SUITES["gds"], *steps, out=f"{args.out}/gds")
+    finally:
+        run_cijoe(SUITES["gds"], "cpu_governor_restore",
+                  out=f"{args.out}/gds/_teardown")
 
 
 def _run_opends(args, datasets):
@@ -74,7 +79,8 @@ def _run_opends(args, datasets):
                           flush=True)
     finally:
         if not args.keep_stack:
-            run_cijoe(suite, "homi_stack_down", out=f"{out}/_teardown")
+            run_cijoe(suite, "homi_stack_down", "cpu_governor_restore",
+                      out=f"{out}/_teardown")
 
 
 parser = argparse.ArgumentParser(

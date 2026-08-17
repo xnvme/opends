@@ -112,3 +112,7 @@ steps:
   - name: homi_stack_down
     run: |
       '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: cpu_governor_restore
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh' restore
