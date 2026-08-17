@@ -1030,7 +1030,16 @@ opends_driver_open(void)
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
-	async_setup(d);
+	if (async_setup(d) < 0) {
+		fprintf(stderr, "aisio: async_setup failed\n");
+		xnvme_dev_close(d->xdev);
+		homic_detach_qpair();
+		homic_disconnect();
+		free(d->attach_descpath);
+		free(d);
+		drv = NULL;
+		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
+	}
 
 	return opends_ok();
 }
