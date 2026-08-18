@@ -938,12 +938,63 @@ out:
 	return rc;
 }
 
+/*
+ * Only meaningful when the backend rejects sub-LBA tails: the rejection
+ * must report OPENDS_INVALID_VALUE through bytes_read, it must release
+ * the stream (rejection happens behind the gate, so a leaked gate hangs
+ * the stream forever), and an aligned read on the same stream must still
+ * succeed afterwards.
+ */
+static int
+async_test_unaligned_rejected(struct async_test_env *env)
+{
+	void *buf = env->buf_acquire(PAGE);
+	if (!buf)
+		return 1;
+
+	int rc = 1;
+	env->buf_zero(buf, PAGE);
+
+	/* Sub-LBA for any NVMe LBA format (min 512 bytes). */
+	size_t sz = 167;
+	off_t foff = 0;
+	off_t boff = 0;
+	ssize_t bytes_read = 0;
+
+	opends_error_t err = opends_read_async(env->fh, buf, &sz, &foff, &boff,
+	                                       &bytes_read, env->stream);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  unaligned_rejected: submit: %s\n",
+		        opends_op_status_error(err.err));
+		goto out;
+	}
+
+	if (async_test_stream_sync_timeout(env->stream, 20.0,
+	                                   "unaligned_rejected") != 0)
+		goto out;
+
+	if (bytes_read != -(ssize_t)OPENDS_INVALID_VALUE) {
+		fprintf(stderr,
+		        "  unaligned_rejected: bytes_read = %zd, expected "
+		        "%zd\n",
+		        bytes_read, -(ssize_t)OPENDS_INVALID_VALUE);
+		goto out;
+	}
+
+	rc = verify_async_read(env, buf, PAGE, PAGE, 0, 0,
+	                       "unaligned_rejected/aligned_after");
+out:
+	env->buf_release(buf);
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct async_test_entry {
 	const char *name;
 	int (*fn)(struct async_test_env *);
 	bool needs_sub_lba;
+	bool needs_aligned_only;
 };
 
 /* clang-format off */
@@ -962,6 +1013,7 @@ static const struct async_test_entry async_read_tests[] = {
 	{"deferred_eval",       async_test_deferred_eval},
 	{"concurrent_streams",      async_test_concurrent_streams},
 	{"concurrent_short_reads",  async_test_concurrent_short_reads, true},
+	{"unaligned_rejected",      async_test_unaligned_rejected, false, true},
 	{"burst_single_stream",     async_test_burst_single_stream},
 	{"multi_stream_burst",      async_test_multi_stream_burst},
 };
@@ -988,8 +1040,10 @@ run_async_read_tests(struct async_test_env *env)
 
 	int failed = 0;
 	for (size_t i = 0; i < NASYNC_READ_TESTS; i++) {
-		if (async_read_tests[i].needs_sub_lba &&
-		    env->sub_lba_unsupported) {
+		if ((async_read_tests[i].needs_sub_lba &&
+		     env->sub_lba_unsupported) ||
+		    (async_read_tests[i].needs_aligned_only &&
+		     !env->sub_lba_unsupported)) {
 			fprintf(stderr, "  %-24s skip\n",
 			        async_read_tests[i].name);
 			continue;
