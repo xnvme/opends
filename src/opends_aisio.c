@@ -694,7 +694,7 @@ complete_read_op(struct io_worker *w, struct file_op *op)
 		*op->u.async.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
 		release_gate(s, op->u.async.seq);
-		op->state = FILE_OP_FREE;
+		__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 		return;
 	}
 
@@ -706,7 +706,7 @@ complete_read_op(struct io_worker *w, struct file_op *op)
 	}
 
 	op->u.sync.result = n;
-	op->state = FILE_OP_FREE;
+	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
 
 static void
@@ -738,7 +738,7 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 	} else {
 		op->u.sync.result = n;
 	}
-	op->state = FILE_OP_FREE;
+	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
 
 static void
@@ -753,7 +753,7 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->bytes_acc = 0;
 	op->err = 0;
 	op->tail_nbytes = 0;
-	op->state = FILE_OP_IN_FLIGHT;
+	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_read_op(w, op);
 }
 
@@ -792,11 +792,12 @@ io_thread_main(void *arg)
 	for (;;) {
 		bool busy = false;
 
-		uint32_t head = w->queue_head;
+		uint32_t head =
+		        __atomic_load_n(&w->queue_head, __ATOMIC_ACQUIRE);
 		for (uint32_t i = w->queue_tail; i != head; i++) {
 			struct file_op *op =
 			        &w->file_op_queue[i & FILE_OP_QUEUE_MASK];
-			switch (op->state) {
+			switch (__atomic_load_n(&op->state, __ATOMIC_ACQUIRE)) {
 			case FILE_OP_PENDING:
 				switch (op->mode) {
 				case FILE_OP_SYNC:
@@ -818,15 +819,17 @@ io_thread_main(void *arg)
 			struct file_op *op =
 			        &w->file_op_queue[w->queue_tail &
 			                          FILE_OP_QUEUE_MASK];
-			if (op->state != FILE_OP_FREE)
+			if (__atomic_load_n(&op->state, __ATOMIC_ACQUIRE) !=
+			    FILE_OP_FREE)
 				break;
-			w->queue_tail++;
+			__atomic_store_n(&w->queue_tail, w->queue_tail + 1,
+			                 __ATOMIC_RELEASE);
 		}
 
 		if (w->queue_tail != head)
 			busy = true;
 
-		if (d->stop && !busy)
+		if (__atomic_load_n(&d->stop, __ATOMIC_ACQUIRE) && !busy)
 			break;
 
 		if (busy) {
@@ -910,7 +913,7 @@ async_setup(struct driver *d)
 	return 0;
 
 fail:
-	d->stop = true;
+	__atomic_store_n(&d->stop, true, __ATOMIC_RELEASE);
 	for (int i = 0; i < started; i++)
 		pthread_join(d->workers[i].thread, NULL);
 	for (int i = 0; i < d->n_io_threads; i++) {
@@ -934,7 +937,7 @@ async_teardown(struct driver *d)
 	if (!d->async_ready)
 		return;
 
-	d->stop = true;
+	__atomic_store_n(&d->stop, true, __ATOMIC_RELEASE);
 	for (int i = 0; i < d->n_io_threads; i++)
 		pthread_join(d->workers[i].thread, NULL);
 
@@ -1047,7 +1050,8 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 		struct io_worker *w = route_op(d);
 		uint32_t head = w->queue_head;
 
-		if (head - w->queue_tail < FILE_OP_QUEUE_SIZE) {
+		if (head - __atomic_load_n(&w->queue_tail, __ATOMIC_ACQUIRE) <
+		    FILE_OP_QUEUE_SIZE) {
 			*wp = w;
 			*headp = head;
 			return &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
@@ -1349,11 +1353,11 @@ submit_sync_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.sync.size = size;
 	op->u.sync.file_offset = file_offset;
 	op->u.sync.buf_offset = buf_offset;
-	op->state = FILE_OP_PENDING;
-	w->queue_head = head + 1;
+	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
+	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
 	pthread_mutex_unlock(&d->submit_lock);
 
-	while (op->state != FILE_OP_FREE)
+	while (__atomic_load_n(&op->state, __ATOMIC_ACQUIRE) != FILE_OP_FREE)
 		sched_yield();
 
 	ssize_t n = op->u.sync.result;
@@ -1468,8 +1472,8 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 		}
 	}
 
-	op->state = FILE_OP_PENDING;
-	w->queue_head = head + 1;
+	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
+	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
 	pthread_mutex_unlock(&d->submit_lock);
 
 	/* Reads enqueue the deferred tail copy (writes run none): offsets
