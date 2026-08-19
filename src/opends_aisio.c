@@ -205,7 +205,8 @@ ensure_bounce_buf(struct driver *d, void **bounce_buf_p)
 /* Allocate the tail-bounce slot and copy descriptor for a stream. GPU alloc
  * APIs do a device-wide sync, so this must run on a host thread: on the aisio
  * I/O thread it could deadlock waiting on the thread's own gated stream.
- * Returns 0 on success, -1 on failure (fields left zeroed). */
+ * Returns 0 on success; on failure, the dev_err to report (vendor code or
+ * -1), with the fields left zeroed. */
 static int
 stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
 {
@@ -218,9 +219,10 @@ stream_bounce_alloc(struct opends_stream *s, struct xnvme_dev *xdev)
 	 * (n_bytes == 0) kernel-safe. */
 	void *desc_host = NULL;
 	ds_accel_devptr_t desc_dev = 0;
-	if (ds_accel->host_alloc_mapped(sizeof(struct ds_bounce_copy),
-	                                &desc_host, &desc_dev) < 0)
-		return -1;
+	int rc = ds_accel->host_alloc_mapped(sizeof(struct ds_bounce_copy),
+	                                     &desc_host, &desc_dev);
+	if (rc != 0)
+		return rc;
 	memset(desc_host, 0, sizeof(struct ds_bounce_copy));
 
 	/* One slot suffices: at most one bounce per op, and the per-stream gate
@@ -848,18 +850,22 @@ mask_nth_cpu(uint64_t mask, int n)
 	return -1;
 }
 
+/* Returns 0 on success; on failure, the dev_err to report (vendor code or
+ * -1). */
 static int
 async_setup(struct driver *d)
 {
-	if (ds_accel->ctx_get(&d->accel_ctx) < 0)
-		return -1;
+	int rc = ds_accel->ctx_get(&d->accel_ctx);
+	if (rc != 0)
+		return rc;
 
 	/* Mapped so the device-side gate can address the word; the host
 	 * callback path uses the host view only. */
 	void *host = NULL;
 	ds_accel_devptr_t dptr = 0;
-	if (ds_accel->host_alloc_mapped(STREAM_WORDS_BYTES, &host, &dptr) < 0)
-		return -1;
+	rc = ds_accel->host_alloc_mapped(STREAM_WORDS_BYTES, &host, &dptr);
+	if (rc != 0)
+		return rc;
 	memset(host, 0, STREAM_WORDS_BYTES);
 	d->stream_words_host = host;
 	d->stream_words_dptr = dptr;
@@ -1103,7 +1109,8 @@ opends_driver_open(void)
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
-	if (async_setup(d) < 0) {
+	int arc = async_setup(d);
+	if (arc != 0) {
 		fprintf(stderr, "aisio: async_setup failed\n");
 		xnvme_dev_close(d->xdev);
 		homic_detach_qpair();
@@ -1112,7 +1119,7 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->submit_lock);
 		free(d);
 		drv = NULL;
-		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
+		return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR, arc);
 	}
 
 	return opends_ok();
@@ -1378,13 +1385,13 @@ opends_write(opends_handle_t fh, const void *buf_base, size_t size,
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
-classify_accel_failure(struct driver *d)
+classify_accel_failure(struct driver *d, int accel_rc)
 {
 	ds_accel_ctx_t cur;
 
 	if (ds_accel->ctx_get(&cur) != 0 || cur != d->accel_ctx)
-		return opends_err(OPENDS_CONTEXT_MISMATCH);
-	return opends_err(OPENDS_INTERNAL_ERROR);
+		return opends_err_dev(OPENDS_CONTEXT_MISMATCH, accel_rc);
+	return opends_err_dev(OPENDS_INTERNAL_ERROR, accel_rc);
 }
 
 static opends_error_t
@@ -1439,21 +1446,25 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * callback runs on the CPU and never waits. A copy kernel waits for
 	 * the GPU regardless, so once one is enqueued the callback wins
 	 * nothing. Hence the coupling to assume_aligned_only. */
+	int accel_rc;
 	if (d->assume_aligned_only) {
-		if (ds_accel->launch_host_func(cus, park_gate_cb, op) != 0) {
+		accel_rc = ds_accel->launch_host_func(cus, park_gate_cb, op);
+		if (accel_rc != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
-			return classify_accel_failure(d);
+			return classify_accel_failure(d, accel_rc);
 		}
 	} else {
 		ds_accel_devptr_t gate = opends_stream->gate_dptr;
-		if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0) {
+		accel_rc = ds_accel->stream_write_value32(cus, gate, 2 * seq);
+		if (accel_rc != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
-			return classify_accel_failure(d);
+			return classify_accel_failure(d, accel_rc);
 		}
-		if (ds_accel->stream_wait_value32_geq(cus, gate, 2 * seq + 1) !=
-		    0) {
+		accel_rc = ds_accel->stream_wait_value32_geq(cus, gate,
+		                                             2 * seq + 1);
+		if (accel_rc != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
-			return classify_accel_failure(d);
+			return classify_accel_failure(d, accel_rc);
 		}
 	}
 
@@ -1466,9 +1477,12 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * copy_stream no-ops when it is zero. Enqueue after publishing so a
 	 * failed enqueue is still drained by the I/O thread (which releases the
 	 * gate); only this read is lost. */
-	if (!d->assume_aligned_only && !is_write &&
-	    ds_accel->copy_stream(opends_stream->bounce_desc_dev, cus) != 0)
-		return classify_accel_failure(d);
+	if (!d->assume_aligned_only && !is_write) {
+		accel_rc = ds_accel->copy_stream(opends_stream->bounce_desc_dev,
+		                                 cus);
+		if (accel_rc != 0)
+			return classify_accel_failure(d, accel_rc);
+	}
 
 	return opends_ok();
 }
@@ -1520,8 +1534,9 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	*opends_stream->gate = 0;
 	opends_stream->next_seq = 0;
 
-	if (stream_bounce_alloc(opends_stream, drv->xdev) < 0)
-		return opends_err(OPENDS_INTERNAL_ERROR);
+	int rc = stream_bounce_alloc(opends_stream, drv->xdev);
+	if (rc != 0)
+		return opends_err_dev(OPENDS_INTERNAL_ERROR, rc);
 
 	if (ds_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
 		stream_bounce_free(opends_stream, drv->xdev);

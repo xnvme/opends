@@ -89,6 +89,8 @@ typedef enum opends_op_error {
 
 typedef struct opends_error {
 	opends_op_error_t err;
+	/* Backend-specific subcode for err (e.g. a CUDA error code from the
+	 * aisio backend's accelerator runtime); 0 or -1 when none applies. */
 	opends_result_t dev_err;
 } opends_error_t;
 

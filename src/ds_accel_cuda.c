@@ -20,7 +20,10 @@ static int
 cuda_ctx_get(ds_accel_ctx_t *out)
 {
 	CUcontext ctx;
-	if (cuCtxGetCurrent(&ctx) != CUDA_SUCCESS || !ctx)
+	CUresult rc = cuCtxGetCurrent(&ctx);
+	if (rc != CUDA_SUCCESS)
+		return (int)rc;
+	if (!ctx)
 		return -1;
 	*out = ctx;
 	return 0;
@@ -35,15 +38,17 @@ cuda_ctx_set(ds_accel_ctx_t ctx)
 static int
 cuda_host_alloc_mapped(size_t bytes, void **host, ds_accel_devptr_t *dptr)
 {
-	if (cuMemHostAlloc(host, bytes,
-	                   CU_MEMHOSTALLOC_DEVICEMAP |
-	                           CU_MEMHOSTALLOC_PORTABLE) != CUDA_SUCCESS)
-		return -1;
+	CUresult rc = cuMemHostAlloc(host, bytes,
+	                             CU_MEMHOSTALLOC_DEVICEMAP |
+	                                     CU_MEMHOSTALLOC_PORTABLE);
+	if (rc != CUDA_SUCCESS)
+		return (int)rc;
 	CUdeviceptr d = 0;
-	if (cuMemHostGetDevicePointer(&d, *host, 0) != CUDA_SUCCESS) {
+	rc = cuMemHostGetDevicePointer(&d, *host, 0);
+	if (rc != CUDA_SUCCESS) {
 		cuMemFreeHost(*host);
 		*host = NULL;
-		return -1;
+		return (int)rc;
 	}
 	*dptr = (ds_accel_devptr_t)d;
 	return 0;
@@ -58,39 +63,29 @@ cuda_host_free(void *host)
 static int
 cuda_copy(void *dst, const void *src, size_t bytes)
 {
-	return cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, bytes) ==
-	                       CUDA_SUCCESS
-	               ? 0
-	               : -1;
+	return (int)cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, bytes);
 }
 
 static int
 cuda_stream_write_value32(ds_accel_stream_t s, ds_accel_devptr_t addr,
                           uint32_t value)
 {
-	return cuStreamWriteValue32((CUstream)s, (CUdeviceptr)addr, value,
-	                            CU_STREAM_WRITE_VALUE_DEFAULT) ==
-	                       CUDA_SUCCESS
-	               ? 0
-	               : -1;
+	return (int)cuStreamWriteValue32((CUstream)s, (CUdeviceptr)addr, value,
+	                                 CU_STREAM_WRITE_VALUE_DEFAULT);
 }
 
 static int
 cuda_stream_wait_value32_geq(ds_accel_stream_t s, ds_accel_devptr_t addr,
                              uint32_t value)
 {
-	return cuStreamWaitValue32((CUstream)s, (CUdeviceptr)addr, value,
-	                           CU_STREAM_WAIT_VALUE_GEQ) == CUDA_SUCCESS
-	               ? 0
-	               : -1;
+	return (int)cuStreamWaitValue32((CUstream)s, (CUdeviceptr)addr, value,
+	                                CU_STREAM_WAIT_VALUE_GEQ);
 }
 
 static int
 cuda_launch_host_func(ds_accel_stream_t s, void (*fn)(void *), void *arg)
 {
-	return cuLaunchHostFunc((CUstream)s, (CUhostFn)fn, arg) == CUDA_SUCCESS
-	               ? 0
-	               : -1;
+	return (int)cuLaunchHostFunc((CUstream)s, (CUhostFn)fn, arg);
 }
 
 static const struct ds_accel_ops cuda_ops = {

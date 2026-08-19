@@ -23,8 +23,11 @@ typedef uint64_t ds_accel_devptr_t;
 typedef void *ds_accel_ctx_t;
 typedef void *ds_accel_stream_t;
 
-/* The interface an accelerator vendor implements. Each method returns 0 on
- * success and -1 on failure unless noted. */
+/* The interface an accelerator vendor implements. Each int-returning method
+ * returns 0 on success and a nonzero vendor error code on failure (CUDA: a
+ * driver or runtime API error code). The code is opaque to the core, reported
+ * through dev_err but never interpreted; -1 serves where no vendor code
+ * applies. */
 struct ds_accel_ops {
 	/* xNVMe P2P backend string for this vendor (e.g. "upcie-cuda"). */
 	const char *xnvme_be;
