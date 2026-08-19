@@ -1478,7 +1478,11 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * process using the GPU delays them by orders of magnitude. The
 	 * callback runs on the CPU and never waits. A copy kernel waits for
 	 * the GPU regardless, so once one is enqueued the callback wins
-	 * nothing. Hence the coupling to assume_aligned_only. */
+	 * nothing. Hence the coupling to assume_aligned_only.
+	 *
+	 * The gate enqueues run under submit_lock so gate values reach the
+	 * stream in seq order; an enqueue that blocks (a full stream queue)
+	 * stalls all submission. */
 	int accel_rc;
 	if (d->assume_aligned_only) {
 		accel_rc = ds_accel->launch_host_func(cus, park_gate_cb, op);

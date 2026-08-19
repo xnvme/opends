@@ -59,6 +59,24 @@ _Commit `c4553df` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU `
 
 ## opends API
 
+### Threading and context
+
+I/O submission and registration (handles, buffers, streams) are thread-safe once
+`opends_driver_open` has returned. `opends_driver_open` and
+`opends_driver_close` are not. Deregistering or freeing an object with I/O still
+in flight on it is undefined, as with closing a file descriptor that has I/O
+in flight.
+
+The aisio backend captures the CUDA context current at `opends_driver_open` and
+requires that same context to be current on every thread that submits I/O
+through the API. A submit from a thread with a different context current fails
+with `OPENDS_CONTEXT_MISMATCH`. An application that uses only the CUDA runtime
+API meets this automatically, since every thread on the same device shares the
+primary context. An application that creates contexts with the driver API
+(`cuCtxCreate`) must bind the driver-open context on each submitting thread with
+`cuCtxSetCurrent`. `cudaSetDevice` binds the primary context and is not
+equivalent.
+
 ### Basic read
 
 Read offsets must be LBA-aligned and the file opened with `O_DIRECT`. The size

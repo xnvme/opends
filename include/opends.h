@@ -28,6 +28,16 @@
  *
  *   Functions returning ssize_t (read/write) return the byte count on
  *   success or a negated opends_op_error_t on failure.
+ *
+ * Thread safety:
+ *
+ *   Once opends_driver_open has returned, I/O submission and
+ *   registration (handles, buffers, streams) may run concurrently
+ *   from multiple threads. opends_driver_open and opends_driver_close
+ *   must not run concurrently with any other opends call.
+ *   Deregistering or freeing an object with I/O still in flight on it
+ *   is undefined, as with closing a file descriptor that has I/O in
+ *   flight.
  */
 #ifndef OPENDS_H_
 #define OPENDS_H_
@@ -114,6 +124,11 @@ typedef void *opends_handle_t;
  * Driver lifecycle. Call opends_driver_open() once before any other
  * opends operation. Call opends_driver_close() to release all
  * resources when done.
+ *
+ * Backends bound to an accelerator context (e.g. aisio) capture the
+ * context current at opends_driver_open. Every thread that submits
+ * I/O must have that same context current; the aisio backend fails
+ * such submits with OPENDS_CONTEXT_MISMATCH.
  */
 opends_error_t opends_driver_open(void);
 opends_error_t opends_driver_close(void);
