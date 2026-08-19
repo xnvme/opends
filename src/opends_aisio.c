@@ -181,6 +181,7 @@ struct driver {
 	struct io_worker *workers;
 	uint32_t rr_next;
 	pthread_mutex_t submit_lock;
+	pthread_mutex_t reg_lock;
 	bool stop;
 };
 
@@ -1092,12 +1093,14 @@ opends_driver_open(void)
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
 	pthread_mutex_init(&d->submit_lock, NULL);
+	pthread_mutex_init(&d->reg_lock, NULL);
 
 	const char *sock = getenv(ENV_HOMI_SOCKET);
 	int rc = homic_connect(
 	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
 	if (rc < 0) {
 		pthread_mutex_destroy(&d->submit_lock);
+		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1109,6 +1112,7 @@ opends_driver_open(void)
 		homic_disconnect();
 		free(d->attach_descpath);
 		pthread_mutex_destroy(&d->submit_lock);
+		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
@@ -1121,6 +1125,7 @@ opends_driver_open(void)
 		homic_disconnect();
 		free(d->attach_descpath);
 		pthread_mutex_destroy(&d->submit_lock);
+		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
 		drv = NULL;
 		return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR, arc);
@@ -1154,6 +1159,7 @@ opends_driver_close(void)
 	free(drv->attach_descpath);
 
 	pthread_mutex_destroy(&drv->submit_lock);
+	pthread_mutex_destroy(&drv->reg_lock);
 	free(drv);
 	drv = NULL;
 	return opends_ok();
@@ -1162,7 +1168,7 @@ opends_driver_close(void)
 long
 opends_use_count(void)
 {
-	return use_count;
+	return __atomic_load_n(&use_count, __ATOMIC_RELAXED);
 }
 
 opends_error_t
@@ -1217,7 +1223,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	h->fd = fd;
 
 	*fh = h;
-	use_count++;
+	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
 	return opends_ok();
 }
 
@@ -1227,7 +1233,7 @@ opends_handle_deregister(opends_handle_t fh)
 	if (!fh)
 		return;
 	free(fh);
-	use_count--;
+	__atomic_fetch_sub(&use_count, 1, __ATOMIC_RELAXED);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1237,17 +1243,26 @@ opends_handle_deregister(opends_handle_t fh)
 void *
 opends_alloc(size_t size)
 {
-	if (!drv || !drv->xdev || drv->buf_count >= MAX_BUF_ENTRIES)
+	if (!drv || !drv->xdev)
 		return NULL;
 
-	void *buf = xnvme_buf_alloc(drv->xdev, size);
-	if (!buf)
+	pthread_mutex_lock(&drv->reg_lock);
+	if (drv->buf_count >= MAX_BUF_ENTRIES) {
+		pthread_mutex_unlock(&drv->reg_lock);
 		return NULL;
+	}
+
+	void *buf = xnvme_buf_alloc(drv->xdev, size);
+	if (!buf) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return NULL;
+	}
 
 	struct buf_entry *e = &drv->bufs[drv->buf_count++];
 	e->base = buf;
 	e->length = size;
 	e->owned = true;
+	pthread_mutex_unlock(&drv->reg_lock);
 	return buf;
 }
 
@@ -1257,16 +1272,18 @@ opends_free(void *buf)
 	if (!drv || !buf)
 		return;
 
+	pthread_mutex_lock(&drv->reg_lock);
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf) {
 			if (!drv->bufs[i].owned)
-				return;
+				break;
 			xnvme_buf_free(drv->xdev, buf);
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
-			return;
+			break;
 		}
 	}
+	pthread_mutex_unlock(&drv->reg_lock);
 }
 
 opends_error_t
@@ -1281,15 +1298,21 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 	if (!buf_base || !size)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	pthread_mutex_lock(&drv->reg_lock);
 	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf_base)
+		if (drv->bufs[i].base == buf_base) {
+			pthread_mutex_unlock(&drv->reg_lock);
 			return opends_err(OPENDS_MEMORY_ALREADY_REGISTERED);
+		}
 	}
-	if (drv->buf_count >= MAX_BUF_ENTRIES)
+	if (drv->buf_count >= MAX_BUF_ENTRIES) {
+		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
+	}
 
 	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
 	if (rc < 0) {
+		pthread_mutex_unlock(&drv->reg_lock);
 		fprintf(stderr,
 		        "opends_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
 		        buf_base, size, rc);
@@ -1300,6 +1323,7 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 	e->base = buf_base;
 	e->length = size;
 	e->owned = false;
+	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
 }
 
@@ -1313,16 +1337,21 @@ opends_buf_deregister(const void *buf_base)
 	if (!buf_base)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	pthread_mutex_lock(&drv->reg_lock);
 	for (int i = 0; i < drv->buf_count; i++) {
 		if (drv->bufs[i].base == buf_base) {
-			if (drv->bufs[i].owned)
+			if (drv->bufs[i].owned) {
+				pthread_mutex_unlock(&drv->reg_lock);
 				return opends_err(OPENDS_INVALID_VALUE);
+			}
 			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
 			drv->buf_count--;
 			xnvme_mem_unmap(drv->xdev, (void *)buf_base);
+			pthread_mutex_unlock(&drv->reg_lock);
 			return opends_ok();
 		}
 	}
+	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
 }
 
@@ -1524,10 +1553,15 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 
 	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
 
-	if (ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0)
+	pthread_mutex_lock(&drv->reg_lock);
+	if (ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0) {
+		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_ok();
-	if (drv->n_streams >= MAX_STREAMS)
+	}
+	if (drv->n_streams >= MAX_STREAMS) {
+		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
+	}
 
 	int n = drv->n_streams;
 	struct opends_stream *opends_stream = &drv->streams[n];
@@ -1539,15 +1573,19 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	opends_stream->next_seq = 0;
 
 	int rc = stream_bounce_alloc(opends_stream, drv->xdev);
-	if (rc != 0)
+	if (rc != 0) {
+		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err_dev(OPENDS_INTERNAL_ERROR, rc);
+	}
 
 	if (ds_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
 		stream_bounce_free(opends_stream, drv->xdev);
+		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
 	drv->n_streams = n + 1;
+	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
 }
 

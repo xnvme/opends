@@ -42,7 +42,9 @@ ds_stream_map_hash(ds_accel_stream_t s, uint32_t mask)
  * slots [hash(K1), K1's_slot], and those were all non-empty at K1's
  * registration (else K1 would have stopped sooner). The table is
  * grow-only, so a slot in that range cannot later become empty or
- * be the destination of another concurrent insert. */
+ * be the destination of another concurrent insert. The key is stored
+ * with release and loaded with acquire, so an observed key publishes
+ * its idx and everything the caller wrote before the put. */
 static inline int
 ds_stream_map_get(const struct ds_stream_map_entry *e, uint32_t mask,
                   ds_accel_stream_t stream)
@@ -51,16 +53,18 @@ ds_stream_map_get(const struct ds_stream_map_entry *e, uint32_t mask,
 	uint32_t cap = mask + 1;
 	for (uint32_t p = 0; p < cap; p++) {
 		const struct ds_stream_map_entry *s = &e[(h + p) & mask];
-		if (s->key == stream)
+		ds_accel_stream_t k =
+		        __atomic_load_n(&s->key, __ATOMIC_ACQUIRE);
+		if (k == stream)
 			return s->idx;
-		if (s->key == NULL)
+		if (k == NULL)
 			return -1;
 	}
 	return -1;
 }
 
 /* Insert, returning 0 on success and -1 if full. Caller must
- * serialize inserts (in opends_aisio.c, alloc_mtx) and keep the load
+ * serialize inserts (in opends_aisio.c, reg_lock) and keep the load
  * factor below 50%. See ds_stream_map_get for the lock-free reader
  * invariant. */
 static inline int
@@ -73,7 +77,7 @@ ds_stream_map_put(struct ds_stream_map_entry *e, uint32_t mask,
 		struct ds_stream_map_entry *s = &e[(h + p) & mask];
 		if (s->key == NULL) {
 			s->idx = idx;
-			s->key = stream;
+			__atomic_store_n(&s->key, stream, __ATOMIC_RELEASE);
 			return 0;
 		}
 	}
