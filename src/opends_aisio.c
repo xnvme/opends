@@ -1378,6 +1378,16 @@ opends_write(opends_handle_t fh, const void *buf_base, size_t size,
 /* ------------------------------------------------------------------ */
 
 static opends_error_t
+classify_accel_failure(struct driver *d)
+{
+	ds_accel_ctx_t cur;
+
+	if (ds_accel->ctx_get(&cur) != 0 || cur != d->accel_ctx)
+		return opends_err(OPENDS_CONTEXT_MISMATCH);
+	return opends_err(OPENDS_INTERNAL_ERROR);
+}
+
+static opends_error_t
 submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
                 void *buf_base, size_t *size_p, off_t *file_offset_p,
                 off_t *buf_offset_p, ssize_t *bytes_p, opends_stream_t stream)
@@ -1432,18 +1442,18 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (d->assume_aligned_only) {
 		if (ds_accel->launch_host_func(cus, park_gate_cb, op) != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
-			return opends_err(OPENDS_INTERNAL_ERROR);
+			return classify_accel_failure(d);
 		}
 	} else {
 		ds_accel_devptr_t gate = opends_stream->gate_dptr;
 		if (ds_accel->stream_write_value32(cus, gate, 2 * seq) != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
-			return opends_err(OPENDS_INTERNAL_ERROR);
+			return classify_accel_failure(d);
 		}
 		if (ds_accel->stream_wait_value32_geq(cus, gate, 2 * seq + 1) !=
 		    0) {
 			pthread_mutex_unlock(&d->submit_lock);
-			return opends_err(OPENDS_INTERNAL_ERROR);
+			return classify_accel_failure(d);
 		}
 	}
 
@@ -1458,7 +1468,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * gate); only this read is lost. */
 	if (!d->assume_aligned_only && !is_write &&
 	    ds_accel->copy_stream(opends_stream->bounce_desc_dev, cus) != 0)
-		return opends_err(OPENDS_INTERNAL_ERROR);
+		return classify_accel_failure(d);
 
 	return opends_ok();
 }

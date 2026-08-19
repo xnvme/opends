@@ -29,7 +29,8 @@ struct ds_accel_ops {
 	/* xNVMe P2P backend string for this vendor (e.g. "upcie-cuda"). */
 	const char *xnvme_be;
 
-	/* Capture the caller's current context (fails if there is none). */
+	/* Capture the caller's current context (fails if there is none).
+	 * Captured values compare equal iff they name the same context. */
 	int (*ctx_get)(ds_accel_ctx_t *out);
 	/* Make this thread's accelerator work target the captured context
 	 * (CUDA: cuCtxSetCurrent; HIP: hipSetDevice). */
