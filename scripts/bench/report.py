@@ -5,7 +5,8 @@
 Reads every history.jsonl under the input dirs (one record per leg, written by
 cijoe-scripts/bench_run.py) and, per opends (dataset, mode), renders a MiB/s
 matrix over (io_threads x queue_depth). Legs run with
-OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 get their own section rather than sharing
+OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1, a non-default OPENDS_AISIO_IDLE_SPIN_US,
+or OPENDS_AISIO_BUSY_SPIN=1 get their own sections rather than sharing
 those cells, and stay out of the plot. When gds legs are present among the
 records, also renders a GDS-vs-OpenDS table per (queue_depth, io_threads)
 point. Writes report.md and sweep.csv (all backends) to the output dir, plus
@@ -46,6 +47,7 @@ def _records(in_dirs):
 def _collect(in_dirs):
     grids = {}          # (dataset, mode) -> {(io_threads, queue_depth): mib_s}
     aligned = {}        # same, for OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 legs
+    variants = {}       # knob label -> same, for other non-default knobs
     gds = {}            # (dataset, mode) -> mib_s
     rows = []
     threads_seen, depths_seen = set(), set()
@@ -54,16 +56,29 @@ def _collect(in_dirs):
         res = rec.get("result", {})
         t, q = cfg.get("io_threads"), cfg.get("queue_depth")
         aa = cfg.get("assume_aligned_only")
+        spin = cfg.get("idle_spin_us")
+        busy = cfg.get("busy_spin")
         rows.append({"backend": cfg.get("backend"),
                      "dataset": cfg.get("dataset"), "mode": cfg.get("mode"),
                      "io_threads": t, "queue_depth": q,
                      "assume_aligned_only": int(bool(aa)),
+                     "idle_spin_us": spin, "busy_spin": int(bool(busy)),
                      "mib_s": res.get("mib_s"), "iops": res.get("iops"),
                      "error": rec.get("error")})
         if cfg.get("backend") == "opends":
-            # An aligned leg is a different contract, not another cell in the
-            # sweep matrix: keep it out of the default grid (and the plot).
-            dst = aligned if aa else grids
+            # A leg run with a non-default knob is a different contract, not
+            # another cell in the sweep matrix: keep it out of the default
+            # grid (and the plot). Aligned-only legs keep their own section;
+            # any other knob combination gets a section labeled by its knobs.
+            parts = (["aligned"] if aa else []) \
+                + ([f"idle_spin_us={spin}"] if spin is not None else []) \
+                + (["busy_spin"] if busy else [])
+            if not parts:
+                dst = grids
+            elif parts == ["aligned"]:
+                dst = aligned
+            else:
+                dst = variants.setdefault(", ".join(parts), {})
             dst.setdefault((cfg.get("dataset"), cfg.get("mode")), {})[
                 (t, q)] = res.get("mib_s")
             threads_seen.add(t)
@@ -76,7 +91,7 @@ def _collect(in_dirs):
             gds[key] = res.get("mib_s")
     threads = sorted(x for x in threads_seen if x is not None)
     depths = sorted(x for x in depths_seen if x is not None)
-    return grids, aligned, gds, rows, threads, depths
+    return grids, aligned, variants, gds, rows, threads, depths
 
 
 def _pivot_md(ds, mode, grid, threads, depths):
@@ -262,7 +277,7 @@ def main():
     out_dir = (Path(a.out) if a.out else in_dirs[0])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    grids, aligned, gds, rows, threads, depths = _collect(in_dirs)
+    grids, aligned, variants, gds, rows, threads, depths = _collect(in_dirs)
     if not rows:
         sys.exit("no history.jsonl records found under: "
                  + ", ".join(str(d) for d in in_dirs))
@@ -281,6 +296,12 @@ def main():
                                        key=lambda kv: (kv[0][0] or "",
                                                        kv[0][1] or "")):
             md += _pivot_md(ds, mode, grid, threads, depths)
+    for label in sorted(variants):
+        md += [f"## {label}", ""]
+        for (ds, mode), grid in sorted(variants[label].items(),
+                                       key=lambda kv: (kv[0][0] or "",
+                                                       kv[0][1] or "")):
+            md += _pivot_md(ds, mode, grid, threads, depths)
     if gds:
         md += ["## GDS vs OpenDS", ""]
         md += _compare_md(grids, gds, threads, depths)
@@ -292,6 +313,7 @@ def main():
         w = csv.DictWriter(f, fieldnames=["backend", "dataset", "mode",
                                           "io_threads", "queue_depth",
                                           "assume_aligned_only",
+                                          "idle_spin_us", "busy_spin",
                                           "mib_s", "iops", "error"])
         w.writeheader()
         w.writerows(rows)

@@ -48,7 +48,8 @@ def _parse_summary(text):
 
 
 def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
-                   cpu_mask, assume_aligned_only, error=None):
+                   cpu_mask, assume_aligned_only, idle_spin, busy_spin,
+                   error=None):
     artifacts = Path(cijoe.output_path) / "artifacts"
     meta_path = artifacts / "meta.json"
     if not meta_path.is_file():
@@ -77,6 +78,9 @@ def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
             "queue_depth": int(queue_depth) if opends and queue_depth else None,
             "cpu_mask": cpu_mask if opends and cpu_mask else None,
             "assume_aligned_only": bool(assume_aligned_only) if opends else None,
+            "idle_spin_us": int(idle_spin) if opends and idle_spin is not None
+            else None,
+            "busy_spin": bool(busy_spin) if opends else None,
             "n": 1,
         },
         "result": _parse_summary(text),
@@ -124,9 +128,13 @@ def main(args, cijoe):
     cpu_mask = os.environ.get("OPENDS_AISIO_CPU_MASK")
     aligned = os.environ.get("OPENDS_AISIO_ASSUME_ALIGNED_ONLY")
     assume_aligned_only = bool(aligned and aligned != "0")
+    idle_spin = os.environ.get("OPENDS_AISIO_IDLE_SPIN_US")
+    busy = os.environ.get("OPENDS_AISIO_BUSY_SPIN")
+    busy_spin = bool(busy and busy != "0")
     knobs = (f" io_threads={io_threads} queue_depth={queue_depth}"
              f" cpu_mask={cpu_mask}"
              f" assume_aligned_only={int(assume_aligned_only)}"
+             f" idle_spin_us={idle_spin} busy_spin={int(busy_spin)}"
              if args.backend == "opends" else "")
     print(f"--- {args.backend} {args.data_dir} {args.mode} "
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
@@ -165,6 +173,10 @@ def main(args, cijoe):
             env += f"OPENDS_AISIO_CPU_MASK='{cpu_mask}' "
         if assume_aligned_only:
             env += "OPENDS_AISIO_ASSUME_ALIGNED_ONLY='1' "
+        if idle_spin is not None:
+            env += f"OPENDS_AISIO_IDLE_SPIN_US='{idle_spin}' "
+        if busy_spin:
+            env += "OPENDS_AISIO_BUSY_SPIN='1' "
     else:
         target = bdf
 
@@ -196,8 +208,8 @@ def main(args, cijoe):
     out.write_text(state.output())
     log.info(f"wrote {out}")
     _append_record(cijoe, args, out.name, state.output(), io_threads,
-                   queue_depth, cpu_mask, assume_aligned_only,
-                   error=f"filperf rc={err}" if err else None)
+                   queue_depth, cpu_mask, assume_aligned_only, idle_spin,
+                   busy_spin, error=f"filperf rc={err}" if err else None)
     if err:
         log.warning(f"{args.data_dir}/{args.mode}: filperf rc={err} under "
                     f"assume_aligned_only; recorded and continuing")

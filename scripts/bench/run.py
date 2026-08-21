@@ -4,12 +4,14 @@
 
 Every suite sweeps its own knob grid into cijoe-output-bench/<suite>/.
 gds has no knobs: its sweep is the singleton, one run of the whole suite.
-opends sweeps io_threads x queue_depth x assume_aligned_only (--io-threads,
---queue-depth, --assume-aligned-only): the HOMI/qublk stack comes up once,
-each grid point runs the bench steps into opends/t<t>_q<q>[_aligned]/ with the
-aisio knobs passed through the environment, and the stack is torn down. Both
-suites set the CPU governor for the run and restore it in teardown. Restrict
-with --suite, --mode, --dataset.
+opends sweeps io_threads x queue_depth x assume_aligned_only x idle_spin
+(--io-threads, --queue-depth, --assume-aligned-only, --idle-spin): the
+HOMI/qublk stack comes up once, each grid point runs the bench steps into
+opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/ with the aisio knobs passed
+through the environment, and the stack is torn down. --busy-spin applies
+OPENDS_AISIO_BUSY_SPIN=1 to the whole invocation. Both suites set the CPU
+governor for the run and restore it in teardown. Restrict with --suite,
+--mode, --dataset.
 
 An assume_aligned_only leg rejects any read with a sub-LBA tail, so datasets
 whose files are not LBA-multiples fail by construction. Those legs are recorded
@@ -49,6 +51,19 @@ def _int_list(s):
     return [int(x) for x in s.split(",") if x.strip()]
 
 
+def _spin_list(s):
+    """Comma list of idle-spin values: "default" keeps the library default
+    (the env var stays unset), an integer is microseconds (0 naps
+    immediately, the pre-idle-spin behavior)."""
+    out = []
+    for x in s.split(","):
+        x = x.strip()
+        if not x:
+            continue
+        out.append(None if x == "default" else int(x))
+    return out
+
+
 def _run_gds(args, datasets):
     """Singleton sweep: the gds suite has no knobs to grid over."""
     if args.mode == "both" and set(datasets) == set(DATASETS):
@@ -68,24 +83,37 @@ def _run_opends(args, datasets):
     suite = SUITES["opends"]
     steps = _bench_steps("opends", args.mode, datasets)
     out = f"{args.out}/opends"
+    if args.busy_spin:
+        os.environ["OPENDS_AISIO_BUSY_SPIN"] = "1"
+    else:
+        os.environ.pop("OPENDS_AISIO_BUSY_SPIN", None)
     if not args.skip_setup:
         run_cijoe(suite, "cpu_governor", "homi_stack_up", out=f"{out}/_setup")
     try:
-        for a in args.assume_aligned_only:
-            for t in args.io_threads:
-                for q in args.queue_depth:
-                    os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
-                    os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
-                    os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
-                    leg = f"t{t}_q{q}" + ("_aligned" if a else "")
-                    print(f"\n=== opends io_threads={t} queue_depth={q} "
-                          f"assume_aligned_only={a}: {', '.join(steps)} ===",
-                          flush=True)
-                    rc = run_cijoe(suite, "meta", *steps,
-                                   out=f"{out}/{leg}", check=False)
-                    if rc:
-                        print(f"leg {leg} failed (rc={rc}); continuing",
-                              flush=True)
+        for s in args.idle_spin:
+            if s is None:
+                os.environ.pop("OPENDS_AISIO_IDLE_SPIN_US", None)
+            else:
+                os.environ["OPENDS_AISIO_IDLE_SPIN_US"] = str(s)
+            for a in args.assume_aligned_only:
+                for t in args.io_threads:
+                    for q in args.queue_depth:
+                        os.environ["OPENDS_AISIO_IO_THREADS"] = str(t)
+                        os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
+                        os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
+                        leg = (f"t{t}_q{q}" + ("_aligned" if a else "")
+                               + (f"_spin{s}" if s is not None else "")
+                               + ("_busy" if args.busy_spin else ""))
+                        print(f"\n=== opends io_threads={t} queue_depth={q} "
+                              f"assume_aligned_only={a}"
+                              + (f" idle_spin_us={s}" if s is not None else "")
+                              + (" busy_spin=1" if args.busy_spin else "")
+                              + f": {', '.join(steps)} ===", flush=True)
+                        rc = run_cijoe(suite, "meta", *steps,
+                                       out=f"{out}/{leg}", check=False)
+                        if rc:
+                            print(f"leg {leg} failed (rc={rc}); continuing",
+                                  flush=True)
     finally:
         if not args.keep_stack:
             run_cijoe(suite, "homi_stack_down", "cpu_governor_restore",
@@ -131,6 +159,19 @@ grid.add_argument("--assume-aligned-only", type=_int_list, default=[0, 1],
                        "pass 0 for the tail-fixup sweep alone. An aligned leg "
                        "writes to t<t>_q<q>_aligned/, so 0-legs keep their "
                        "paths.")
+grid.add_argument("--idle-spin", type=_spin_list, default=[None],
+                  metavar="LIST",
+                  help="Comma-separated OPENDS_AISIO_IDLE_SPIN_US values in "
+                       "microseconds; the token 'default' keeps the library "
+                       "default (env unset), 0 naps immediately (the "
+                       "pre-idle-spin behavior). E.g. 'default,0' doubles the "
+                       "grid into an on/off comparison. An explicit value "
+                       "writes to t<t>_q<q>_spin<v>/, so default legs keep "
+                       "their paths. Default: 'default'.")
+grid.add_argument("--busy-spin", action="store_true",
+                  help="Set OPENDS_AISIO_BUSY_SPIN=1 for every leg of this "
+                       "invocation (workers poll flat out; pair with "
+                       "--cpu-mask). Legs write to t<t>_q<q>[...]_busy/.")
 grid.add_argument("--skip-setup", action="store_true",
                   help="Assume the HOMI stack is already up.")
 grid.add_argument("--keep-stack", action="store_true",
