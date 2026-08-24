@@ -8,7 +8,7 @@ scripts/rsync.py); reading from the target instead of the host avoids
 the decoupling where host edits after rsync would mislabel binaries
 built from the prior tree.
 
-Dependency SHAs (xnvme, xal, homi, qublk, fil) are resolved from their
+Dependency SHAs (xnvme, xal, fil) are resolved from their
 checkouts under config.deps.src_root, so a throughput change is
 attributable to OpenDS versus a dep rebase under the same branch pin.
 
@@ -27,7 +27,7 @@ import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEPS = ["xnvme", "xal", "homi", "qublk", "fil"]
+DEPS = ["xnvme", "xal", "fil"]
 
 
 def _target_stdout(cijoe, cmd, quiet=False):

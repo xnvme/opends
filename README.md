@@ -16,11 +16,12 @@ NVMe straight into GPU memory.
 - **aisio** (`libopends_aisio`): PCIe P2P DMA between NVMe and GPU memory via
   [xNVMe](https://xnvme.io)'s `upcie-cuda` backend (no filesystem or kernel
   `nvme` driver in the read data path). Based on
-  [aisio](https://github.com/xnvme/aisio). A HOMI daemon owns the userspace NVMe
-  controller, serves an I/O qpair per file, and resolves each file's device
-  extents on demand (`homic_get_extents`, FIEMAP over the qublk-exported block
-  device). Reads and writes are supported. Requires xNVMe, the CUDA toolkit, and
-  the HOMI/qublk stack.
+  [aisio](https://github.com/xnvme/aisio). A homi server (an xNVMe tool) is
+  the primary of an xNVMe multi-process group and holds the userspace NVMe
+  controller up; the driver joins that group as a secondary and allocates its
+  own I/O queues. File extents come from the index xal-server publishes over
+  POSIX shared memory, built over the qublk-exported block device. Reads and
+  writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
 
 ## aisio configuration
 
@@ -28,10 +29,11 @@ The aisio backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
 the open.
 
-- `OPENDS_HOMI_DEV` (required): The NVMe device the HOMI daemon owns (PCI BDF).
-- `OPENDS_HOMI_SOCKET`: HOMI daemon socket. Default `/run/homi/homi.sock`.
+- `OPENDS_HOMI_DEV` (required): The NVMe device the homi server owns (PCI BDF).
+- `OPENDS_XAL_SHM`: Shared-memory name of the xal-server extent index.
+  Default `/xal_dev0`.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
-  Driver open attaches one NVMe qpair per worker.
+  Driver open creates one NVMe queue per worker.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
@@ -46,6 +48,36 @@ the open.
   LBA-aligned. Reads that start or end off an LBA boundary fail with
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
+- `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
+  the test tasks also pass to homi, so both sides agree.
+- `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
+  queue rings and PRP lists. Default 256. The heap comes out of the hugepages
+  every process in the group shares, so xNVMe's 1 GiB default is too large.
+- `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
+  which leaves it at the xNVMe default.
+
+### Writes and the extent index
+
+Every read through the AiSIO backend resolves the file's extents in the index
+that xal-server publishes. The stack runs xal-server with `watchmode = 0`, so
+the index describes the file system as it was when xal-server started, and
+nothing updates it while the stack is up.
+
+Writes through OpenDS (`opends_sync_write`, `opends_async_write`,
+`opends_stream_write`) go through the kernel and are correct: the bytes land
+in the file, and a kernel read sees them.
+
+**Undefined behaviour:** reading through OpenDS what was written after
+xal-server indexed. That read may return the bytes from before the write,
+zeros, or another file's blocks, and no error. It covers a file created
+after the index, bytes appended to a file, a hole that a write filled, and an
+overwrite the file system placed in new blocks. An in-place overwrite of
+blocks that were allocated at index time usually reads back correctly, but
+XFS does not promise it, and OpenDS does not check it.
+
+To read written data through OpenDS, restart xal-server after the writes so it
+indexes again. This restriction is temporary: a re-index on request is being
+pursued in xal-server, and the restriction goes when it lands.
 
 ## Performance
 
@@ -244,29 +276,29 @@ Integration tests run on a remote target via
   the kernel `nvme` driver).
 - An NVIDIA GPU with the CUDA toolkit; GDS (GPUDirect Storage) for the gds
   tests; xNVMe's `upcie-cuda` backend for the aisio tests.
-- A kernel built with UDMABUF-import support, IOMMU disabled, and 2 MiB
-  hugepages allocated (prerequisites for the GPU↔NVMe dma-buf P2P path that
-  aisio uses).
+- The uPCIe dma-buf importer kernel module loaded (out-of-tree, shipped as a
+  DKMS package; a stock kernel suffices), IOMMU disabled, and 2 MiB hugepages
+  allocated (prerequisites for the GPU-NVMe dma-buf P2P path that aisio uses).
 - An XFS filesystem on the test namespace; the mount step does not format. Test
   artifacts live under `<mount_point>/opends_tests/` and are removed at the end
   of a run.
 
 The [aisio](https://github.com/xnvme/aisio) project ships cijoe tasks that take
-a fresh Ubuntu 24.04 install through every step above (custom kernel, NVIDIA
+a fresh Ubuntu 24.04 install through every step above (kernel modules, NVIDIA
 stack, hugepages, XFS format, reference datasets). Follow its README first to
 bring up a target that meets these requirements. OpenDS pins its own dependency
-refs (xNVMe, xal, fil, HOMI, qublk) in `configs/deps.toml` and installs the
-stack via `scripts/setup_deps.py` for reproducible test runs.
+refs (xNVMe, xal, fil) in `configs/deps.toml` and installs the stack via
+`scripts/setup_deps.py` for reproducible test runs.
 
 `test_sync_read_prep` writes a deterministic pattern file (and a small extents
 record external benchmarks can deserialize) while the FS is mounted. The ref and
 gds tests read the pattern back through the kernel FS. The aisio phase runs last
-against the HOMI/qublk stack: the kernel driver is unbound and the controller
-handed to a HOMI daemon, qublk re-exports it as a block device, and the same XFS
-is remounted over it. Each aisio test opens a file on that mount and registers
-it, which resolves the file's extents through the daemon (`homic_get_extents`,
-FIEMAP over the qublk device); reads and writes DMA straight to and from GPU
-memory. The stack is then torn down and nvme rebound.
+against the homi stack: the kernel driver is unbound and the controller handed
+to a homi server, qublk re-exports it as a block device, the same XFS is
+remounted over it, and xal-server publishes the mount's extent index over
+shared memory. Each aisio test opens a file on that mount and registers it,
+which resolves the file's extents from that index; reads and writes DMA
+straight to and from GPU memory. The stack is then torn down and nvme rebound.
 
 1. Copy the example configs and fill in target details:
 
@@ -281,7 +313,7 @@ memory. The stack is then torn down and nvme rebound.
 
    ```sh
    python scripts/rsync.py
-   python scripts/setup_deps.py   # xNVMe, xal, HOMI, qublk, OpenDS, fil
+   python scripts/setup_deps.py   # xNVMe, xal, OpenDS, fil
    python scripts/build.py
    ```
 

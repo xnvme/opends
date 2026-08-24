@@ -58,7 +58,7 @@ if gds_enabled
 endif
 
 xnvme_dep = dependency('xnvme', required : false)
-homic_dep = dependency('homic', required : false)
+xal_dep = dependency('xal', required : false)
 
 accel_backend = get_option('accel_backend')
 accel_src = 'src/ds_accel_@0@.c'.format(accel_backend)
@@ -106,7 +106,7 @@ if accel_sys_inc_dirs.length() > 0
   accel_inc = [include_directories(accel_sys_inc_dirs, is_system : true)]
 endif
 
-aisio_enabled = xnvme_dep.found() and accel_runtime_found and homic_dep.found()
+aisio_enabled = xnvme_dep.found() and accel_runtime_found and xal_dep.found()
 
 if aisio_enabled
   # The async path links a tiny D2D copy kernel compiled from
@@ -124,7 +124,7 @@ if aisio_enabled
     accel_src,
     accel_kernel_src,
     include_directories : aisio_inc_dirs,
-    dependencies : [xnvme_dep, homic_dep] + accel_deps,
+    dependencies : [xnvme_dep, xal_dep] + accel_deps,
     cuda_args : accel_kernel_args,
     install : true,
   )
@@ -243,11 +243,6 @@ if aisio_test_enabled
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
-  executable('test_block_alloc_aisio',
-    'tests/test_block_alloc_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
 
   executable('aisio_homi_demo',
     'examples/aisio_homi_demo.c',
@@ -264,7 +259,6 @@ else
   executable('test_stream_read_aisio', 'tests/skip.c')
   executable('test_sync_write_aisio', 'tests/skip.c')
   executable('test_stream_write_aisio', 'tests/skip.c')
-  executable('test_block_alloc_aisio', 'tests/skip.c')
 endif
 
 summary({

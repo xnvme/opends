@@ -8,8 +8,9 @@ doc: |
   fil so the filperf binary is available for benchmarking. The remote
   and ref are read from [fil.repository] in deps.toml.
 
-  fil depends on xnvme, xal, and CUDA cuFile; run setup_xnvme and
-  setup_xal first (setup_deps.py orders them correctly).
+  fil depends on xnvme, xal, CUDA cuFile and the OpenDS aisio library;
+  run setup_xnvme, setup_xal and setup_opends first (setup_deps.py
+  orders them correctly).
 
   Benchmarks driven by filperf require a populated XFS dataset on the
   target NVMe; run aisio's tasks/setup_dataset.yaml on the target
@@ -29,4 +30,4 @@ doc: |
 steps:
   - name: setup_fil
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.fil.repository.remote }}' '{{ config.fil.repository.ref }}' '{{ config.deps.src_root }}/fil' '{{ config.deps.build_root }}/fil-build' '{{ config.deps.install_prefix | default("/usr/local") }}'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.fil.repository.remote }}' '{{ config.fil.repository.ref }}' '{{ config.deps.src_root }}/fil' '{{ config.deps.build_root }}/fil-build' '{{ config.deps.install_prefix | default("/usr/local") }}' -Dopends=enabled
