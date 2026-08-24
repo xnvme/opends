@@ -7,9 +7,10 @@
  * against a real, writable file on the mount. The flow exercises an allocating
  * write into a freshly created (empty) file, aligned and unaligned overwrites
  * that must leave the surrounding bytes intact, and an unaligned write across
- * the end of the file. Each write is checked by the file size and a P2P
- * read-back of the enclosing blocks. The submit_write callback selects sync vs
- * async.
+ * the end of the file. Each write is checked by the file size and a kernel
+ * read of the enclosing blocks through the same O_DIRECT descriptor; a read
+ * through OpenDS would go through the extent index, which does not follow
+ * writes (see the README). The submit_write callback selects sync vs async.
  */
 #ifndef TEST_WRITE_HOMI_H_
 #define TEST_WRITE_HOMI_H_
@@ -23,6 +24,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #define WRITE_TAIL_KEEP 100
 #define WRITE_PARTIAL_LEN (PAGE - WRITE_TAIL_KEEP)
@@ -44,7 +46,9 @@ write_pattern_byte(size_t i)
 }
 
 /* Write image[foff, foff + size) at foff, check the file size, then read
- * the enclosing blocks back P2P and compare them with the image. */
+ * the enclosing blocks back through the kernel and compare them with the
+ * image. The descriptor is O_DIRECT, so the read is block-aligned and may
+ * come back short at the end of the file. */
 static int
 write_verify(struct write_homi_env *e, void *gpu, unsigned char *host,
              const unsigned char *image, size_t *file_size, size_t size,
@@ -73,19 +77,18 @@ write_verify(struct write_homi_env *e, void *gpu, unsigned char *host,
 
 	off_t roff = foff & ~(off_t)(PAGE - 1);
 	size_t rend = ((size_t)foff + size + PAGE - 1) & ~(size_t)(PAGE - 1);
-	if (rend > *file_size)
-		rend = *file_size;
 	size_t rlen = rend - (size_t)roff;
-	cuda_buf_zero(gpu, rlen);
-	ssize_t r = opends_sync_read(e->fh, gpu, rlen, roff, 0);
-	cuda_buf_to_host(host, gpu, rlen);
-	if (r != (ssize_t)rlen || memcmp(host, image + roff, rlen)) {
-		fprintf(stderr, "[%s] verify %zu@%lld failed (r=%zd)\n",
-		        e->mode_label, rlen, (long long)roff, r);
+	size_t want = (*file_size < rend ? *file_size : rend) - (size_t)roff;
+	memset(host, 0, rlen);
+	ssize_t r = pread(e->fd, host, rlen, roff);
+	if (r != (ssize_t)want || memcmp(host, image + roff, want)) {
+		fprintf(stderr,
+		        "[%s] verify %zu@%lld failed (r=%zd, want %zu)\n",
+		        e->mode_label, rlen, (long long)roff, r, want);
 		return -1;
 	}
-	fprintf(stderr, "[%s] write %zu@%lld + read-back ok\n", e->mode_label,
-	        size, (long long)foff);
+	fprintf(stderr, "[%s] write %zu@%lld + kernel read-back ok\n",
+	        e->mode_label, size, (long long)foff);
 	return 0;
 }
 
@@ -96,8 +99,10 @@ run_write_homi_tests(struct write_homi_env *e)
 	int failed = 0;
 	size_t file_size = 0;
 	void *gpu = opends_alloc(FILE_SIZE);
-	unsigned char *host = malloc(FILE_SIZE);
+	unsigned char *host = NULL;
 	unsigned char *image = malloc(WRITE_IMAGE_SIZE);
+	if (posix_memalign((void **)&host, PAGE, WRITE_IMAGE_SIZE))
+		host = NULL;
 	if (!gpu || !host || !image) {
 		fprintf(stderr, "[%s] allocation failed\n", e->mode_label);
 		failed++;

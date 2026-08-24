@@ -3,7 +3,7 @@ doc: |
   GDS Bench Suite
   ===============
 
-  Drives filperf with the `gds` backend (cuFile reference baseline)
+  Drives filperf with the `cufile` backend (GDS reference baseline)
   across the four reference datasets (filesize8gib, tiktokish,
   imagenetish, lmcacheish). Runs while the kernel `nvme` driver owns
   the device.

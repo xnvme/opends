@@ -7,16 +7,18 @@ doc: |
   on a mounted filesystem into GPU memory) across the four reference
   datasets (filesize8gib, tiktokish, imagenetish, lmcacheish).
 
-  homi_stack_up hands the controller to HOMI, exposes it as a ublk
-  block device (qublk), and remounts the dataset XFS over it. fil walks
-  xal on the ublk block device to enumerate the dataset (mirroring the
-  gds path) and opens each file by path; the aisio backend resolves
-  extents and attaches an I/O qpair from HOMI per file, DMAing straight
-  to GPU memory. homi_stack_down tears the stack down and rebinds nvme.
+  homi_stack_up hands the controller to homi, exposes it as a ublk
+  block device (qublk), remounts the dataset XFS over it, and starts
+  xal-server on the mount. fil walks xal on the ublk block device to
+  enumerate the dataset (mirroring the gds path) and opens each file by
+  path; the aisio backend resolves extents from the xal-server index
+  and drives its own I/O queues on the controller homi holds up, DMAing
+  straight to GPU memory. homi_stack_down tears the stack down and
+  rebinds nvme.
 
   Prerequisites:
-    * scripts/setup_deps.py has installed xnvme, xal, OpenDS, fil, homi,
-      and qublk on the target.
+    * scripts/setup_deps.py has installed xnvme, xal, OpenDS, and fil
+      on the target.
     * scripts/build.py has built OpenDS on the target.
     * aisio's tasks/setup_dataset.yaml has run on the target, formatting
       the NVMe with XFS and populating the first three reference datasets
