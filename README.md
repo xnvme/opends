@@ -81,23 +81,31 @@ kernel over the bytes and a copy back on one CUDA stream.
   `nvme` driver in the read data path). Based on
   [AiSIO](https://github.com/xnvme/aisio). A homi server (an xNVMe tool) is
   the primary of an xNVMe multi-process group and holds the userspace NVMe
-  controller up. The driver joins that group as a secondary and allocates its
-  own I/O queues. File extents come from the index xal-server publishes over
-  POSIX shared memory, built over the qublk-exported block device. Reads and
-  writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
+  controllers up; the driver joins that group as a secondary and allocates its
+  own I/O queues. The driver takes its device set from the group's runtime:
+  every device the server holds gets its own queues and I/O threads. File
+  extents come from xal, which maps a registered file under a lease on its
+  descriptor, and the mount that holds a file binds it to its device. Reads and writes are
+  supported. Requires xNVMe, xal, and the CUDA toolkit.
 
 ## OpenDS AiSIO configuration
 
 The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
-the open.
+the open. The devices are not configured here: the driver takes them from
+the multi-process runtime the homi server created, so the homi command line
+is the only place they are named.
 
-- `OPENDS_HOMI_MNT`: Mountpoint of the filesystem on the device the homi
-  group holds. The driver maps a registered file there, under a lease on the
-  registered descriptor, and reads no index. No default; the open fails
-  without it.
-- `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
-  Driver open creates one NVMe queue per worker.
+- `OPENDS_HOMI_MNT`: Mountpoints of the filesystems on the devices the homi
+  group holds, a comma-separated list paired with the runtime's device order.
+  The driver maps a registered file there, under a lease on the registered
+  descriptor, and reads no index. The mount that holds a file binds it to
+  its device. There is no default, and the open fails without it.
+- `OPENDS_AISIO_IO_THREADS`: Total number of internal IO worker threads.
+  Default 2, or the device count when that is larger. Driver open creates one
+  NVMe queue per worker and gives the workers to the devices round-robin, so a
+  worker serves one device. It fails when the workers are fewer than the
+  devices, since a device with no worker cannot be read.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
@@ -113,9 +121,8 @@ the open.
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
 - `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
-  the test tasks also pass to homi, so both sides agree. The driver asks the
-  homi server of this group for its device, and the group must hold exactly
-  one.
+  the test tasks also pass to homi, so both sides agree. The driver takes
+  every device the group holds.
 - `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
   queue rings and PRP lists. Default 256. The heap comes out of the hugepages
   every process in the group shares, so xNVMe's 1 GiB default is too large.

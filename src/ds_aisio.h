@@ -33,6 +33,9 @@
 #include <libxal.h>
 #include <libxnvme.h>
 
+/* No more than the workers (ds_aisio_config.c), since a device with no
+ * worker cannot be read. */
+#define MAX_DEVICES 15
 #define MAX_BUF_ENTRIES 8192
 #define DEFAULT_BOUNCE_SIZE (128 * 1024)
 #define NVME_MAX_NLB 65536
@@ -71,12 +74,15 @@ struct map_run {
 };
 #define MAX_MAP_RUNS MAX_BUF_ENTRIES
 
+struct nvme_device;
+
 struct registered_file {
 	int fd;
 	int oflags;
 	struct xal_inode *lease; ///< The file as attached to xal
 	bool remap; ///< A write through fd since the map: map the file again
 	pthread_mutex_t lock; ///< Orders the map again against acquires
+	struct nvme_device *dev;
 };
 
 struct opends_stream {
@@ -220,6 +226,7 @@ struct kernel_read {
 
 struct io_worker {
 	struct driver *drv;
+	struct nvme_device *dev;
 	struct xnvme_queue *queue;
 	struct kernel_read kread;
 	void *edge_buf; /* one block, for the edges of a staged write */
@@ -231,15 +238,32 @@ struct io_worker {
 	pthread_t thread;
 };
 
-struct driver {
-	char dev_uri[XNVME_IDENT_URI_LEN]; ///< NVMe device the HOMI server owns
-	struct aisio_config cfg;           ///< From the environment at open
-	struct xal *xal; ///< Attach to the index xal-server publishes
+struct nvme_device {
+	char dev_uri[XNVME_IDENT_URI_LEN];
+	char mount[AISIO_CONFIG_MOUNT_MAXLEN]; ///< Mountpoint of its filesystem
+	struct xal *xal; ///< Its own handle, in the read-lease mode
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
+	struct io_worker *workers;
+	int n_workers;
+	uint32_t rr_next;
+
+	/* Read admission, see admit_read(). Under admit_lock. */
+	pthread_mutex_t admit_lock;
+	uint32_t active_reads;   ///< Admitted and not yet complete
+	uint64_t next_lba;       ///< Where the last admitted read ends
+	uint64_t waiting_ticket; ///< Oldest read refused, NO_WAITER if none
+};
+
+struct driver {
+	struct nvme_device devices[MAX_DEVICES];
+	int n_devices;
+	struct aisio_config cfg;
+	uint32_t max_lba_size;                  ///< Largest over the devices
+	uint32_t min_mdts_nbytes;               ///< Smallest over the devices
 	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
 	int buf_count;
 	size_t chunk_nbytes; ///< Allocation granularity registrations round to
@@ -262,19 +286,11 @@ struct driver {
 	int write_buf_live; ///< Made and not kept out of the pool
 	pthread_mutex_t write_buf_lock;
 
-	struct io_worker *workers;
-	uint32_t rr_next;
 	uint64_t next_ticket; ///< Under submit_lock
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
 	bool stop;
-
-	/* Read admission, see admit_read(). Under admit_lock. */
-	pthread_mutex_t admit_lock;
-	uint32_t active_reads;   ///< Admitted and not yet complete
-	uint64_t next_lba;       ///< Where the last admitted read ends
-	uint64_t waiting_ticket; ///< Oldest read refused, NO_WAITER if none
 };
 
 /* Shared between the backend's source files, hidden from the library's
