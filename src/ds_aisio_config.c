@@ -21,7 +21,7 @@
 #define ENV_HOMI_ID "OPENDS_AISIO_HOMI_ID"
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
-#define DEFAULT_XAL_SHM "/xal_dev0"
+#define DEFAULT_XAL_SHM_FMT "/xal_dev%d"
 #define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
@@ -29,9 +29,11 @@
 #define MAX_QUEUE_DEPTH 1024
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
- * per I/O thread. 256 MiB covers the largest configuration the knobs allow
- * (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise default to
- * 1 GiB, which does not multiply across the processes sharing the hugepages. */
+ * per I/O thread. The heap is process-wide and the thread count does not grow
+ * with the device count, so 256 MiB covers the largest configuration the knobs
+ * allow (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise
+ * default to 1 GiB, which does not multiply across the processes sharing the
+ * hugepages. */
 #define DEFAULT_HOST_HEAP_MB 256
 #define MAX_HEAP_MB (64 * 1024)
 #define DEFAULT_IDLE_SPIN_US 200
@@ -61,28 +63,35 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 }
 
 int
-aisio_config_read(struct aisio_config *cfg)
+aisio_config_homi_id(uint32_t *out)
 {
 	int n;
 
 	if (env_int(ENV_HOMI_ID, DEFAULT_HOMI_ID, 0, INT_MAX, &n) < 0) {
 		return -EINVAL;
 	}
-	cfg->homi_id = (uint32_t)n;
+	*out = (uint32_t)n;
+	return 0;
+}
 
-	const char *shm = getenv(ENV_XAL_SHM);
-	if (!shm || !shm[0]) {
-		shm = DEFAULT_XAL_SHM;
-	}
-	if (strlen(shm) >= sizeof(cfg->xal_shm)) {
-		fprintf(stderr, "aisio: %s is longer than %zu\n", ENV_XAL_SHM,
-		        sizeof(cfg->xal_shm) - 1);
+int
+aisio_config_read(struct aisio_config *cfg, int n_devices)
+{
+	int n;
+	int thr_def;
+
+	/* One worker per device at least, since a device with no worker cannot
+	 * be read. The threads are the total, not a per-device count. */
+	thr_def =
+	        DEFAULT_IO_THREADS < n_devices ? n_devices : DEFAULT_IO_THREADS;
+	if (env_int(ENV_IO_THREADS, thr_def, 1, MAX_IO_THREADS, &n) < 0) {
 		return -EINVAL;
 	}
-	strcpy(cfg->xal_shm, shm);
-
-	if (env_int(ENV_IO_THREADS, DEFAULT_IO_THREADS, 1, MAX_IO_THREADS, &n) <
-	    0) {
+	if (n < n_devices) {
+		fprintf(stderr,
+		        "aisio: %s=%d leaves some of the %d devices without a "
+		        "worker\n",
+		        ENV_IO_THREADS, n, n_devices);
 		return -EINVAL;
 	}
 	cfg->n_io_threads = n;
@@ -147,6 +156,51 @@ aisio_config_read(struct aisio_config *cfg)
 		        ENV_ASSUME_ALIGNED_ONLY);
 		return -EINVAL;
 	}
+
+	return 0;
+}
+
+/* OPENDS_XAL_SHM optionally overrides the index names as a comma-separated
+ * list, paired with the runtime's device order. Default: /xal_dev<i>. */
+int
+aisio_config_xal_shm(int di, int n_devices, char *out, size_t out_len)
+{
+	const char *spec = getenv(ENV_XAL_SHM);
+	const char *p;
+	const char *end;
+	size_t len;
+	int n;
+
+	if (!spec || !spec[0]) {
+		snprintf(out, out_len, DEFAULT_XAL_SHM_FMT, di);
+		return 0;
+	}
+
+	n = 1;
+	for (p = spec; *p; p++) {
+		if (*p == ',') {
+			n++;
+		}
+	}
+	if (n != n_devices) {
+		fprintf(stderr, "aisio: %s names %d indexes for %d devices\n",
+		        ENV_XAL_SHM, n, n_devices);
+		return -EINVAL;
+	}
+
+	p = spec;
+	for (int i = 0; i < di; i++) {
+		p = strchr(p, ',') + 1;
+	}
+	end = strchr(p, ',');
+	len = end ? (size_t)(end - p) : strlen(p);
+	if (len == 0 || len >= out_len) {
+		fprintf(stderr, "aisio: %s entry %d is empty or too long\n",
+		        ENV_XAL_SHM, di);
+		return -EINVAL;
+	}
+	memcpy(out, p, len);
+	out[len] = '\0';
 
 	return 0;
 }
