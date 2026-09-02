@@ -7,8 +7,8 @@ cijoe-scripts/bench_run.py) and, per opends (dataset, mode), renders a MiB/s
 matrix over (io_threads x queue_depth). Legs run with
 OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 or a non-default OPENDS_AISIO_IDLE_SPIN
 get their own sections rather than sharing those cells, and stay out of the
-plot. When gds legs are present among the
-records, also renders a GDS-vs-OpenDS table per (queue_depth, io_threads)
+plot. When cufile legs are present among the
+records, also renders a cuFile-vs-OpenDS table per (queue_depth, io_threads)
 point. Writes report.md and sweep.csv (all backends) to the output dir, plus
 report.png unless --no-plot (needs matplotlib).
 """
@@ -59,7 +59,7 @@ def _collect(in_dirs):
     grids = {}          # (dataset, mode) -> {(io_threads, queue_depth): mib_s}
     aligned = {}        # same, for OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1 legs
     variants = {}       # knob label -> same, for other non-default knobs
-    gds = {}            # (dataset, mode) -> mib_s
+    cufile = {}         # (dataset, mode) -> mib_s
     rows = []
     threads_seen, depths_seen = set(), set()
     for rec in _records(in_dirs):
@@ -92,15 +92,15 @@ def _collect(in_dirs):
                 (t, q)] = res.get("mib_s")
             threads_seen.add(t)
             depths_seen.add(q)
-        elif cfg.get("backend") == "gds":
+        elif cfg.get("backend") == "cufile":
             key = (cfg.get("dataset"), cfg.get("mode"))
-            if key in gds:
-                print(f"warning: multiple gds records for "
+            if key in cufile:
+                print(f"warning: multiple cufile records for "
                       f"{key[0]}/{key[1]}; keeping the last", file=sys.stderr)
-            gds[key] = res.get("mib_s")
+            cufile[key] = res.get("mib_s")
     threads = sorted(x for x in threads_seen if x is not None)
     depths = sorted(x for x in depths_seen if x is not None)
-    return grids, aligned, variants, gds, rows, threads, depths
+    return grids, aligned, variants, cufile, rows, threads, depths
 
 
 def _pivot_md(ds, mode, grid, threads, depths):
@@ -116,7 +116,7 @@ def _pivot_md(ds, mode, grid, threads, depths):
     return lines
 
 
-def _compare_md(grids, gds, threads, depths):
+def _compare_md(grids, cufile, threads, depths):
     keys = sorted(grids, key=lambda k: (k[0] or "", k[1] or ""))
     lines = []
     for q in depths:
@@ -126,7 +126,7 @@ def _compare_md(grids, gds, threads, depths):
                 o = grids[(ds, mode)].get((t, q))
                 if o is None:
                     continue
-                g = gds.get((ds, mode))
+                g = cufile.get((ds, mode))
                 body.append(f"| {ds} | {mode} | "
                             + (f"{g:.0f}" if g else "-")
                             + f" | {o:.0f} | "
@@ -134,7 +134,7 @@ def _compare_md(grids, gds, threads, depths):
             if not body:
                 continue
             lines += [f"### queue_depth={q}, io_threads={t}", "",
-                      "| Dataset | Mode | GDS (MiB/s) | OpenDS (MiB/s) | "
+                      "| Dataset | Mode | cuFile (MiB/s) | OpenDS (MiB/s) | "
                       "Speedup |",
                       "|---|---|---|---|---|"]
             lines += body
@@ -290,7 +290,7 @@ def main():
     out_dir = (Path(a.out) if a.out else in_dirs[0])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    grids, aligned, variants, gds, rows, threads, depths = _collect(in_dirs)
+    grids, aligned, variants, cufile, rows, threads, depths = _collect(in_dirs)
     if not rows:
         sys.exit("no history.jsonl records found under: "
                  + ", ".join(str(d) for d in in_dirs))
@@ -315,9 +315,9 @@ def main():
                                        key=lambda kv: (kv[0][0] or "",
                                                        kv[0][1] or "")):
             md += _pivot_md(ds, mode, grid, threads, depths)
-    if gds:
-        md += ["## GDS vs OpenDS", ""]
-        md += _compare_md(grids, gds, threads, depths)
+    if cufile:
+        md += ["## cuFile vs OpenDS", ""]
+        md += _compare_md(grids, cufile, threads, depths)
     report = out_dir / "report.md"
     report.write_text("\n".join(md) + "\n")
 

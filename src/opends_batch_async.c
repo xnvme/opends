@@ -4,7 +4,7 @@
  * independent async operations whose futures live in the batch object,
  * so any backend that provides opends_async_read/write/await gets the
  * batch family from this file. Backends with a native batch engine
- * (gds) provide their own and do not compile it.
+ * (cufile) provide their own and do not compile it.
  *
  * Operations in a batch are unordered. opends_batch_cancel cannot stop
  * I/O the backend already accepted: it awaits outstanding operations

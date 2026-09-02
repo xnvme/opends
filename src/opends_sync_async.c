@@ -3,7 +3,7 @@
  * Synchronous I/O implemented on the async API: submit, then await in
  * place. Any backend that provides opends_async_read/write/await gets
  * the sync family from this file. Backends with a native sync path
- * (gds) provide their own and do not compile it.
+ * (cufile) provide their own and do not compile it.
  */
 #define _GNU_SOURCE
 

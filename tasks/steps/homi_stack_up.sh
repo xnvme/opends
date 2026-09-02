@@ -4,7 +4,7 @@
 # join it and read files on a mounted filesystem. Hands the NVMe controller to
 # userspace (homi serve), exposes it as a ublk block device (qublk), mounts
 # the existing XFS over it at MOUNT, and publishes the mount's extent index
-# over shared memory (xal-server). The same XFS is what the ref/gds phases
+# over shared memory (xal-server). The same XFS is what the ref/cufile phases
 # mounted via the kernel driver, so any file written there (e.g. the sync-read
 # pattern) is still present after the remount.
 set -e

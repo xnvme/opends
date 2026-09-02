@@ -5,7 +5,7 @@ The artifact is the verbatim filperf output (CSV plus `--summary`
 block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is
-required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
+required for opends and harmless elsewhere. cufile runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
 kernel page cache is irrelevant and the device BDF is passed through
 OPENDS_HOMI_DEV. The mode selects the filperf backend: opends,
@@ -21,10 +21,6 @@ from pathlib import Path
 NOFILE = 1048576
 
 MODE_SUFFIX = {"sync": "", "stream": "-stream", "async": "-async"}
-
-# The suite, the artifacts and the report say "gds"; fil calls the cuFile
-# backend "cufile".
-FILPERF_BACKEND = {"gds": "cufile"}
 
 SUMMARY_FIELDS = {
     "Total time": "total_time_s",
@@ -170,8 +166,7 @@ def main(args, cijoe):
     filperf = [
         f"{env}prlimit --nofile={NOFILE}:{NOFILE} --",
         "filperf",
-        f"--backend {FILPERF_BACKEND.get(args.backend, args.backend)}"
-        f"{MODE_SUFFIX[args.mode]}",
+        f"--backend {args.backend}{MODE_SUFFIX[args.mode]}",
         f"--data-dir '{mnt}/{args.data_dir}'",
         f"--batches {args.batches} --batch-size {args.batch_size}",
         *extra,
