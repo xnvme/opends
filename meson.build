@@ -244,10 +244,21 @@ if aisio_test_enabled
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
 
-  executable('aisio_homi_demo',
-    'examples/aisio_homi_demo.c',
+  executable('sync_read_example',
+    'examples/sync_read.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
+  )
+  executable('async_read_example',
+    'examples/async_read.c',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep],
+  )
+  executable('stream_read_example',
+    'examples/stream_read.cu',
+    include_directories : aisio_test_inc_dirs,
+    dependencies : [opends_aisio_dep, cuda_dep],
+    cuda_args : accel_kernel_args,
   )
 else
   executable('test_sync_read_aisio', 'tests/skip.c')
