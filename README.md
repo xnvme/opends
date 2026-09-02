@@ -1,8 +1,71 @@
 # OpenDS
 
 Open source accelerator direct storage. Vendor-neutral API modeled on
-NVIDIA's cuFile (GDS), powered by aisio for high-throughput PCIe P2P DMA from
+NVIDIA's cuFile (GDS), powered by AiSIO for high-throughput PCIe P2P DMA from
 NVMe straight into GPU memory.
+
+## Quick start
+
+1. Provision a target machine by following the
+   [AiSIO](https://github.com/xnvme/aisio) guide.
+
+2. Create the configs and fill in the target details:
+
+   ```sh
+   cp configs/transport.toml.example configs/transport.toml  # hostname, ssh key
+   cp configs/test.toml.example configs/test.toml            # NVMe BDF, mount point
+   ```
+
+3. Sync the tree, install the pinned dependencies (xNVMe, xal, fil, first
+   run only), build, and run the test suites:
+
+   ```sh
+   python scripts/rsync.py
+   python scripts/setup_deps.py
+   python scripts/build.py
+   python scripts/run_tests.py
+   ```
+
+## Basic example
+
+```c
+#define _GNU_SOURCE
+#include <opends.h>
+#include <cuda_runtime.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+
+int main(void)
+{
+    size_t size = 1024 * 1024;
+    void *buf;
+
+    cudaMalloc(&buf, size);
+    opends_driver_open();
+    opends_buf_register(buf, size, 0);
+
+    int fd = open("/mnt/nvme/a.bin", O_RDONLY | O_DIRECT);
+    opends_handle_t fh;
+    opends_handle_register(&fh, fd);
+
+    ssize_t n = opends_sync_read(fh, buf, size, 0, 0);
+    printf("read %zd bytes\n", n);
+
+    opends_handle_deregister(fh);
+    close(fd);
+    opends_buf_deregister(buf);
+    cudaFree(buf);
+    opends_driver_close();
+
+    return 0;
+}
+```
+
+`examples/` holds complete programs with error handling. `sync_read.c` reads a
+file and checks the bytes against a kernel read, `async_read.c` reads two
+files at once with the async API, and `stream_read.cu` enqueues a read, a
+kernel over the bytes and a copy back on one CUDA stream.
 
 ## Backends
 
@@ -13,19 +76,19 @@ NVMe straight into GPU memory.
   are GPU memory allocated with `cudaMalloc` and registered via
   `cuFileBufRegister`. Requires CUDA toolkit and the cuFile (GDS) library. Built
   conditionally when both are found.
-- **aisio** (`libopends_aisio`): PCIe P2P DMA between NVMe and GPU memory via
+- **AiSIO** (`libopends_aisio`): PCIe P2P DMA between NVMe and GPU memory via
   [xNVMe](https://xnvme.io)'s `upcie-cuda` backend (no filesystem or kernel
   `nvme` driver in the read data path). Based on
-  [aisio](https://github.com/xnvme/aisio). A homi server (an xNVMe tool) is
+  [AiSIO](https://github.com/xnvme/aisio). A homi server (an xNVMe tool) is
   the primary of an xNVMe multi-process group and holds the userspace NVMe
-  controller up; the driver joins that group as a secondary and allocates its
+  controller up. The driver joins that group as a secondary and allocates its
   own I/O queues. File extents come from the index xal-server publishes over
   POSIX shared memory, built over the qublk-exported block device. Reads and
   writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
 
-## aisio configuration
+## OpenDS AiSIO configuration
 
-The aisio backend reads its configuration from environment variables at
+The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
 the open.
 
@@ -85,7 +148,7 @@ _Commit `93fd019` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 `NVIDIA RTX 2000 Ada Generation`). `OPENDS_AISIO_IO_THREADS=2` and
 `OPENDS_AISIO_QUEUE_DEPTH=8`._
 
-| Dataset       | mode   | cufile (MiB/s) | opends (MiB/s) |
+| Dataset       | mode   | cuFile (MiB/s) | OpenDS (MiB/s) |
 |---------------|--------|----------------|----------------|
 | filesize8gib  | sync   |           6520 |           6794 |
 | filesize8gib  | stream |           2599 |           7036 |
@@ -100,14 +163,31 @@ _Commit `93fd019` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 | lmcacheish    | stream |           4991 |           5368 |
 | lmcacheish    | async  |              - |           5384 |
 
-## opends API
+## OpenDS API
 
-| opends family     | cuFile equivalent                    |
+| OpenDS family     | cuFile equivalent                    |
 |-------------------|--------------------------------------|
 | `opends_async_*`  | none                                 |
 | `opends_sync_*`   | `cuFileRead`/`cuFileWrite`           |
 | `opends_stream_*` | `cuFileReadAsync`/`cuFileWriteAsync` |
 | `opends_batch_*`  | `cuFileBatchIO*`                     |
+
+`opends_async_*` is per-operation async without streams (no cuFile
+counterpart), shown in `examples/async_read.c`. The future must stay at
+the same address until awaited.
+
+`opends_sync_*` blocks until completion.
+
+`opends_stream_*` is stream-ordered I/O, cuFile's ReadAsync/WriteAsync, shown
+in `examples/stream_read.cu`: operations enqueue on a registered stream (e.g. a
+CUDA stream) and complete in stream order. Sizes, offsets, and the byte-count result are passed as
+pointers, read and written at stream execution time rather than submission
+time.
+
+`opends_batch_*` submits many independent operations in one call and reaps
+completions by polling `opends_batch_get_status`. Operations complete in
+any order. `opends_batch_setup` fixes how many the handle holds in flight,
+and a slot frees once its completion is delivered.
 
 ### Threading and context
 
@@ -117,7 +197,7 @@ I/O submission and registration (handles, buffers, streams) are thread-safe once
 in flight on it is undefined, as with closing a file descriptor that has I/O
 in flight.
 
-The aisio backend captures the CUDA context current at `opends_driver_open` and
+The AiSIO backend captures the CUDA context current at `opends_driver_open` and
 requires that same context to be current on every thread that submits I/O
 through the API. A submit from a thread with a different context current fails
 with `OPENDS_CONTEXT_MISMATCH`. An application that uses only the CUDA runtime
@@ -126,78 +206,6 @@ primary context. An application that creates contexts with the driver API
 (`cuCtxCreate`) must bind the driver-open context on each submitting thread with
 `cuCtxSetCurrent`. `cudaSetDevice` binds the primary context and is not
 equivalent.
-
-### Basic read
-
-```c
-#include <opends.h>
-#include <cuda_runtime.h>
-#include <fcntl.h>
-#include <stdio.h>
-
-int main(void)
-{
-    opends_driver_open();
-
-    int fd = open("/mnt/nvme/data.bin", O_RDONLY | O_DIRECT);
-
-    opends_handle_t fh;
-    opends_handle_register(&fh, fd);
-
-    size_t size = 1024 * 1024;
-    void *buf;
-    cudaMalloc(&buf, size);
-    opends_buf_register(buf, size, 0);
-
-    ssize_t nread = opends_sync_read(fh, buf, size, 0, 0);
-    printf("read %zd bytes\n", nread);
-
-    opends_buf_deregister(buf);
-    cudaFree(buf);
-    opends_handle_deregister(fh);
-    close(fd);
-    opends_driver_close();
-
-    return 0;
-}
-```
-
-### Buffer offset
-
-The last parameter to `opends_sync_read` is a byte offset into the destination
-buffer. It mirrors cuFile's signature: rather than doing arithmetic on a device
-pointer from host code, pass the registered base pointer plus an offset and let
-the backend apply it within the mapping it owns.
-
-```c
-/* Read two 4 KiB blocks into different regions of a device buffer. */
-opends_sync_read(fh, dev_buf, 4096, 0,    0);     /* -> dev_buf[0..4095]    */
-opends_sync_read(fh, dev_buf, 4096, 4096, 4096);  /* -> dev_buf[4096..8191] */
-```
-
-### Async I/O
-
-`opends_async_*` is per-operation async without streams (no cuFile
-counterpart).
-`opends_async_read` and `opends_async_write` are the synchronous calls with
-completion reaping deferred: submit returns immediately after initializing
-the caller-provided future, and `opends_async_await` blocks until that
-operation completes, returning its byte count (or a negated error). The
-caller owns the future storage (stack allocation is fine) and must keep it
-valid at the same address until awaited. Futures may be awaited in any
-order, and awaiting a completed future again returns the same result.
-
-```c
-opends_async_future_t fut0, fut1;
-
-opends_async_read(fh, dev_buf, 4096, 0,    0,    &fut0);
-opends_async_read(fh, dev_buf, 4096, 4096, 4096, &fut1);
-
-/* ... overlap with computation ... */
-
-ssize_t n0 = opends_async_await(&fut0);
-ssize_t n1 = opends_async_await(&fut1);
-```
 
 ### Error handling
 
@@ -219,7 +227,7 @@ if (n < 0) {
 }
 ```
 
-## Building
+## Building and installing locally
 
 Requires [Meson](https://mesonbuild.com) and a C11 compiler. The cuFile backend
 additionally requires the CUDA toolkit and cuFile library.
@@ -227,124 +235,30 @@ additionally requires the CUDA toolkit and cuFile library.
 ```sh
 meson setup build
 meson compile -C build
-```
-
-Meson reports which backends are enabled at configure time:
-
-```
-Backends
-  Reference backend        : true
-  cuFile backend           : true
-  aisio backend            : true
-  aisio accelerator vendor : cuda
-```
-
-## Installing
-
-Install headers, libraries, and a pkg-config file so other projects can find
-OpenDS via `pkg-config --cflags --libs opends` or meson's
-`dependency('opends')`:
-
-```sh
 meson install -C build
 ```
 
-## Testing
+`meson install` installs headers, libraries, and a pkg-config file so other
+projects can find OpenDS via `pkg-config --cflags --libs opends` or meson's
+`dependency('opends')`.
 
-Run the reference backend smoke test locally:
-
-```sh
-./build/test_smoke_ref
-```
-
-Run the full synchronous-read suite against the ref backend locally.
-`test_sync_read_prep` writes a deterministic 16-page pattern to a file; each
-backend test reads it back through its backend and verifies against an in-memory
-oracle:
-
-```sh
-f=$(mktemp) && ./build/test_sync_read_prep "$f" \
-  && ./build/test_sync_read_ref "$f"; rm -f "$f"
-```
-
-### Remote testing with CIJOE
-
-Integration tests run on a remote target via
-[CIJOE](https://github.com/refenv/cijoe). Target requirements:
-
-- A dedicated NVMe device (not the boot disk; the aisio phase unbinds it from
-  the kernel `nvme` driver).
-- An NVIDIA GPU with the CUDA toolkit; GDS (GPUDirect Storage) for the cufile
-  tests; xNVMe's `upcie-cuda` backend for the aisio tests.
-- The uPCIe dma-buf importer kernel module loaded (out-of-tree, shipped as a
-  DKMS package; a stock kernel suffices), IOMMU disabled, and 2 MiB hugepages
-  allocated (prerequisites for the GPU-NVMe dma-buf P2P path that aisio uses).
-- An XFS filesystem on the test namespace; the mount step does not format. Test
-  artifacts live under `<mount_point>/opends_tests/` and are removed at the end
-  of a run.
-
-The [aisio](https://github.com/xnvme/aisio) project ships cijoe tasks that take
-a fresh Ubuntu 24.04 install through every step above (kernel modules, NVIDIA
-stack, hugepages, XFS format, reference datasets). Follow its README first to
-bring up a target that meets these requirements. OpenDS pins its own dependency
-refs (xNVMe, xal, fil) in `configs/deps.toml` and installs the stack via
-`scripts/setup_deps.py` for reproducible test runs.
-
-`test_sync_read_prep` writes a deterministic pattern file (and a small extents
-record external benchmarks can deserialize) while the FS is mounted. The ref and
-cufile tests read the pattern back through the kernel FS. The aisio phase runs last
-against the homi stack: the kernel driver is unbound and the controller handed
-to a homi server, qublk re-exports it as a block device, the same XFS is
-remounted over it, and xal-server publishes the mount's extent index over
-shared memory. Each aisio test opens a file on that mount and registers it,
-which resolves the file's extents from that index; reads and writes DMA
-straight to and from GPU memory. The stack is then torn down and nvme rebound.
-
-1. Copy the example configs and fill in target details:
-
-   ```sh
-   cp configs/transport.toml.example configs/transport.toml
-   cp configs/test.toml.example configs/test.toml
-   ```
-
-   `configs/deps.toml` is tracked and needs no editing.
-
-2. Bootstrap (first run only):
-
-   ```sh
-   python scripts/rsync.py
-   python scripts/setup_deps.py   # xNVMe, xal, OpenDS, fil
-   python scripts/build.py
-   ```
-
-   Iterative loop: `python scripts/rsync.py && python scripts/build.py`.
-
-3. Run all test suites:
-
-   ```sh
-   python scripts/run_tests.py
-   ```
-
-### Benchmarking with filperf
+## Benchmarking with filperf
 
 Throughput benchmarks use `filperf` from [fil](https://github.com/xnvme/fil)
-against four reference datasets (`filesize8gib`, `tiktokish`, `imagenetish`,
-`lmcacheish`). The first three come from the aisio project's
-`tasks/setup_dataset.yaml` during target provisioning; `lmcacheish` is OpenDS's
-own, populated by `scripts/bench/setup_dataset.py`. Both are one-time, not per
-bench run.
+against four reference datasets. The AiSIO guide's `setup_dataset.yaml`
+writes `filesize8gib`, `tiktokish` and `imagenetish` during provisioning.
+`scripts/bench/setup_dataset.py` writes `lmcacheish` once.
 
-With `scripts/setup_deps.py`, `scripts/build.py` and
-`scripts/bench/setup_dataset.py` run on the target:
+With the quick start done and the datasets in place:
 
 ```sh
 python scripts/bench/run.py          # --full-sweep measures the whole grid
 python scripts/bench/report.py
 ```
 
-`run.py` measures the configs in `scripts/bench/sweep.toml`. `report.py` turns
-the records into `report.md`, `sweep.csv` and `report.png`. Each script's
-`--help` covers its own flags.
+`run.py` measures the configs in `scripts/bench/sweep.toml`. `report.py`
+turns the records into `report.md`, `sweep.csv` and `report.png`. Each
+script's `--help` covers its own flags.
 
-The perf table above is edited by hand from these reports. Every `filperf` run
-drops page caches first, so the numbers are cold-cache, N=1.
+The perf table above is edited by hand from these reports. Every `filperf`
+run drops page caches first, so the numbers are cold-cache, N=1.
