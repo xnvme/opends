@@ -181,7 +181,7 @@ void opends_free(void *buf);
  * Register an externally allocated buffer for use in I/O calls. The
  * caller retains ownership of the allocation, so deregister before
  * freeing. flags is forwarded to the backend (e.g. cuFileBufRegister
- * flags for gds).
+ * flags for cufile).
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
                                    int flags);

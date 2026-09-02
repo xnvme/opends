@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * Shared CUDA helpers for GPU-backed backend tests (gds, aisio).
+ * Shared CUDA helpers for GPU-backed backend tests (cufile, aisio).
  *
  * Provides the test_env callbacks that copy device buffers to host,
  * zero device buffers, and assert that opends_alloc returned CUDA

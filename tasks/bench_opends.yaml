@@ -10,7 +10,7 @@ doc: |
   homi_stack_up hands the controller to homi, exposes it as a ublk
   block device (qublk), remounts the dataset XFS over it, and starts
   xal-server on the mount. fil walks xal on the ublk block device to
-  enumerate the dataset (mirroring the gds path) and opens each file by
+  enumerate the dataset (mirroring the cufile path) and opens each file by
   path; the aisio backend resolves extents from the xal-server index
   and drives its own I/O queues on the controller homi holds up, DMAing
   straight to GPU memory. homi_stack_down tears the stack down and

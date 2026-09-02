@@ -9,7 +9,7 @@ NVMe straight into GPU memory.
 - **Reference** (`libopends_ref`): POSIX `pread`/`pwrite` on host buffers. No
   external dependencies. Serves as a correctness baseline and template for
   hardware-specific backends.
-- **GDS** (`libopends_gds`): Wraps NVIDIA cuFile for GPUDirect Storage. Buffers
+- **cuFile** (`libopends_cufile`): Wraps NVIDIA cuFile for GPUDirect Storage. Buffers
   are GPU memory allocated with `cudaMalloc` and registered via
   `cuFileBufRegister`. Requires CUDA toolkit and the cuFile (GDS) library. Built
   conditionally when both are found.
@@ -85,20 +85,20 @@ _Commit `93fd019` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 `NVIDIA RTX 2000 Ada Generation`). `OPENDS_AISIO_IO_THREADS=2` and
 `OPENDS_AISIO_QUEUE_DEPTH=8`._
 
-| Dataset       | mode   | gds (MiB/s) | opends (MiB/s) |
-|---------------|--------|-------------|----------------|
-| filesize8gib  | sync   |        6520 |           6794 |
-| filesize8gib  | stream |        2599 |           7036 |
-| filesize8gib  | async  |           - |           7065 |
-| tiktokish     | sync   |        4614 |           5869 |
-| tiktokish     | stream |        5101 |           4957 |
-| tiktokish     | async  |           - |           5005 |
-| imagenetish   | sync   |         343 |            583 |
-| imagenetish   | stream |         875 |           2787 |
-| imagenetish   | async  |           - |           3073 |
-| lmcacheish    | sync   |        5533 |           6151 |
-| lmcacheish    | stream |        4991 |           5368 |
-| lmcacheish    | async  |           - |           5384 |
+| Dataset       | mode   | cufile (MiB/s) | opends (MiB/s) |
+|---------------|--------|----------------|----------------|
+| filesize8gib  | sync   |           6520 |           6794 |
+| filesize8gib  | stream |           2599 |           7036 |
+| filesize8gib  | async  |              - |           7065 |
+| tiktokish     | sync   |           4614 |           5869 |
+| tiktokish     | stream |           5101 |           4957 |
+| tiktokish     | async  |              - |           5005 |
+| imagenetish   | sync   |            343 |            583 |
+| imagenetish   | stream |            875 |           2787 |
+| imagenetish   | async  |              - |           3073 |
+| lmcacheish    | sync   |           5533 |           6151 |
+| lmcacheish    | stream |           4991 |           5368 |
+| lmcacheish    | async  |              - |           5384 |
 
 ## opends API
 
@@ -221,7 +221,7 @@ if (n < 0) {
 
 ## Building
 
-Requires [Meson](https://mesonbuild.com) and a C11 compiler. The GDS backend
+Requires [Meson](https://mesonbuild.com) and a C11 compiler. The cuFile backend
 additionally requires the CUDA toolkit and cuFile library.
 
 ```sh
@@ -234,7 +234,7 @@ Meson reports which backends are enabled at configure time:
 ```
 Backends
   Reference backend        : true
-  GDS backend              : true
+  cuFile backend           : true
   aisio backend            : true
   aisio accelerator vendor : cuda
 ```
@@ -274,7 +274,7 @@ Integration tests run on a remote target via
 
 - A dedicated NVMe device (not the boot disk; the aisio phase unbinds it from
   the kernel `nvme` driver).
-- An NVIDIA GPU with the CUDA toolkit; GDS (GPUDirect Storage) for the gds
+- An NVIDIA GPU with the CUDA toolkit; GDS (GPUDirect Storage) for the cufile
   tests; xNVMe's `upcie-cuda` backend for the aisio tests.
 - The uPCIe dma-buf importer kernel module loaded (out-of-tree, shipped as a
   DKMS package; a stock kernel suffices), IOMMU disabled, and 2 MiB hugepages
@@ -292,7 +292,7 @@ refs (xNVMe, xal, fil) in `configs/deps.toml` and installs the stack via
 
 `test_sync_read_prep` writes a deterministic pattern file (and a small extents
 record external benchmarks can deserialize) while the FS is mounted. The ref and
-gds tests read the pattern back through the kernel FS. The aisio phase runs last
+cufile tests read the pattern back through the kernel FS. The aisio phase runs last
 against the homi stack: the kernel driver is unbound and the controller handed
 to a homi server, qublk re-exports it as a block device, the same XFS is
 remounted over it, and xal-server publishes the mount's extent index over

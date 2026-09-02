@@ -40,20 +40,20 @@ cufile_dep = cc.find_library('cufile',
   required : false,
 )
 
-gds_enabled = cuda_dep.found() and cufile_dep.found()
+cufile_enabled = cuda_dep.found() and cufile_dep.found()
 
-if gds_enabled
-  libopends_gds = shared_library('opends_gds',
+if cufile_enabled
+  libopends_cufile = shared_library('opends_cufile',
     'src/opends_common.c',
-    'src/opends_gds.c',
+    'src/opends_cufile.c',
     include_directories : opends_inc,
     dependencies : [cuda_dep, cufile_dep],
     install : true,
   )
 
-  opends_gds_dep = declare_dependency(
+  opends_cufile_dep = declare_dependency(
     include_directories : opends_inc,
-    link_with : libopends_gds,
+    link_with : libopends_cufile,
   )
 endif
 
@@ -184,13 +184,13 @@ executable('test_batch_read_ref',
   dependencies : [opends_ref_dep],
 )
 
-if gds_enabled
-  executable('test_sync_read_gds',
-    'tests/test_sync_read_gds.c',
-    dependencies : [opends_gds_dep, cuda_dep],
+if cufile_enabled
+  executable('test_sync_read_cufile',
+    'tests/test_sync_read_cufile.c',
+    dependencies : [opends_cufile_dep, cuda_dep],
   )
 else
-  executable('test_sync_read_gds', 'tests/skip.c')
+  executable('test_sync_read_cufile', 'tests/skip.c')
 endif
 
 aisio_test_enabled = aisio_enabled and cuda_dep.found()
@@ -263,7 +263,7 @@ endif
 
 summary({
   'Reference backend' : true,
-  'GDS backend' : gds_enabled,
+  'cuFile backend' : cufile_enabled,
   'aisio backend' : aisio_enabled,
   'aisio accelerator vendor' : accel_backend,
 }, section : 'Backends')
