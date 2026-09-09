@@ -1435,6 +1435,7 @@ workers_free(struct driver *d)
 static int
 workers_setup(struct driver *d)
 {
+	int qopts = d->cfg.cq_mirror ? XNVME_QUEUE_P2P_CQ_MIRROR : 0;
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
@@ -1489,8 +1490,8 @@ workers_setup(struct driver *d)
 			if (!d->cfg.assume_aligned_only &&
 			    kernel_read_setup(d, w, started) < 0)
 				goto fail;
-			if (xnvme_queue_init(dev->xdev, d->cfg.queue_depth, 0,
-			                     &w->queue) < 0) {
+			if (xnvme_queue_init(dev->xdev, d->cfg.queue_depth,
+			                     qopts, &w->queue) < 0) {
 				w->queue = NULL;
 				goto fail;
 			}
