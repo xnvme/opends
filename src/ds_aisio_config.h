@@ -19,6 +19,8 @@ struct aisio_config {
 	bool busy_spin;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
+	bool cq_mirror; ///< CQ in GPU memory, warp-mirrored to host (upcie-cuda
+	                ///< only)
 	size_t host_heap_nbytes;
 	size_t device_heap_nbytes;
 };
