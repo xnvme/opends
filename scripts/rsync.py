@@ -28,7 +28,7 @@ dest = test["test"]["repo_path"]
 target = f"{ssh['username']}@{ssh['hostname']}"
 
 rc = subprocess.run(
-    ["rsync", "-az", "--delete",
+    ["rsync", "-az", "--delete", "--mkpath",
      "--filter=:- .gitignore",
      "--exclude=.git/",
      "--exclude=cijoe-output*/",

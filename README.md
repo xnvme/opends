@@ -307,13 +307,11 @@ With `scripts/setup_deps.py`, `scripts/build.py` and
 ```sh
 python scripts/bench/run.py          # --full-sweep measures the whole grid
 python scripts/bench/report.py
-python scripts/bench/artefacts.py --push
 ```
 
 `run.py` measures the configs in `scripts/bench/sweep.toml`. `report.py` turns
-the records into `report.md`, `sweep.csv` and `report.png`, and `artefacts.py`
-publishes those to the orphan `artefacts` branch. Each script's `--help` covers
-its own flags.
+the records into `report.md`, `sweep.csv` and `report.png`. Each script's
+`--help` covers its own flags.
 
 The perf table above is edited by hand from these reports. Every `filperf` run
 drops page caches first, so the numbers are cold-cache, N=1.

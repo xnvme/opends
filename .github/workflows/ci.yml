@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -40,3 +41,104 @@ jobs:
       - name: Run python binding tests
         run: python3 -m pytest tests
         working-directory: python
+
+  test-full:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'test-full')
+    needs: [lint, test-ref]
+    runs-on: nvme-cuda
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
+      - run: scripts/build.py
+      - run: scripts/run_tests.py
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/test.yaml homi_stack_down
+
+  bench:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'bench')
+    needs: [lint, test-ref]
+    runs-on: nvme-cuda
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
+      - run: scripts/build.py
+      - name: Run one leg at the default knobs
+        run: scripts/bench/run.py --suite opends --io-threads 2
+      - name: Render the report
+        run: scripts/bench/report.py
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      - name: Upload the report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: |
+            cijoe-output-bench
+            cijoe-output-teardown
+
+  bench-sweep:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'bench-sweep')
+    needs: [lint, test-ref]
+    runs-on: nvme-cuda
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
+      - run: scripts/build.py
+      - name: Run the standard sweep
+        run: scripts/bench/run.py --suite opends
+      - name: Render the report
+        run: scripts/bench/report.py
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      - name: Upload the report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-sweep
+          path: |
+            cijoe-output-bench
+            cijoe-output-teardown
+
+  bench-full-sweep:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'bench-full-sweep')
+    needs: [lint, test-ref]
+    runs-on: nvme-cuda
+    timeout-minutes: 2880
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - run: scripts/rsync.py
+      - run: scripts/setup_deps.py
+      - run: scripts/build.py
+      - name: Run the full sweep
+        run: scripts/bench/run.py --suite opends --full-sweep
+      - name: Render the report
+        run: scripts/bench/report.py
+      - name: Tear the stack down
+        if: always()
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      - name: Upload the report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-full-sweep
+          path: |
+            cijoe-output-bench
+            cijoe-output-teardown

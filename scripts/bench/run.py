@@ -196,7 +196,7 @@ def _run_opends(args, modes, datasets, configs):
     if not args.skip_setup:
         run_cijoe(suite, "cpu_governor", "homi_stack_up", out=f"{out}/_setup")
     try:
-        for p, steps in plan:
+        for i, (p, steps) in enumerate(plan, 1):
             t, q = p["io_threads"], p["queue_depth"]
             a = p["assume_aligned_only"]
             s = p["idle_spin"]
@@ -205,7 +205,7 @@ def _run_opends(args, modes, datasets, configs):
             os.environ["OPENDS_AISIO_QUEUE_DEPTH"] = str(q)
             os.environ["OPENDS_AISIO_ASSUME_ALIGNED_ONLY"] = str(a)
             leg = _leg_name(p)
-            print(f"\n=== opends io_threads={t} queue_depth={q} "
+            print(f"\n=== opends [{i}/{len(plan)}] io_threads={t} queue_depth={q} "
                   f"assume_aligned_only={a} idle_spin={s}"
                   f": {', '.join(steps)} ===", flush=True)
             rc = run_cijoe(suite, "meta", *steps, out=f"{out}/{leg}",
