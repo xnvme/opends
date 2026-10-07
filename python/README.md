@@ -18,8 +18,8 @@ with opends.Driver():
 ```
 
 Methods are named after the C families: `read_sync`/`write_sync` block and
-return the byte count, and `read_async`/`write_async` return a `Future`.
-Buffers may be any
+return the byte count, `read_async`/`write_async` return a `Future`, and
+`read_stream`/`write_stream` enqueue on a CUDA stream. Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
 `opends.alloc`. These are registered on first use and deregistered at driver
@@ -40,8 +40,9 @@ with opends.OpenDSFile(path, "r") as f:
 ## Driver
 
 `opends.Driver()` opens the driver, as `cuFileDriverOpen` does, and must be
-open before any file or buffer call; without it they raise `OpenDSError` with
-`ErrorCode.DRIVER_NOT_INITIALIZED`. Driver objects are counted, so independent
+open before any file, buffer or stream call; without it they raise
+`OpenDSError` with `ErrorCode.DRIVER_NOT_INITIALIZED`. Driver objects are
+counted, so independent
 components may each hold one; the C driver closes when the last is closed,
 which drops every registration, so close files and deregister buffers first.
 `get_properties()`, `use_count()` and `set_max_direct_io_size()` pass through
@@ -74,6 +75,27 @@ with opends.OpenDSFile(path, "r") as f:
         for i in range(4)
     ]
     total = sum(fut.result() for fut in futs)
+```
+
+## Stream I/O
+
+`read_stream` and `write_stream` are the cuFile `ReadAsync`/`WriteAsync`
+counterparts: the operation is enqueued on a CUDA stream and completes in
+stream order. `stream` accepts a raw handle (`int` or `ctypes.c_void_p`), a
+`torch.cuda.Stream` or a `cupy.cuda.Stream`; `None` is the default stream.
+The returned `StreamOp` holds the storage the backend reads and writes when
+the stream reaches the operation, so keep it alive until the stream has been
+synchronized; `result()` raises until then and returns the byte count after.
+`register_stream` and
+`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
+
+```python
+opends.register_stream(stream)
+with opends.OpenDSFile(path, "r") as f:
+    op = f.read_stream(buf, size=n, file_offset=0, stream=stream)
+    stream.synchronize()
+    assert op.result() == n
+opends.deregister_stream(stream)
 ```
 
 ## Migrating from cufile-python (GDS)
@@ -129,6 +151,10 @@ Mapping at a glance:
 | `f.write(buf, size, file_offset=, dev_offset=)` | `f.write_sync(...)`, same arguments |
 | `cuFileBufRegister(c_void_p(p), size, flags=0)` | `opends.register_buffer(p, size)` |
 | `cuFileBufDeregister(c_void_p(p))` | `opends.deregister_buffer(p)` |
+| `cuFileReadAsync(fh, buf, &size, &foff, &doff, &n, stream)` | `op = f.read_stream(buf, size, file_offset=, dev_offset=, stream=)`; `op.result()` |
+| `cuFileWriteAsync(...)` | `f.write_stream(...)`, same shape |
+| `cuFileStreamRegister(stream, flags)` | `opends.register_stream(stream, flags)` |
+| `cuFileStreamDeregister(stream)` | `opends.deregister_stream(stream)` |
 
 One difference to note: `use_direct_io` defaults to `True`, since every
 backend requires O_DIRECT, so it can be omitted unless overriding.

@@ -5,7 +5,15 @@ OPENDS_BACKEND selects libopends_<backend>.so (default aisio);
 OPENDS_LIBRARY loads a specific file instead.
 """
 
-from .buffer import HostBuffer, alloc, deregister_buffer, free, register_buffer
+from .buffer import (
+    HostBuffer,
+    alloc,
+    deregister_buffer,
+    deregister_stream,
+    free,
+    register_buffer,
+    register_stream,
+)
 from .cdll import ErrorCode
 from .driver import (
     Driver,
@@ -17,7 +25,7 @@ from .driver import (
     set_max_direct_io_size,
     use_count,
 )
-from .file import Future, OpenDSFile
+from .file import Future, OpenDSFile, StreamOp
 
 __all__ = [
     "Driver",
@@ -27,13 +35,16 @@ __all__ = [
     "HostBuffer",
     "OpenDSError",
     "OpenDSFile",
+    "StreamOp",
     "alloc",
     "cleanup",
     "deregister_buffer",
+    "deregister_stream",
     "free",
     "get_properties",
     "get_version",
     "register_buffer",
+    "register_stream",
     "set_max_direct_io_size",
     "use_count",
 ]

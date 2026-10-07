@@ -11,7 +11,7 @@ import threading
 
 from . import cdll as _c
 from . import driver
-from .driver import OpenDSError, preserve_cuda_context, require_driver
+from .driver import OpenDSError, check, preserve_cuda_context, require_driver
 
 
 class Registry:
@@ -82,6 +82,33 @@ def deregister_buffer(buf):
     ptr, _ = buffer_view(buf)
     with preserve_cuda_context():
         registry.drop(ptr)
+
+
+def stream_handle(stream):
+    """Raw handle of a CUDA stream-like object. None is the default stream."""
+    if stream is None:
+        return 0
+    if isinstance(stream, ctypes.c_void_p):
+        return int(stream.value or 0)
+    if isinstance(stream, int):
+        return stream
+    for attr in ("cuda_stream", "ptr"):  # torch.cuda.Stream, cupy.cuda.Stream
+        value = getattr(stream, attr, None)
+        if value is not None:
+            return int(value)
+    raise TypeError("unsupported stream object %r" % (stream,))
+
+
+def register_stream(stream, flags=0):
+    """cuFileStreamRegister."""
+    require_driver()
+    with preserve_cuda_context():
+        check(_c.stream_register(stream_handle(stream), flags))
+
+
+def deregister_stream(stream):
+    with preserve_cuda_context():
+        check(_c.stream_deregister(stream_handle(stream)))
 
 
 class HostBuffer:
