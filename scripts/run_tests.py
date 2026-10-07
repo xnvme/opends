@@ -21,7 +21,7 @@ TESTS_BY_BACKEND = {
     "aisio": ["sync_read", "mt_read", "register_large", "coherency",
               "async_read", "async_read_busy_spin", "batch_read",
               "stream_read", "stream_read_busy_spin", "sync_write",
-              "stream_write"],
+              "stream_write", "python"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})
 

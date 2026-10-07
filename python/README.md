@@ -204,3 +204,7 @@ python -m pytest tests    # conftest selects the ref backend
 
 The suite runs against the reference backend and needs no GPU. It covers
 the sync, async, stream and batch families and the driver calls.
+`tests/test_aisio_cuda.py` runs the same families against the aisio backend
+on a live HOMI stack and skips unless `OPENDS_BACKEND=aisio` and
+`OPENDS_HOMI_MNT` are set and the CUDA libraries load; `scripts/run_tests.py`
+runs it as the `python` test of the aisio suite.
