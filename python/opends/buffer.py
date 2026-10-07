@@ -190,12 +190,29 @@ def buffer_view(buf):
 
 
 def io_args(buf, size, dev_offset):
-    """Resolve (ptr, nbytes, size) for an I/O call on buf."""
+    """Resolve (ptr, nbytes, size) for an I/O call on buf.
+
+    The transfer must lie inside a buffer with a known extent; a bare
+    pointer has none, so only its size is checked for presence.
+    """
     ptr, nbytes = buffer_view(buf)
-    if size is None:
-        if nbytes is None:
+    if dev_offset < 0:
+        raise ValueError("dev_offset %d is negative" % dev_offset)
+    if nbytes is None:
+        if size is None:
             raise ValueError("size is required for a bare pointer")
+        return ptr, nbytes, size
+    if dev_offset > nbytes:
+        raise ValueError(
+            "dev_offset %d is past the end of the %d-byte buffer" % (dev_offset, nbytes)
+        )
+    if size is None:
         size = nbytes - dev_offset
+    elif dev_offset + size > nbytes:
+        raise ValueError(
+            "%d bytes at dev_offset %d exceed the %d-byte buffer"
+            % (size, dev_offset, nbytes)
+        )
     return ptr, nbytes, size
 
 
