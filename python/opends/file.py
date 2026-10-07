@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""OpenDSFile and its sync and async I/O methods."""
+"""OpenDSFile and its sync, async and stream I/O methods."""
 
 import ctypes
 import os
@@ -7,6 +7,7 @@ import os
 from . import cdll as _c
 from .buffer import io_args, registry
 from .driver import check, io_result, is_open, preserve_cuda_context, require_driver
+from .stream import StreamOp, stream_handle
 
 class Future:
     """Completion of one read_async or write_async call.
@@ -100,6 +101,24 @@ class OpenDSFile:
             )
         return Future(c_future, buf)
 
+    def _submit_stream(self, c_fn, buf, size, file_offset, dev_offset, stream):
+        ptr, nbytes, size = io_args(buf, size, dev_offset)
+        op = StreamOp(size, file_offset, dev_offset, buf)
+        with preserve_cuda_context():
+            registry.ensure(ptr, nbytes)
+            check(
+                c_fn(
+                    self._fh,
+                    ptr,
+                    ctypes.byref(op._size),
+                    ctypes.byref(op._file_offset),
+                    ctypes.byref(op._dev_offset),
+                    ctypes.byref(op._bytes),
+                    stream_handle(stream),
+                )
+            )
+        return op
+
     def read_sync(self, buf, size=None, file_offset=0, dev_offset=0):
         return self._submit(_c.sync_read, buf, size, file_offset, dev_offset)
 
@@ -116,6 +135,18 @@ class OpenDSFile:
         """Submit a write without waiting; the Future carries the byte count."""
         return self._submit_async(
             _c.async_write, buf, size, file_offset, dev_offset
+        )
+
+    def read_stream(self, buf, size=None, file_offset=0, dev_offset=0, stream=None):
+        """Enqueue a read on a CUDA stream (cuFileReadAsync); see StreamOp."""
+        return self._submit_stream(
+            _c.stream_read, buf, size, file_offset, dev_offset, stream
+        )
+
+    def write_stream(self, buf, size=None, file_offset=0, dev_offset=0, stream=None):
+        """Enqueue a write on a CUDA stream (cuFileWriteAsync); see StreamOp."""
+        return self._submit_stream(
+            _c.stream_write, buf, size, file_offset, dev_offset, stream
         )
 
     def fileno(self):

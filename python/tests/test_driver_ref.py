@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Driver-level bindings against the ref backend."""
 
+import ctypes
+
 import pytest
 
 import opends
@@ -17,6 +19,7 @@ def test_requires_open_driver(tmp_path):
         lambda: opends.OpenDSFile(str(path), "r"),
         lambda: opends.alloc(4096),
         lambda: opends.register_buffer(bytearray(4096)),
+        lambda: opends.register_stream(0x10),
         lambda: opends.get_properties(),
         lambda: opends.set_max_direct_io_size(1 << 20),
     ]
@@ -81,6 +84,16 @@ def test_error_carries_code(driver, tmp_path):
     assert info.value.code is opends.ErrorCode.DIO_NOT_SET
     assert "5020" in str(info.value)
     assert opends.use_count() == before
+
+
+def test_register_deregister_buffer_and_stream(driver):
+    buf = opends.alloc(4096)
+    opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
+    opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)  # idempotent
+    opends.deregister_buffer(ctypes.c_void_p(buf.ptr))
+    opends.deregister_buffer(ctypes.c_void_p(buf.ptr))  # unknown: no-op
+    opends.register_stream(0x1234)
+    opends.deregister_stream(0x1234)
 
 
 def test_finalizer_inside_registration_does_not_deadlock(driver, tmp_path):
