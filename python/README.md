@@ -199,7 +199,8 @@ in-tree `meson compile -C build` is picked up without installation.
 
 ```sh
 cd python
-OPENDS_BACKEND=ref PYTHONPATH=. python tests/test_file_ref.py   # or: pytest
+python -m pytest tests    # conftest selects the ref backend
 ```
 
-The test runs against the reference backend and needs no GPU.
+The suite runs against the reference backend and needs no GPU. It covers
+the sync, async, stream and batch families and the driver calls.
