@@ -1,50 +1,22 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""OpenDS Python bindings.
+"""OpenDS Python bindings: a ctypes layer over the OpenDS C ABI.
 
-Thin ctypes layer over the OpenDS C ABI. The user-facing surface lives
-in _file; ABI declarations live in _cdll. Select a backend with the
-OPENDS_BACKEND env var (default "aisio") or point OPENDS_LIBRARY at a
-specific .so.
+OPENDS_BACKEND selects libopends_<backend>.so (default aisio);
+OPENDS_LIBRARY loads a specific file instead.
 """
 
-import ctypes as _ctypes
-
-from . import _cdll as _c
-from ._file import (
-    HostBuffer,
-    OpenDSError,
-    OpenDSFile,
-    _check,
-    deregister_buffer,
-    register_buffer,
-)
+from .buffer import HostBuffer, alloc, deregister_buffer, free, register_buffer
+from .driver import OpenDSError, cleanup, get_version
+from .file import OpenDSFile
 
 __all__ = [
-    "OpenDSFile",
-    "OpenDSError",
     "HostBuffer",
+    "OpenDSError",
+    "OpenDSFile",
     "alloc",
+    "cleanup",
+    "deregister_buffer",
     "free",
     "get_version",
     "register_buffer",
-    "deregister_buffer",
 ]
-
-
-def alloc(size):
-    """Allocate a 4096-aligned host buffer owned by the backend."""
-    return HostBuffer(size)
-
-
-def free(buf):
-    buf.free()
-
-
-def get_version():
-    major, minor, patch = _ctypes.c_uint(), _ctypes.c_uint(), _ctypes.c_uint()
-    _check(
-        _c.get_version(
-            _ctypes.byref(major), _ctypes.byref(minor), _ctypes.byref(patch)
-        )
-    )
-    return (major.value, minor.value, patch.value)

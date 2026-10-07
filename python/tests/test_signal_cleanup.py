@@ -3,8 +3,8 @@
 
 atexit does not run on signal death, so without a signal handler a SIGTERM
 (how orchestrators tear a process down) skips opends' driver_close and leaks
-the pinned GPU dma-buf until reboot. This guards the handler in _file.py so a
-future refactor cannot silently drop it again (it has regressed before).
+the pinned GPU dma-buf until reboot. This guards the handler in driver.py so
+a future refactor cannot silently drop it again (it has regressed before).
 
 Runs against the ref backend, so no GPU is needed: it asserts that
 driver_close fires on SIGTERM, which is backend-independent.
@@ -26,7 +26,7 @@ import opends
 _CHILD = r"""
 import ctypes, os, signal
 import opends
-import opends._cdll as cdll
+from opends import cdll
 
 sentinel = os.environ["OPENDS_TEST_SENTINEL"]
 ready = os.environ["OPENDS_TEST_READY"]
@@ -90,56 +90,54 @@ def test_sigterm_runs_driver_cleanup():
 
 
 def test_cleanup_symbol_is_public():
-    # External integrations call opends._file._cleanup() by name from their own
+    # External integrations call opends.cleanup() by name from their own
     # signal handlers (e.g. vLLM's EngineCore SIGTERM handler, which shadows any
     # handler opends installs). Renaming it makes that call a silent no-op and
     # leaks the GPU dma-buf. Guard the exact name.
-    import opends._file as f
-
-    assert callable(getattr(f, "_cleanup", None)), (
-        "opends._file._cleanup must exist and be callable. External signal "
-        "handlers call it by this exact name to free the GPU dma-buf."
+    assert callable(getattr(opends, "cleanup", None)), (
+        "opends.cleanup must exist and be callable. External signal handlers "
+        "call it by this exact name to free the GPU dma-buf."
     )
 
 
 def test_cleanup_reentrant_safe():
-    # A second SIGTERM/SIGINT can re-enter _cleanup on the same thread while it
-    # is inside _registry.clear() (buf_deregister can be slow). _registry's lock
-    # is non-reentrant, so without a guard the reentrant call self-deadlocks and
-    # driver_close never runs, leaking the GPU buffer. Reproduce the re-entry by
-    # calling _cleanup from within buf_deregister and assert the teardown still
-    # completes (does not hang).
+    # A second SIGTERM/SIGINT can re-enter cleanup on the same thread while it
+    # is inside the registry clear (buf_deregister can be slow). The registry
+    # lock is non-reentrant, so without a guard the reentrant call self-deadlocks
+    # and driver_close never runs, leaking the GPU buffer. Reproduce the re-entry
+    # by calling cleanup from within buf_deregister and assert the teardown
+    # still completes (does not hang).
     import ctypes
     import threading
 
-    import opends._file as f
+    from opends import cdll, driver as d
 
-    f._cleaning = False
+    d._cleaning = False
     buf = opends.alloc(4096)
     opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
-    orig = f._c.buf_deregister
+    orig = cdll.buf_deregister
 
     def reenter(ptr):
-        f._cleanup()  # simulate a signal re-entering mid-clear
+        opends.cleanup()  # simulate a signal re-entering mid-clear
         return orig(ptr)
 
     done = threading.Event()
 
     def run_cleanup():
-        f._cleanup()
+        opends.cleanup()
         done.set()
 
-    f._c.buf_deregister = reenter
+    cdll.buf_deregister = reenter
     try:
         threading.Thread(target=run_cleanup).start()
         assert done.wait(timeout=10), (
-            "_cleanup deadlocked on re-entry; the reentrancy guard is missing, "
+            "cleanup deadlocked on re-entry; the reentrancy guard is missing, "
             "so a second signal during teardown would leak the GPU buffer"
         )
     finally:
-        f._c.buf_deregister = orig
-        f._cleaning = False
+        cdll.buf_deregister = orig
+        d._cleaning = False
 
 
 if __name__ == "__main__":
