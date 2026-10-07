@@ -82,6 +82,12 @@ class DsDrvProps(ctypes.Structure):
     ]
 
 
+class DsAsyncFuture(ctypes.Structure):
+    """opends_async_future_t."""
+
+    _fields_ = [("done", c_uint), ("result", c_ssize_t)]
+
+
 BACKEND = os.environ.get("OPENDS_BACKEND", "aisio")
 
 
@@ -153,5 +159,17 @@ sync_read = _decl(
 sync_write = _decl(
     "opends_sync_write", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
+
+async_read = _decl(
+    "opends_async_read",
+    DsError,
+    [c_void_p, c_void_p, c_size_t, c_long, c_long, POINTER(DsAsyncFuture)],
+)
+async_write = _decl(
+    "opends_async_write",
+    DsError,
+    [c_void_p, c_void_p, c_size_t, c_long, c_long, POINTER(DsAsyncFuture)],
+)
+async_await = _decl("opends_async_await", c_ssize_t, [POINTER(DsAsyncFuture)])
 
 op_status_error = _decl("opends_op_status_error", c_char_p, [c_int])

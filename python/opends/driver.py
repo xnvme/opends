@@ -129,6 +129,10 @@ def require_driver():
         raise OpenDSError(_c.ErrorCode.DRIVER_NOT_INITIALIZED)
 
 
+def is_open():
+    return _driver_refs > 0
+
+
 # _cleaning guards against signal reentrancy: a second SIGTERM/SIGINT arriving
 # while cleanup is inside the slow buf_deregister re-enters it on the same
 # thread. A reentrant call is a no-op so the first completes; reset in finally

@@ -17,12 +17,13 @@ from .driver import (
     set_max_direct_io_size,
     use_count,
 )
-from .file import OpenDSFile
+from .file import Future, OpenDSFile
 
 __all__ = [
     "Driver",
     "DriverProperties",
     "ErrorCode",
+    "Future",
     "HostBuffer",
     "OpenDSError",
     "OpenDSFile",
