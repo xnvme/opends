@@ -2,9 +2,9 @@
 
 Thin ctypes binding over the OpenDS C ABI. No compiled extension; the
 package tracks the C library by ABI and loads it at import. The modules are
-laid out by concern (`opends.driver`, `opends.buffer`, `opends.file`, and
-`opends.cdll` for the raw prototypes); `import opends` gives the convenience
-surface used below.
+laid out by concern (`opends.driver`, `opends.buffer`, `opends.file`,
+`opends.batch`, and `opends.cdll` for the raw prototypes); `import opends`
+gives the convenience surface used below.
 
 ## Usage
 
@@ -40,16 +40,15 @@ with opends.OpenDSFile(path, "r") as f:
 ## Driver
 
 `opends.Driver()` opens the driver, as `cuFileDriverOpen` does, and must be
-open before any file, buffer or stream call; without it they raise
+open before any file, buffer, stream or batch call; without it they raise
 `OpenDSError` with `ErrorCode.DRIVER_NOT_INITIALIZED`. Driver objects are
-counted, so independent
-components may each hold one; the C driver closes when the last is closed,
-which drops every registration, so close files and deregister buffers first.
-`get_properties()`, `use_count()` and `set_max_direct_io_size()` pass through
-to the C driver calls. Failures raise `OpenDSError`, whose `code` is an
-`opends.ErrorCode` member. A driver left open is closed at exit and on
-SIGTERM/SIGINT; a framework that installs its own SIGTERM handler calls
-`opends.cleanup()` from it.
+counted, so independent components may each hold one; the C driver closes
+when the last is closed, which drops every registration, so close files and
+deregister buffers first. `get_properties()`, `use_count()` and
+`set_max_direct_io_size()` pass through to the C driver calls. Failures raise
+`OpenDSError`, whose `code` is an `opends.ErrorCode` member. A driver left
+open is closed at exit and on SIGTERM/SIGINT; a framework that installs its
+own SIGTERM handler calls `opends.cleanup()` from it.
 
 ```python
 with opends.Driver():
@@ -96,6 +95,30 @@ with opends.OpenDSFile(path, "r") as f:
     stream.synchronize()
     assert op.result() == n
 opends.deregister_stream(stream)
+```
+
+## Batch I/O
+
+`opends.Batch(max_nr)` wraps `cuFileBatchIOSetUp`: it holds up to `max_nr`
+operations in flight, and a slot frees once `get_status` has delivered its
+completion. `submit` takes `BatchOp` entries (file, buffer, size, offsets,
+`opends.READ` or `opends.WRITE`, and any object as cookie) and raises
+`OpenDSError` with `ErrorCode.BATCH_FULL` when they exceed the free slots.
+`get_status(min_nr, max_nr, timeout)` waits for at least `min_nr` completions
+(timeout in seconds, `None` without limit) and returns
+`BatchEvent(cookie, status, ret)` tuples, each completion once; `status` is an
+`opends.Status`. `cancel` reports undelivered completions as `CANCELED`.
+Operations in a batch are unordered. A `Batch` is not thread-safe; guard one
+shared between threads.
+
+```python
+with opends.OpenDSFile(path, "r") as f, opends.Batch(8) as batch:
+    batch.submit(
+        opends.BatchOp(f, buf, size=n, file_offset=i * n, dev_offset=i * n, cookie=i)
+        for i in range(8)
+    )
+    for ev in batch.get_status(min_nr=8):
+        assert ev.status == opends.Status.COMPLETE and ev.ret == n
 ```
 
 ## Migrating from cufile-python (GDS)
@@ -155,6 +178,11 @@ Mapping at a glance:
 | `cuFileWriteAsync(...)` | `f.write_stream(...)`, same shape |
 | `cuFileStreamRegister(stream, flags)` | `opends.register_stream(stream, flags)` |
 | `cuFileStreamDeregister(stream)` | `opends.deregister_stream(stream)` |
+| `cuFileBatchIOSetUp(&h, nr)` | `opends.Batch(nr)` |
+| `cuFileBatchIOSubmit(h, nr, params, flags)` | `batch.submit(ops, flags)` with `opends.BatchOp` entries |
+| `cuFileBatchIOGetStatus(h, min_nr, &nr, events, &timeout)` | `batch.get_status(min_nr, max_nr, timeout)` |
+| `cuFileBatchIOCancel(h)` | `batch.cancel()` |
+| `cuFileBatchIODestroy(h)` | `batch.close()`, or leave the `with` block |
 
 One difference to note: `use_direct_io` defaults to `True`, since every
 backend requires O_DIRECT, so it can be omitted unless overriding.

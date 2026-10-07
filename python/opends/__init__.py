@@ -5,6 +5,7 @@ OPENDS_BACKEND selects libopends_<backend>.so (default aisio);
 OPENDS_LIBRARY loads a specific file instead.
 """
 
+from .batch import READ, WRITE, Batch, BatchEvent, BatchOp, Status
 from .buffer import (
     HostBuffer,
     alloc,
@@ -28,6 +29,9 @@ from .driver import (
 from .file import Future, OpenDSFile, StreamOp
 
 __all__ = [
+    "Batch",
+    "BatchEvent",
+    "BatchOp",
     "Driver",
     "DriverProperties",
     "ErrorCode",
@@ -35,7 +39,10 @@ __all__ = [
     "HostBuffer",
     "OpenDSError",
     "OpenDSFile",
+    "READ",
+    "Status",
     "StreamOp",
+    "WRITE",
     "alloc",
     "cleanup",
     "deregister_buffer",

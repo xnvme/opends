@@ -8,6 +8,7 @@ from . import cdll as _c
 from .buffer import io_args, registry, stream_handle
 from .driver import check, io_result, is_open, preserve_cuda_context, require_driver
 
+
 class Future:
     """Completion of one read_async or write_async call.
 
@@ -182,6 +183,11 @@ class OpenDSFile:
 
     def fileno(self):
         return self._fd
+
+    @property
+    def handle(self):
+        """The opends_handle_t, or None once closed."""
+        return self._fh
 
     def close(self):
         if self._fh is not None:
