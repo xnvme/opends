@@ -64,7 +64,7 @@
 #define NVME_PRP_OFFSET_ALIGN 4
 #define BOUNCE_SLOTS 2
 #define DEFAULT_QUEUE_DEPTH 8
-#define MAX_QUEUE_DEPTH 4096
+#define MAX_QUEUE_DEPTH 1024
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
  * per I/O thread. 256 MiB covers the largest configuration the knobs allow
