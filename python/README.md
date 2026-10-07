@@ -17,6 +17,10 @@ with opends.Driver():
         nbytes = f.read_sync(buf, size=4096, file_offset=0)
 ```
 
+`examples/python_demo.py` at the repository root reads one file through every
+mode (sync, async, stream, batch) into one registered torch CUDA tensor on the
+aisio backend.
+
 Methods are named after the C families: `read_sync`/`write_sync` block and
 return the byte count, `read_async`/`write_async` return a `Future`, and
 `read_stream`/`write_stream` enqueue on a CUDA stream. Buffers may be any
