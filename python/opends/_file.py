@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """User-facing OpenDS classes: OpenDSFile and HostBuffer.
 
-read/write are synchronous and return the byte count, mirroring the
-opends_sync_read/opends_sync_write C surface. Buffer arguments follow the
+read_sync/write_sync block and return the byte count, mirroring
+opends_sync_read/opends_sync_write. Buffer arguments follow the
 cuFile convention (base pointer plus dev_offset) so consumers written
 against GDS port with minimal change.
 """
@@ -395,11 +395,11 @@ class OpenDSFile:
             _registry.ensure(ptr, nbytes)
             return _io_result(c_fn(self._fh, ptr, size, file_offset, dev_offset))
 
-    def read(self, buf, size=None, file_offset=0, dev_offset=0):
-        return self._submit(_c.read, buf, size, file_offset, dev_offset)
+    def read_sync(self, buf, size=None, file_offset=0, dev_offset=0):
+        return self._submit(_c.sync_read, buf, size, file_offset, dev_offset)
 
-    def write(self, buf, size=None, file_offset=0, dev_offset=0):
-        return self._submit(_c.write, buf, size, file_offset, dev_offset)
+    def write_sync(self, buf, size=None, file_offset=0, dev_offset=0):
+        return self._submit(_c.sync_write, buf, size, file_offset, dev_offset)
 
     def close(self):
         if self._fh is not None:

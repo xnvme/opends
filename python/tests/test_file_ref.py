@@ -30,11 +30,11 @@ def test_roundtrip():
         src = opends.alloc(n)
         ctypes.memmove(src.as_ctypes(), payload, n)
         with opends.OpenDSFile(path, "w") as f:
-            assert f.write(src, size=n) == n
+            assert f.write_sync(src, size=n) == n
 
         dst = opends.alloc(n)
         with opends.OpenDSFile(path, "r") as f:
-            assert f.read(dst, size=n) == n
+            assert f.read_sync(dst, size=n) == n
         assert bytes(dst.as_ctypes()) == payload
     finally:
         os.unlink(path)
@@ -49,11 +49,11 @@ def test_scatter_offsets():
         src = opends.alloc(n)
         ctypes.memmove(src.as_ctypes(), payload, n)
         with opends.OpenDSFile(path, "w") as f:
-            f.write(src, size=n)
+            f.write_sync(src, size=n)
 
         dst = opends.alloc(n)
         with opends.OpenDSFile(path, "r") as f:
-            assert f.read(dst, size=2048, file_offset=2048, dev_offset=0) == 2048
+            assert f.read_sync(dst, size=2048, file_offset=2048, dev_offset=0) == 2048
         assert bytes(dst.as_ctypes())[:2048] == payload[2048:]
     finally:
         os.unlink(path)
@@ -72,14 +72,15 @@ def test_raw_pointer_with_offset():
         src = opends.alloc(n)
         ctypes.memmove(src.as_ctypes(), payload, n)
         with opends.OpenDSFile(path, "w") as f:
-            f.write(src, size=n)
+            f.write_sync(src, size=n)
 
         dst = opends.alloc(n)
         base = ctypes.c_void_p(dst.ptr)
         opends.register_buffer(base, n)
         with opends.OpenDSFile(path, "r") as f:
-            assert f.read(base, size=half, file_offset=0, dev_offset=0) == half
-            assert f.read(base, size=half, file_offset=half, dev_offset=half) == half
+            assert f.read_sync(base, size=half, file_offset=0, dev_offset=0) == half
+            n = f.read_sync(base, size=half, file_offset=half, dev_offset=half)
+            assert n == half
         assert bytes(dst.as_ctypes()) == payload
         opends.deregister_buffer(base)
     finally:
