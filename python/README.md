@@ -18,7 +18,8 @@ with opends.Driver():
 ```
 
 Methods are named after the C families: `read_sync`/`write_sync` block and
-return the byte count. Buffers may be any
+return the byte count, and `read_async`/`write_async` return a `Future`.
+Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
 `opends.alloc`. These are registered on first use and deregistered at driver
@@ -53,6 +54,26 @@ SIGTERM/SIGINT; a framework that installs its own SIGTERM handler calls
 with opends.Driver():
     props = opends.get_properties()      # DriverProperties namedtuple
     print(props.max_direct_io_size)
+```
+
+## Async I/O
+
+`read_async` and `write_async` take the same arguments as `read_sync` and
+`write_sync` and return a `Future` without waiting. `Future.result()` blocks
+until the operation completes and returns the byte count; `Future.done` polls.
+Futures complete in any order. Keep the buffer and the Future alive until
+`result()` has returned, and let operations complete before the Driver
+closes: a Future awaited after that raises `DRIVER_NOT_INITIALIZED`. This is
+the OpenDS primitive async form; cuFile's stream-ordered `ReadAsync`/
+`WriteAsync` map to the stream family instead.
+
+```python
+with opends.OpenDSFile(path, "r") as f:
+    futs = [
+        f.read_async(buf, size=n, file_offset=i * n, dev_offset=i * n)
+        for i in range(4)
+    ]
+    total = sum(fut.result() for fut in futs)
 ```
 
 ## Migrating from cufile-python (GDS)

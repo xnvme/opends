@@ -162,6 +162,16 @@ def buffer_view(buf):
     return ctypes.addressof(arr), mv.nbytes
 
 
+def io_args(buf, size, dev_offset):
+    """Resolve (ptr, nbytes, size) for an I/O call on buf."""
+    ptr, nbytes = buffer_view(buf)
+    if size is None:
+        if nbytes is None:
+            raise ValueError("size is required for a bare pointer")
+        size = nbytes - dev_offset
+    return ptr, nbytes, size
+
+
 def alloc(size):
     """Allocate a buffer owned by the backend: 4096-aligned host memory on
     ref, device memory on GPU backends. Needs an open Driver."""
