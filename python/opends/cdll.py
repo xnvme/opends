@@ -64,6 +64,24 @@ class ErrorCode(enum.IntEnum):
     IO_MAX_ERROR = 5039
 
 
+class Status(enum.IntEnum):
+    """opends_status_t."""
+
+    WAITING = 0x01
+    PENDING = 0x02
+    INVALID = 0x04
+    CANCELED = 0x08
+    COMPLETE = 0x10
+    TIMEOUT = 0x20
+    FAILED = 0x40
+
+
+# opends_opcode_t and opends_batch_mode_t
+READ = 0
+WRITE = 1
+BATCH_MODE = 1
+
+
 class DsError(ctypes.Structure):
     """opends_error_t: {opends_op_error_t err; opends_result_t dev_err;}."""
 
@@ -86,6 +104,41 @@ class DsAsyncFuture(ctypes.Structure):
     """opends_async_future_t."""
 
     _fields_ = [("done", c_uint), ("result", c_ssize_t)]
+
+
+class _DsBatchParams(ctypes.Structure):
+    _fields_ = [
+        ("dev_ptr_base", c_void_p),
+        ("file_offset", c_long),
+        ("dev_ptr_offset", c_long),
+        ("size", c_size_t),
+    ]
+
+
+class _DsIoParamsU(ctypes.Union):
+    _fields_ = [("batch", _DsBatchParams)]
+
+
+class DsIoParams(ctypes.Structure):
+    """opends_io_params_t."""
+
+    _fields_ = [
+        ("mode", c_int),
+        ("u", _DsIoParamsU),
+        ("fh", c_void_p),
+        ("opcode", c_int),
+        ("cookie", c_void_p),
+    ]
+
+
+class DsIoEvents(ctypes.Structure):
+    """opends_io_events_t."""
+
+    _fields_ = [("cookie", c_void_p), ("status", c_int), ("ret", c_size_t)]
+
+
+class Timespec(ctypes.Structure):
+    _fields_ = [("tv_sec", c_long), ("tv_nsec", c_long)]
 
 
 BACKEND = os.environ.get("OPENDS_BACKEND", "aisio")
@@ -200,5 +253,17 @@ stream_write = _decl(
 )
 stream_register = _decl("opends_stream_register", DsError, [c_void_p, c_uint])
 stream_deregister = _decl("opends_stream_deregister", DsError, [c_void_p])
+
+batch_setup = _decl("opends_batch_setup", DsError, [POINTER(c_void_p), c_uint])
+batch_submit = _decl(
+    "opends_batch_submit", DsError, [c_void_p, c_uint, POINTER(DsIoParams), c_uint]
+)
+batch_get_status = _decl(
+    "opends_batch_get_status",
+    DsError,
+    [c_void_p, c_uint, POINTER(c_uint), POINTER(DsIoEvents), POINTER(Timespec)],
+)
+batch_cancel = _decl("opends_batch_cancel", DsError, [c_void_p])
+batch_destroy = _decl("opends_batch_destroy", None, [c_void_p])
 
 op_status_error = _decl("opends_op_status_error", c_char_p, [c_int])

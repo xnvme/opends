@@ -20,6 +20,7 @@ def test_requires_open_driver(tmp_path):
         lambda: opends.alloc(4096),
         lambda: opends.register_buffer(bytearray(4096)),
         lambda: opends.register_stream(0x10),
+        lambda: opends.Batch(1),
         lambda: opends.get_properties(),
         lambda: opends.set_max_direct_io_size(1 << 20),
     ]
