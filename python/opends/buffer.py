@@ -11,7 +11,7 @@ import threading
 
 from . import cdll as _c
 from . import driver
-from .driver import OpenDSError, preserve_cuda_context
+from .driver import OpenDSError, preserve_cuda_context, require_driver
 
 
 class Registry:
@@ -33,8 +33,8 @@ class Registry:
                 )
             err = _c.buf_register(ptr, size, 0)
             if err.err not in (
-                _c.OPENDS_SUCCESS,
-                _c.OPENDS_MEMORY_ALREADY_REGISTERED,
+                _c.ErrorCode.SUCCESS,
+                _c.ErrorCode.MEMORY_ALREADY_REGISTERED,
             ):
                 raise OpenDSError(err.err, err.dev_err)
             self._regs[ptr] = size
@@ -54,67 +54,48 @@ class Registry:
 registry = Registry()
 driver.on_close(registry.clear)
 
-# Pointers pinned by register_buffer. Each holds a driver reference so the
-# registration outlives individual file opens, matching cuFileBufRegister.
-_pinned = set()
-_pinned_lock = threading.Lock()
-driver.on_close(_pinned.clear)
-
 
 def register_buffer(buf, size=None):
-    """Register a buffer for DMA before I/O.
+    """Register a buffer for DMA before I/O (cuFileBufRegister).
 
     Structured buffers (HostBuffer, cupy/numpy/torch arrays) are
     registered on first use, so this is only needed for the cuFile
     pattern of registering one large base allocation and then indexing
     into it with a bare device pointer and dev_offset. For a bare
     pointer (ctypes.c_void_p or int) size is mandatory; for a structured
-    buffer it defaults to the buffer's own extent.
-
-    The registration pins the driver open until deregister_buffer, so it
-    persists across OpenDSFile open/close cycles.
+    buffer it defaults to the buffer's own extent. The registration
+    lasts until deregister_buffer or the driver closes.
     """
     ptr, nbytes = buffer_view(buf)
     if size is None:
         if nbytes is None:
             raise ValueError("size is required to register a bare pointer")
         size = nbytes
-    with _pinned_lock:
-        first = ptr not in _pinned
+    require_driver()
     with preserve_cuda_context():
-        if first:
-            driver.ensure_driver()
-        try:
-            registry.ensure(ptr, int(size))
-        except Exception:
-            if first:
-                driver.release_driver()
-            raise
-    with _pinned_lock:
-        _pinned.add(ptr)
+        registry.ensure(ptr, int(size))
 
 
 def deregister_buffer(buf):
     ptr, _ = buffer_view(buf)
-    with _pinned_lock:
-        pinned = ptr in _pinned
-        _pinned.discard(ptr)
     with preserve_cuda_context():
         registry.drop(ptr)
-        if pinned:
-            driver.release_driver()
 
 
 class HostBuffer:
-    """An opends_alloc-backed, 4096-aligned host allocation. Useful on the ref
-    backend and as a DMA-able staging buffer without pulling in numpy."""
+    """A backend-owned opends_alloc allocation: 4096-aligned host memory on
+    ref, device memory on GPU backends. The backend allocates through the
+    open driver and owns the memory for the driver's lifetime."""
 
     def __init__(self, size):
-        ptr = _c.alloc(size)
+        self._ptr = 0
+        self._size = int(size)
+        require_driver()
+        with preserve_cuda_context():
+            ptr = _c.alloc(size)
         if not ptr:
             raise MemoryError("opends_alloc(%d) failed" % size)
         self._ptr = int(ptr)
-        self._size = int(size)
 
     @property
     def ptr(self):
@@ -132,8 +113,9 @@ class HostBuffer:
 
     def free(self):
         if self._ptr:
-            deregister_buffer(self._ptr)
-            _c.free(self._ptr)
+            with preserve_cuda_context():
+                registry.drop(self._ptr)
+                _c.free(self._ptr)
             self._ptr = 0
 
     def __del__(self):
@@ -179,7 +161,8 @@ def buffer_view(buf):
 
 
 def alloc(size):
-    """Allocate a 4096-aligned host buffer owned by the backend."""
+    """Allocate a buffer owned by the backend: 4096-aligned host memory on
+    ref, device memory on GPU backends. Needs an open Driver."""
     return HostBuffer(size)
 
 

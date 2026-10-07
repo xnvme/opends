@@ -19,9 +19,9 @@ import time
 
 import opends
 
-# Child: pin a buffer (opens the driver and installs the signal handler via
-# _ensure_driver) and wrap driver_close so a SIGTERM-driven close leaves proof
-# on disk. Then wait for the parent's SIGTERM. If the handler is missing,
+# Child: open the driver (which installs the signal handler), register a
+# buffer, and wrap driver_close so a SIGTERM-driven close leaves proof on
+# disk. Then wait for the parent's SIGTERM. If the handler is missing,
 # atexit does not run under SIGTERM and the sentinel is never written.
 _CHILD = r"""
 import ctypes, os, signal
@@ -38,6 +38,7 @@ def _close(*a, **k):
     return _orig_close(*a, **k)
 cdll.driver_close = _close
 
+driver = opends.Driver()
 buf = opends.alloc(4096)
 opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
@@ -113,6 +114,7 @@ def test_cleanup_reentrant_safe():
     from opends import cdll, driver as d
 
     d._cleaning = False
+    driver = opends.Driver()
     buf = opends.alloc(4096)
     opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
@@ -138,6 +140,7 @@ def test_cleanup_reentrant_safe():
     finally:
         cdll.buf_deregister = orig
         d._cleaning = False
+        driver.close()
 
 
 if __name__ == "__main__":

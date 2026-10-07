@@ -6,10 +6,13 @@ OPENDS_LIBRARY loads a specific file instead.
 """
 
 from .buffer import HostBuffer, alloc, deregister_buffer, free, register_buffer
-from .driver import OpenDSError, cleanup, get_version
+from .cdll import ErrorCode
+from .driver import Driver, OpenDSError, cleanup, get_version
 from .file import OpenDSFile
 
 __all__ = [
+    "Driver",
+    "ErrorCode",
     "HostBuffer",
     "OpenDSError",
     "OpenDSFile",

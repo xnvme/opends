@@ -5,9 +5,8 @@ import ctypes
 import os
 
 from . import cdll as _c
-from . import driver
 from .buffer import buffer_view, registry
-from .driver import check, io_result, preserve_cuda_context
+from .driver import check, io_result, preserve_cuda_context, require_driver
 
 _FLAGS = {
     "r": os.O_RDONLY,
@@ -28,10 +27,11 @@ class OpenDSFile:
         if use_direct_io:
             oflags |= os.O_DIRECT
         self._fh = None
+        self._fd = -1
+        require_driver()
         self._fd = os.open(path, oflags, mode)
         try:
             with preserve_cuda_context():
-                driver.ensure_driver()
                 fh = ctypes.c_void_p()
                 check(_c.handle_register(ctypes.byref(fh), self._fd))
             self._fh = fh
@@ -60,8 +60,7 @@ class OpenDSFile:
         if self._fh is not None:
             with preserve_cuda_context():
                 _c.handle_deregister(self._fh)
-                self._fh = None
-                driver.release_driver()
+            self._fh = None
         if self._fd >= 0:
             os.close(self._fd)
             self._fd = -1
