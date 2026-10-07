@@ -11,9 +11,10 @@ surface used below.
 ```python
 import opends
 
-buf = opends.alloc(4096)
-with opends.OpenDSFile("data.bin", "r") as f:
-    nbytes = f.read_sync(buf, size=4096, file_offset=0)
+with opends.Driver():
+    buf = opends.alloc(4096)
+    with opends.OpenDSFile("data.bin", "r") as f:
+        nbytes = f.read_sync(buf, size=4096, file_offset=0)
 ```
 
 Methods are named after the C families: `read_sync`/`write_sync` block and
@@ -21,7 +22,8 @@ return the byte count. Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
 `opends.alloc`. These are registered on first use and deregistered at driver
-shutdown.
+shutdown. `opends.alloc` is the backend's own allocator: host memory on ref,
+device memory on GPU backends.
 
 For the cuFile pattern of one large allocation indexed by offset, pass a
 bare device pointer (`ctypes.c_void_p` or an `int` address) plus an
@@ -33,6 +35,17 @@ opends.register_buffer(base_ptr, nbytes)   # ctypes.c_void_p or int
 with opends.OpenDSFile(path, "r") as f:
     f.read_sync(base_ptr, size=chunk, dev_offset=off)
 ```
+
+## Driver
+
+`opends.Driver()` opens the driver, as `cuFileDriverOpen` does, and must be
+open before any file or buffer call; without it they raise `OpenDSError` with
+`ErrorCode.DRIVER_NOT_INITIALIZED`. Driver objects are counted, so independent
+components may each hold one; the C driver closes when the last is closed,
+which drops every registration, so close files and deregister buffers first.
+Failures raise `OpenDSError`, whose `code` is an `opends.ErrorCode` member. A
+driver left open is closed at exit and on SIGTERM/SIGINT; a framework that
+installs its own SIGTERM handler calls `opends.cleanup()` from it.
 
 ## Migrating from cufile-python (GDS)
 
@@ -64,7 +77,8 @@ blocking and return the byte count:
 import ctypes
 import opends
 
-opends.register_buffer(base, nbytes)                    # pins the driver open
+driver = opends.Driver()                                # hold the driver open
+opends.register_buffer(base, nbytes)
 addr = ctypes.c_void_p(base)
 with opends.OpenDSFile(path, "r", use_direct_io=True) as f:
     n = f.read_sync(addr, size, file_offset=foff, dev_offset=doff)
@@ -77,18 +91,15 @@ Mapping at a glance:
 | cufile-python | OpenDS |
 | --- | --- |
 | `import cufile` | `import opends` |
-| `cufile.CuFileDriver()` | implicit; opened by `register_buffer`/`OpenDSFile` |
+| `cufile.CuFileDriver()` | `opends.Driver()` |
 | `cufile.CuFile(path, "r", use_direct_io=dio)` | `opends.OpenDSFile(path, "r", use_direct_io=dio)` |
 | `f.read(buf, size, file_offset=, dev_offset=)` | `f.read_sync(...)`, same arguments |
 | `f.write(buf, size, file_offset=, dev_offset=)` | `f.write_sync(...)`, same arguments |
 | `cuFileBufRegister(c_void_p(p), size, flags=0)` | `opends.register_buffer(p, size)` |
 | `cuFileBufDeregister(c_void_p(p))` | `opends.deregister_buffer(p)` |
 
-Two differences to note. There is no explicit driver object: OpenDS opens the
-driver when you register a buffer or open a file and closes it when the last
-of either is released, so the `CuFileDriver()` line has no OpenDS equivalent.
-And `use_direct_io` defaults to `True`, since every backend requires O_DIRECT,
-so it can be omitted unless overriding.
+One difference to note: `use_direct_io` defaults to `True`, since every
+backend requires O_DIRECT, so it can be omitted unless overriding.
 
 ## Backend selection
 

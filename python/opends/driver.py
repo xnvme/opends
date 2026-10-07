@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Driver lifetime, errors and the CUDA context guard."""
+"""Driver lifetime, errors and the CUDA context guard.
+
+A Driver must be open before any file or buffer call, as with
+cuFileDriverOpen.
+"""
 
 import atexit
 import ctypes
@@ -55,7 +59,11 @@ class preserve_cuda_context:
 
 class OpenDSError(Exception):
     def __init__(self, code, dev_err=0):
-        self.code = int(code)
+        try:
+            code = _c.ErrorCode(code)
+        except ValueError:
+            code = int(code)
+        self.code = code
         self.dev_err = int(dev_err)
         msg = _c.op_status_error(self.code)
         msg = msg.decode() if msg else "unknown opends error"
@@ -64,7 +72,7 @@ class OpenDSError(Exception):
 
 def check(err):
     """Raise OpenDSError for a failed opends_error_t."""
-    if err.err != _c.OPENDS_SUCCESS:
+    if err.err != _c.ErrorCode.SUCCESS:
         raise OpenDSError(err.err, err.dev_err)
 
 
@@ -76,8 +84,9 @@ def io_result(ret):
 
 
 # ---------------------------------------------------------------------------
-# Driver lifecycle. The C driver is a process-global singleton; reference
-# count it so open files and pinned registrations share one open/close.
+# Driver lifecycle, as cuFileDriverOpen/Close: Driver objects open and close
+# the C driver explicitly and are counted. Files and buffers need an open
+# Driver and do not keep it open.
 # ---------------------------------------------------------------------------
 
 # Reentrant so a signal-driven cleanup can re-acquire while the same thread
@@ -93,7 +102,7 @@ def on_close(hook):
     _close_hooks.append(hook)
 
 
-def ensure_driver():
+def _acquire():
     global _driver_refs
     with _lock:
         if _driver_refs == 0:
@@ -102,7 +111,7 @@ def ensure_driver():
     _install_signal_handlers()
 
 
-def release_driver():
+def _release():
     global _driver_refs
     with _lock:
         if _driver_refs == 0:
@@ -112,6 +121,11 @@ def release_driver():
             for hook in _close_hooks:
                 hook()
             check(_c.driver_close())
+
+
+def require_driver():
+    if _driver_refs == 0:
+        raise OpenDSError(_c.ErrorCode.DRIVER_NOT_INITIALIZED)
 
 
 # _cleaning guards against signal reentrancy: a second SIGTERM/SIGINT arriving
@@ -128,8 +142,8 @@ def cleanup():
 
     Idempotent. Runs at exit and on SIGTERM/SIGINT. A framework that installs
     its own SIGTERM handler shadows ours, and its graceful shutdown may never
-    reach the code that releases the driver, so it calls opends.cleanup()
-    from that handler instead.
+    reach the code that closes the Driver, so it calls opends.cleanup() from
+    that handler instead.
     """
     global _driver_refs, _cleaning
     if _cleaning:
@@ -184,6 +198,39 @@ def _install_signal_handlers():
             signal.signal(sig, _signal_cleanup)
             _prev_handlers[sig] = cur
         except (ValueError, OSError):
+            pass
+
+
+class Driver:
+    """The explicit open and close, as cufile.CuFileDriver. Required before
+    any file or buffer call."""
+
+    def __init__(self):
+        self._open = False
+        self.open()
+
+    def open(self):
+        if not self._open:
+            with preserve_cuda_context():
+                _acquire()
+            self._open = True
+
+    def close(self):
+        if self._open:
+            self._open = False
+            with preserve_cuda_context():
+                _release()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
             pass
 
 

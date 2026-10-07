@@ -16,11 +16,11 @@ def _payload(n):
     return bytes((i * 31 + 7) % 251 for i in range(n))
 
 
-def test_version():
+def test_version(driver):
     assert opends.get_version() == (0, 2, 0)
 
 
-def test_roundtrip():
+def test_roundtrip(driver):
     n = 4096
     payload = _payload(n)
 
@@ -40,7 +40,7 @@ def test_roundtrip():
         os.unlink(path)
 
 
-def test_scatter_offsets():
+def test_scatter_offsets(driver):
     n = 4096
     payload = _payload(n)
     fd, path = tempfile.mkstemp()
@@ -59,7 +59,7 @@ def test_scatter_offsets():
         os.unlink(path)
 
 
-def test_raw_pointer_with_offset():
+def test_raw_pointer_with_offset(driver):
     # cuFile/LMCache pattern: register one base buffer, then I/O through a
     # bare pointer plus dev_offset. Halves are written and read back at
     # distinct offsets into the same registered allocation.
@@ -88,8 +88,9 @@ def test_raw_pointer_with_offset():
 
 
 if __name__ == "__main__":
-    test_version()
-    test_roundtrip()
-    test_scatter_offsets()
-    test_raw_pointer_with_offset()
+    with opends.Driver() as drv:
+        test_version(drv)
+        test_roundtrip(drv)
+        test_scatter_offsets(drv)
+        test_raw_pointer_with_offset(drv)
     print("all ok")
