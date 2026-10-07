@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Driver lifetime, errors and the CUDA context guard.
 
-A Driver must be open before any file or buffer call, as with
+A Driver must be open before any file, buffer or stream call, as with
 cuFileDriverOpen.
 """
 
@@ -86,8 +86,8 @@ def io_result(ret):
 
 # ---------------------------------------------------------------------------
 # Driver lifecycle, as cuFileDriverOpen/Close: Driver objects open and close
-# the C driver explicitly and are counted. Files and buffers need an open
-# Driver and do not keep it open.
+# the C driver explicitly and are counted. Files, buffers and streams need
+# an open Driver and do not keep it open.
 # ---------------------------------------------------------------------------
 
 # Reentrant so a signal-driven cleanup can re-acquire while the same thread
@@ -207,7 +207,7 @@ def _install_signal_handlers():
 
 class Driver:
     """The explicit open and close, as cufile.CuFileDriver. Required before
-    any file or buffer call."""
+    any file, buffer or stream call."""
 
     def __init__(self):
         self._open = False

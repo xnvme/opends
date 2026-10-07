@@ -172,4 +172,33 @@ async_write = _decl(
 )
 async_await = _decl("opends_async_await", c_ssize_t, [POINTER(DsAsyncFuture)])
 
+stream_read = _decl(
+    "opends_stream_read",
+    DsError,
+    [
+        c_void_p,
+        c_void_p,
+        POINTER(c_size_t),
+        POINTER(c_long),
+        POINTER(c_long),
+        POINTER(c_ssize_t),
+        c_void_p,
+    ],
+)
+stream_write = _decl(
+    "opends_stream_write",
+    DsError,
+    [
+        c_void_p,
+        c_void_p,
+        POINTER(c_size_t),
+        POINTER(c_long),
+        POINTER(c_long),
+        POINTER(c_ssize_t),
+        c_void_p,
+    ],
+)
+stream_register = _decl("opends_stream_register", DsError, [c_void_p, c_uint])
+stream_deregister = _decl("opends_stream_deregister", DsError, [c_void_p])
+
 op_status_error = _decl("opends_op_status_error", c_char_p, [c_int])

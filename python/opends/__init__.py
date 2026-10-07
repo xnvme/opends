@@ -18,6 +18,7 @@ from .driver import (
     use_count,
 )
 from .file import Future, OpenDSFile
+from .stream import StreamOp, deregister_stream, register_stream
 
 __all__ = [
     "Driver",
@@ -27,13 +28,16 @@ __all__ = [
     "HostBuffer",
     "OpenDSError",
     "OpenDSFile",
+    "StreamOp",
     "alloc",
     "cleanup",
     "deregister_buffer",
+    "deregister_stream",
     "free",
     "get_properties",
     "get_version",
     "register_buffer",
+    "register_stream",
     "set_max_direct_io_size",
     "use_count",
 ]
