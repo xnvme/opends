@@ -138,6 +138,7 @@ class HostBuffer:
         return self._size
 
     def as_ctypes(self):
+        """The bytes as a ctypes array; host memory only, so the ref backend."""
         return (ctypes.c_char * self._size).from_address(self._ptr)
 
     def free(self):
