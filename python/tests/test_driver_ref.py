@@ -4,6 +4,7 @@
 import pytest
 
 import opends
+from opends import cdll
 
 
 def test_requires_open_driver(tmp_path):
@@ -53,3 +54,41 @@ def test_error_carries_code(driver, tmp_path):
         opends.OpenDSFile(str(path), "r", use_direct_io=False)
     assert info.value.code is opends.ErrorCode.DIO_NOT_SET
     assert "5020" in str(info.value)
+
+
+def test_finalizer_inside_registration_does_not_deadlock(driver, tmp_path):
+    # A HostBuffer caught in a reference cycle is freed by the cyclic GC,
+    # which can run during any allocation, including inside a registration
+    # call that holds the registry lock. Its free() re-enters that lock on
+    # the same thread. Force the collection from inside buf_register.
+    import gc
+    import threading
+
+    class Cycle:
+        pass
+
+    cycle = Cycle()
+    cycle.buf = opends.alloc(4096)
+    cycle.me = cycle
+    del cycle
+
+    orig = cdll.buf_register
+
+    def collecting(ptr, size, flags):
+        gc.collect()
+        return orig(ptr, size, flags)
+
+    done = threading.Event()
+
+    def run():
+        dst = opends.alloc(4096)
+        with opends.OpenDSFile(str(tmp_path / "a"), "w") as f:
+            f.write_sync(dst, size=4096)
+        done.set()
+
+    cdll.buf_register = collecting
+    try:
+        threading.Thread(target=run, daemon=True).start()
+        assert done.wait(timeout=10), "registration deadlocked on a GC finalizer"
+    finally:
+        cdll.buf_register = orig

@@ -103,11 +103,11 @@ def test_cleanup_symbol_is_public():
 
 def test_cleanup_reentrant_safe():
     # A second SIGTERM/SIGINT can re-enter cleanup on the same thread while it
-    # is inside the registry clear (buf_deregister can be slow). The registry
-    # lock is non-reentrant, so without a guard the reentrant call self-deadlocks
-    # and driver_close never runs, leaking the GPU buffer. Reproduce the re-entry
-    # by calling cleanup from within buf_deregister and assert the teardown
-    # still completes (does not hang).
+    # is inside the registry clear (buf_deregister can be slow). Without a
+    # guard the reentrant call closes the driver under the outer clear and the
+    # teardown can deadlock or double-close. Reproduce the re-entry by calling
+    # cleanup from within buf_deregister and assert the teardown still
+    # completes (does not hang).
     import ctypes
     import threading
 

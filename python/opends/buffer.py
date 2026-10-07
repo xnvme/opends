@@ -19,7 +19,9 @@ class Registry:
 
     def __init__(self):
         self._regs = {}
-        self._lock = threading.Lock()
+        # Reentrant: a GC finalizer (HostBuffer.free) can run inside ensure
+        # while this thread holds the lock, and must not self-deadlock.
+        self._lock = threading.RLock()
 
     def ensure(self, ptr, size):
         with self._lock:

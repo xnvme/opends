@@ -130,9 +130,8 @@ def require_driver():
 
 # _cleaning guards against signal reentrancy: a second SIGTERM/SIGINT arriving
 # while cleanup is inside the slow buf_deregister re-enters it on the same
-# thread, where the registry's non-reentrant lock would self-deadlock and
-# driver_close would never run. A reentrant call is a no-op so the first
-# completes; reset in finally so a later driver lifecycle can clean up too.
+# thread. A reentrant call is a no-op so the first completes; reset in finally
+# so a later driver lifecycle can clean up too.
 _cleaning = False
 
 
