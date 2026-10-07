@@ -87,10 +87,10 @@ buf_register = _decl(
 )
 buf_deregister = _decl("opends_buf_deregister", DsError, [c_void_p])
 
-read = _decl(
+sync_read = _decl(
     "opends_sync_read", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
-write = _decl(
+sync_write = _decl(
     "opends_sync_write", c_ssize_t, [c_void_p, c_void_p, c_size_t, c_long, c_long]
 )
 

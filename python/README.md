@@ -10,10 +10,11 @@ import opends
 
 buf = opends.alloc(4096)
 with opends.OpenDSFile("data.bin", "r") as f:
-    nbytes = f.read(buf, size=4096, file_offset=0)
+    nbytes = f.read_sync(buf, size=4096, file_offset=0)
 ```
 
-`read`/`write` are synchronous and return the byte count. Buffers may be any
+Methods are named after the C families: `read_sync`/`write_sync` block and
+return the byte count. Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
 `opends.alloc`. These are registered on first use and deregistered at driver
@@ -27,7 +28,7 @@ extent, so register the base allocation once up front:
 ```python
 opends.register_buffer(base_ptr, nbytes)   # ctypes.c_void_p or int
 with opends.OpenDSFile(path, "r") as f:
-    f.read(base_ptr, size=chunk, dev_offset=off)
+    f.read_sync(base_ptr, size=chunk, dev_offset=off)
 ```
 
 ## Migrating from cufile-python (GDS)
@@ -53,8 +54,8 @@ with cufile.CuFile(path, "r", use_direct_io=True) as f:
 cuFileBufDeregister(ctypes.c_void_p(base))
 ```
 
-The OpenDS version uses the same signatures; `read`/`write` are blocking and
-return the byte count:
+The OpenDS version keeps the argument shape; `read_sync`/`write_sync` are
+blocking and return the byte count:
 
 ```python
 import ctypes
@@ -63,7 +64,7 @@ import opends
 opends.register_buffer(base, nbytes)                    # pins the driver open
 addr = ctypes.c_void_p(base)
 with opends.OpenDSFile(path, "r", use_direct_io=True) as f:
-    n = f.read(addr, size, file_offset=foff, dev_offset=doff)
+    n = f.read_sync(addr, size, file_offset=foff, dev_offset=doff)
 
 opends.deregister_buffer(base)
 ```
@@ -75,8 +76,8 @@ Mapping at a glance:
 | `import cufile` | `import opends` |
 | `cufile.CuFileDriver()` | implicit; opened by `register_buffer`/`OpenDSFile` |
 | `cufile.CuFile(path, "r", use_direct_io=dio)` | `opends.OpenDSFile(path, "r", use_direct_io=dio)` |
-| `f.read(buf, size, file_offset=, dev_offset=)` | identical |
-| `f.write(buf, size, file_offset=, dev_offset=)` | identical |
+| `f.read(buf, size, file_offset=, dev_offset=)` | `f.read_sync(...)`, same arguments |
+| `f.write(buf, size, file_offset=, dev_offset=)` | `f.write_sync(...)`, same arguments |
 | `cuFileBufRegister(c_void_p(p), size, flags=0)` | `opends.register_buffer(p, size)` |
 | `cuFileBufDeregister(c_void_p(p))` | `opends.deregister_buffer(p)` |
 
