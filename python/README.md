@@ -1,7 +1,10 @@
 # OpenDS Python bindings
 
 Thin ctypes binding over the OpenDS C ABI. No compiled extension; the
-package tracks the C library by ABI and loads it at import.
+package tracks the C library by ABI and loads it at import. The modules are
+laid out by concern (`opends.driver`, `opends.buffer`, `opends.file`, and
+`opends.cdll` for the raw prototypes); `import opends` gives the convenience
+surface used below.
 
 ## Usage
 
