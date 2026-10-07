@@ -6,6 +6,7 @@ cuFileDriverOpen.
 """
 
 import atexit
+import collections
 import ctypes
 import os
 import signal
@@ -233,6 +234,11 @@ class Driver:
             pass
 
 
+DriverProperties = collections.namedtuple(
+    "DriverProperties", [name for name, _ in _c.DsDrvProps._fields_]
+)
+
+
 def get_version():
     major, minor, patch = ctypes.c_uint(), ctypes.c_uint(), ctypes.c_uint()
     check(
@@ -241,3 +247,22 @@ def get_version():
         )
     )
     return (major.value, minor.value, patch.value)
+
+
+def get_properties():
+    props = _c.DsDrvProps()
+    require_driver()
+    with preserve_cuda_context():
+        check(_c.driver_get_properties(ctypes.byref(props)))
+    return DriverProperties(*(getattr(props, f) for f in DriverProperties._fields))
+
+
+def use_count():
+    """Number of registered file handles."""
+    return int(_c.use_count())
+
+
+def set_max_direct_io_size(size):
+    require_driver()
+    with preserve_cuda_context():
+        check(_c.driver_set_max_direct_io_size(int(size)))

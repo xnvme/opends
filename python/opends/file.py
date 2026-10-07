@@ -56,6 +56,9 @@ class OpenDSFile:
     def write_sync(self, buf, size=None, file_offset=0, dev_offset=0):
         return self._submit(_c.sync_write, buf, size, file_offset, dev_offset)
 
+    def fileno(self):
+        return self._fd
+
     def close(self):
         if self._fh is not None:
             with preserve_cuda_context():

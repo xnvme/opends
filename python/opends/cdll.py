@@ -9,6 +9,7 @@ import ctypes
 import enum
 import os
 from ctypes import (
+    POINTER,
     c_char_p,
     c_int,
     c_long,
@@ -18,6 +19,7 @@ from ctypes import (
     c_void_p,
 )
 from pathlib import Path
+
 
 class ErrorCode(enum.IntEnum):
     """opends_op_error_t."""
@@ -68,6 +70,18 @@ class DsError(ctypes.Structure):
     _fields_ = [("err", c_int), ("dev_err", c_int)]
 
 
+class DsDrvProps(ctypes.Structure):
+    """opends_drv_props_t."""
+
+    _fields_ = [
+        ("major_version", c_uint),
+        ("minor_version", c_uint),
+        ("max_direct_io_size", c_size_t),
+        ("max_batch_io_size", c_uint),
+        ("max_batch_io_timeout_msecs", c_uint),
+    ]
+
+
 BACKEND = os.environ.get("OPENDS_BACKEND", "aisio")
 
 
@@ -111,11 +125,17 @@ use_count = _decl("opends_use_count", c_long, [])
 get_version = _decl(
     "opends_get_version",
     DsError,
-    [ctypes.POINTER(c_uint), ctypes.POINTER(c_uint), ctypes.POINTER(c_uint)],
+    [POINTER(c_uint), POINTER(c_uint), POINTER(c_uint)],
+)
+driver_get_properties = _decl(
+    "opends_driver_get_properties", DsError, [POINTER(DsDrvProps)]
+)
+driver_set_max_direct_io_size = _decl(
+    "opends_driver_set_max_direct_io_size", DsError, [c_size_t]
 )
 
 handle_register = _decl(
-    "opends_handle_register", DsError, [ctypes.POINTER(c_void_p), c_int]
+    "opends_handle_register", DsError, [POINTER(c_void_p), c_int]
 )
 handle_deregister = _decl("opends_handle_deregister", None, [c_void_p])
 
