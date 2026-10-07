@@ -7,11 +7,21 @@ OPENDS_LIBRARY loads a specific file instead.
 
 from .buffer import HostBuffer, alloc, deregister_buffer, free, register_buffer
 from .cdll import ErrorCode
-from .driver import Driver, OpenDSError, cleanup, get_version
+from .driver import (
+    Driver,
+    DriverProperties,
+    OpenDSError,
+    cleanup,
+    get_properties,
+    get_version,
+    set_max_direct_io_size,
+    use_count,
+)
 from .file import OpenDSFile
 
 __all__ = [
     "Driver",
+    "DriverProperties",
     "ErrorCode",
     "HostBuffer",
     "OpenDSError",
@@ -20,6 +30,9 @@ __all__ = [
     "cleanup",
     "deregister_buffer",
     "free",
+    "get_properties",
     "get_version",
     "register_buffer",
+    "set_max_direct_io_size",
+    "use_count",
 ]

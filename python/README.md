@@ -43,9 +43,17 @@ open before any file or buffer call; without it they raise `OpenDSError` with
 `ErrorCode.DRIVER_NOT_INITIALIZED`. Driver objects are counted, so independent
 components may each hold one; the C driver closes when the last is closed,
 which drops every registration, so close files and deregister buffers first.
-Failures raise `OpenDSError`, whose `code` is an `opends.ErrorCode` member. A
-driver left open is closed at exit and on SIGTERM/SIGINT; a framework that
-installs its own SIGTERM handler calls `opends.cleanup()` from it.
+`get_properties()`, `use_count()` and `set_max_direct_io_size()` pass through
+to the C driver calls. Failures raise `OpenDSError`, whose `code` is an
+`opends.ErrorCode` member. A driver left open is closed at exit and on
+SIGTERM/SIGINT; a framework that installs its own SIGTERM handler calls
+`opends.cleanup()` from it.
+
+```python
+with opends.Driver():
+    props = opends.get_properties()      # DriverProperties namedtuple
+    print(props.max_direct_io_size)
+```
 
 ## Migrating from cufile-python (GDS)
 
@@ -92,6 +100,9 @@ Mapping at a glance:
 | --- | --- |
 | `import cufile` | `import opends` |
 | `cufile.CuFileDriver()` | `opends.Driver()` |
+| `cuFileDriverGetProperties()` | `opends.get_properties()` |
+| `cuFileDriverSetMaxDirectIOSize(n)` | `opends.set_max_direct_io_size(n)` |
+| `cuFileUseCount()` | `opends.use_count()` |
 | `cufile.CuFile(path, "r", use_direct_io=dio)` | `opends.OpenDSFile(path, "r", use_direct_io=dio)` |
 | `f.read(buf, size, file_offset=, dev_offset=)` | `f.read_sync(...)`, same arguments |
 | `f.write(buf, size, file_offset=, dev_offset=)` | `f.write_sync(...)`, same arguments |
