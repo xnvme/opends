@@ -20,6 +20,8 @@ HERE=$(dirname "$0")
 HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
+# xal-server watch mode: 0 indexes once at start (see the README on writes), 1 pins the extents with reflink clones and re-indexes on every change
+XAL_WATCHMODE=${XAL_WATCHMODE:-0}
 # optional subtree of MOUNT to index instead of the whole filesystem
 XAL_SUBTREE=${XAL_SUBTREE:-}
 
@@ -86,8 +88,6 @@ echo "$UBLK" > /run/homi/ublk_dev
 mkdir -p "$MOUNT"
 mount "$UBLK" "$MOUNT"
 
-# watchmode 0 = none: the index is a snapshot from this start and nothing
-# re-indexes while the stack is up. See the README on writes.
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [
@@ -95,7 +95,7 @@ devices = [
 ]
 
 [xal]
-watchmode = 0
+watchmode = $XAL_WATCHMODE
 EOF
 
 echo "starting xal-server"
