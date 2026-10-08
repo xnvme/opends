@@ -20,12 +20,22 @@ HERE=$(dirname "$0")
 HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
+# optional subtree of MOUNT to index instead of the whole filesystem
+XAL_SUBTREE=${XAL_SUBTREE:-}
 
 die() {
 	echo "error: $1" >&2
 	cat "$2" >&2 || true
 	exit 1
 }
+
+SUBTREE=""
+if [ -n "$XAL_SUBTREE" ]; then
+	case "$XAL_SUBTREE" in
+		"$MOUNT"/*) SUBTREE=", subtree = \"$XAL_SUBTREE\"" ;;
+		*) die "XAL_SUBTREE ($XAL_SUBTREE) is not under $MOUNT" /dev/null ;;
+	esac
+fi
 
 mkdir -p /run/homi
 
@@ -81,7 +91,7 @@ mount "$UBLK" "$MOUNT"
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [
-  { uri = "$UBLK", shm_name = "$XAL_SHM", mountpoint = "$MOUNT" },
+  { uri = "$UBLK", shm_name = "$XAL_SHM", mountpoint = "$MOUNT"$SUBTREE },
 ]
 
 [xal]
