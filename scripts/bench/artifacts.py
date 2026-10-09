@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""Publish bench results to the orphan `artefacts` branch.
+"""Publish bench results to the orphan `artifacts` branch.
 
 Layout on the branch (no shared history with the code):
 
@@ -13,7 +13,7 @@ Layout on the branch (no shared history with the code):
 Collects report.md / sweep.csv / report.png and every history.jsonl under the
 input dirs and commits a new snapshot through a throwaway git worktree; the
 working branch and its uncommitted changes are never touched. A missing local
-branch is created from origin/artefacts when the remote has one, so snapshot
+branch is created from origin/artifacts when the remote has one, so snapshot
 history continues across clones. --push then publishes the branch to origin
 (default: commit only).
 """
@@ -29,8 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from _helpers import ROOT, iter_history, ok
 
-BRANCH = "artefacts"
-WORKTREE = ROOT / ".artefacts"
+BRANCH = "artifacts"
+WORKTREE = ROOT / ".artifacts"
 REPORT_FILES = ("report.md", "sweep.csv", "report.png")
 SNAP_DIR = "snapshots"
 LATEST_DIR = "latest"
@@ -83,9 +83,9 @@ def _collect(in_dirs, dest):
 
 def _index_template():
     return [
-        "# OpenDS benchmark artefacts",
+        "# OpenDS benchmark artifacts",
         "",
-        "Generated bench data published by `scripts/bench/artefacts.py`. Orphan "
+        "Generated bench data published by `scripts/bench/artifacts.py`. Orphan "
         "branch: no shared history with the code.",
         "",
         f"- `{LATEST_DIR}/` mirrors the newest snapshot's report, overwritten "
@@ -197,7 +197,7 @@ def main():
             print(f"push with: git push origin {BRANCH}  (or rerun --push)")
     finally:
         _git("worktree", "remove", "--force", str(WORKTREE))
-    ok("artefacts")
+    ok("artifacts")
 
 
 if __name__ == "__main__":

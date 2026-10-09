@@ -1,7 +1,7 @@
 build/
 cijoe-output*/
 cijoe-archive/
-.artefacts/
+.artifacts/
 configs/transport.toml
 configs/test.toml
 CLAUDE.md
