@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * Shared CUDA helpers for GPU-backed backend tests (gds, aisio).
+ * Shared CUDA helpers for GPU-backed backend tests (cufile, aisio).
  *
  * Provides the test_env callbacks that copy device buffers to host,
  * zero device buffers, and assert that opends_alloc returned CUDA
@@ -14,6 +14,7 @@
 
 #include <cuda_runtime.h>
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -58,13 +59,19 @@ cuda_check_buffer(const void *buf)
 }
 
 /*
- * xNVMe's upcie-cuda backend requires mem_map alignment to
- * cudamem_config.device_pagesize. Pad register-mode allocations up to that
- * granularity.
+ * xNVMe's upcie-cuda backend exports a registered range as a dma-buf, which
+ * needs its start and size aligned to cudamem_config.device_pagesize.
+ * cudaMalloc promises 256-byte alignment only, and small allocations land
+ * wherever its sub-allocator is, so register-mode allocations are padded and
+ * their start rounded up; the raw pointer is kept for cudaFree. The tests
+ * acquire and release on one thread.
  */
 #define CUDA_REGISTER_PAGE 65536
 #define CUDA_REGISTER_ALIGN(x)                                                 \
 	(((x) + (CUDA_REGISTER_PAGE - 1)) & ~((size_t)CUDA_REGISTER_PAGE - 1))
+#define CUDA_REGISTER_SLOTS 4096
+
+static void *cuda_register_raw[CUDA_REGISTER_SLOTS][2];
 
 static inline void *
 cuda_alloc_acquire(size_t size)
@@ -82,19 +89,33 @@ static inline void *
 cuda_register_acquire(size_t size)
 {
 	size_t aligned = CUDA_REGISTER_ALIGN(size);
-	void *buf = NULL;
-	cudaError_t rc = cudaMalloc(&buf, aligned);
+	void *raw = NULL;
+	void *buf;
+	int slot;
+	cudaError_t rc = cudaMalloc(&raw, aligned + CUDA_REGISTER_PAGE);
 	if (rc != cudaSuccess) {
 		fprintf(stderr, "  cudaMalloc: %s\n", cudaGetErrorString(rc));
 		return NULL;
 	}
+	for (slot = 0; slot < CUDA_REGISTER_SLOTS; slot++)
+		if (!cuda_register_raw[slot][0])
+			break;
+	if (slot == CUDA_REGISTER_SLOTS) {
+		fprintf(stderr, "  cuda_register_acquire: no free slot\n");
+		cudaFree(raw);
+		return NULL;
+	}
+	buf = (void *)(((uintptr_t)raw + CUDA_REGISTER_PAGE - 1) &
+	               ~((uintptr_t)CUDA_REGISTER_PAGE - 1));
 	opends_error_t err = opends_buf_register(buf, aligned, 0);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  buf_register: %s\n",
 		        opends_op_status_error(err.err));
-		cudaFree(buf);
+		cudaFree(raw);
 		return NULL;
 	}
+	cuda_register_raw[slot][0] = buf;
+	cuda_register_raw[slot][1] = raw;
 	return buf;
 }
 
@@ -104,6 +125,14 @@ cuda_register_release(void *buf)
 	if (!buf)
 		return;
 	opends_buf_deregister(buf);
+	for (int slot = 0; slot < CUDA_REGISTER_SLOTS; slot++) {
+		if (cuda_register_raw[slot][0] == buf) {
+			cudaFree(cuda_register_raw[slot][1]);
+			cuda_register_raw[slot][0] = NULL;
+			cuda_register_raw[slot][1] = NULL;
+			return;
+		}
+	}
 	cudaFree(buf);
 }
 

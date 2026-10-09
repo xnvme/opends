@@ -22,6 +22,12 @@ main(int argc, char **argv)
 	if (aisio_homi_setup(argv[1], &a) < 0)
 		return 1;
 
+	/* The GPU engine takes only streams whose flags fix the shape at
+	 * submit, so the GPU test step registers them that way. */
+	const char *gpu = getenv("OPENDS_AISIO_GPU_INITIATED");
+	bool gpu_engine = gpu && gpu[0] && gpu[0] != '0';
+	unsigned stream_flags = gpu_engine ? OPENDS_STREAM_FIXED_SHAPE : 0;
+
 	CUstream main_stream;
 	if (cuStreamCreate(&main_stream, CU_STREAM_NON_BLOCKING) !=
 	    CUDA_SUCCESS) {
@@ -30,7 +36,8 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	if (opends_stream_register(main_stream, 0).err != OPENDS_SUCCESS) {
+	if (opends_stream_register(main_stream, stream_flags).err !=
+	    OPENDS_SUCCESS) {
 		fprintf(stderr, "opends_stream_register(main) failed\n");
 		cuStreamDestroy(main_stream);
 		aisio_homi_teardown(&a);
@@ -47,7 +54,7 @@ main(int argc, char **argv)
 			extra_count = i;
 			break;
 		}
-		if (opends_stream_register(extras[i], 0).err !=
+		if (opends_stream_register(extras[i], stream_flags).err !=
 		    OPENDS_SUCCESS) {
 			fprintf(stderr,
 			        "opends_stream_register(extra[%d]) failed\n",
@@ -56,6 +63,16 @@ main(int argc, char **argv)
 			extra_count = i;
 			break;
 		}
+	}
+
+	/* Deferred evaluation needs a stream without the fixed-shape flags. */
+	CUstream deferred_stream;
+	if (cuStreamCreate(&deferred_stream, CU_STREAM_NON_BLOCKING) !=
+	            CUDA_SUCCESS ||
+	    opends_stream_register(deferred_stream, 0).err != OPENDS_SUCCESS) {
+		fprintf(stderr, "deferred stream setup failed\n");
+		aisio_homi_teardown(&a);
+		return 1;
 	}
 
 	fprintf(stderr, "opends_stream_read tests (aisio backend, HOMI)\n");
@@ -74,6 +91,8 @@ main(int argc, char **argv)
 	        .buf_release = cuda_alloc_release,
 	        .mode_label = "alloc",
 	        .sub_lba_unsupported = no_sub_lba,
+	        .stream_flags = stream_flags,
+	        .deferred_stream = deferred_stream,
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_alloc.extra_streams[i] = extras[i];
@@ -98,6 +117,8 @@ main(int argc, char **argv)
 	        .buf_release = cuda_register_release,
 	        .mode_label = "register",
 	        .sub_lba_unsupported = no_sub_lba,
+	        .stream_flags = stream_flags,
+	        .deferred_stream = deferred_stream,
 	};
 	for (int i = 0; i < extra_count; i++)
 		env_register.extra_streams[i] = extras[i];

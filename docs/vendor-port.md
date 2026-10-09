@@ -3,9 +3,11 @@
 The aisio backend reads NVMe straight into GPU memory over xNVMe P2P DMA.
 Its only GPU dependency is a narrow runtime surface, `struct ds_accel_ops`
 in `src/ds_accel.h`: context capture and binding, pinned-mapped host
-allocation, a host/device copy, a stream-ordered host callback, and a
-deferred stream-ordered copy. The NVMe and extent code calls only through
-the active-ops pointer `ds_accel`, never a vendor symbol.
+allocation, a host/device copy, a stream-ordered host callback, a
+deferred stream-ordered copy, and, for GPU-initiated reads, a
+stream-ordered host/device copy and the launch of the GPU I/O kernel. The
+NVMe and extent code calls only through the active-ops pointer
+`ds_accel`, never a vendor symbol.
 
 A port is one implementation file, `src/ds_accel_<backend>.c`, that fills in
 `struct ds_accel_ops` and binds `ds_accel` to it, plus a `meson.build`
@@ -31,10 +33,21 @@ are published after it is enqueued, by host stores the I/O thread makes
 while the stream is parked in the callback. CUDA needs a kernel for that,
 shipped in `ds_bounce_kernel_cuda.cu`; a vendor whose runtime can defer a
 stream copy may not need a separate kernel translation unit at all. Setting
-`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` drops the bounce path entirely
-(unaligned reads then fail with `OPENDS_INVALID_VALUE`).
+`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1`, or registering a stream with
+`OPENDS_STREAM_PAGE_ALIGNED_INPUTS`, drops the bounce path for the process
+or the stream (unaligned reads then fail with `OPENDS_INVALID_VALUE`).
 Driver open validates the ops the chosen mode drives and fails cleanly when
 one is missing, so a partial table may leave the other mode's ops NULL.
+
+`gpu_io_launch` runs the kernel in `ds_gpu_io_cuda.cu` over the descriptor
+in `ds_gpu_io.h`: one block per GPU-resident queue, the block size equal
+to the queue depth, each block submitting rounds of commands with
+xNVMe's `xnvme_cuda_cmd_io()` and the block that issued the last command
+copying the sub-LBA tail. The device helpers are CUDA-only in xNVMe today
+(`libxnvme_cuda.h`), so a port to another vendor needs the matching
+GPU-resident queue API on the xNVMe side first. `copy_async` moves the
+PRP lists the host staged into the device heap ahead of the kernel.
+Both ops are required only when `OPENDS_AISIO_GPU_INITIATED=1`.
 
 Beyond the backend, the Python loader and the test harness still assume
 CUDA and would need the same vendor-awareness.

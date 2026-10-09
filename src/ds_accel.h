@@ -68,6 +68,17 @@ struct ds_accel_ops {
 	 * no-ops), ordered on the stream. The mechanism (a copy kernel or a
 	 * stream-ordered memcpy) is the vendor's choice. */
 	int (*copy_stream)(ds_accel_devptr_t desc, ds_accel_stream_t stream);
+
+	/* Copy between pinned host memory and device memory in stream order
+	 * (direction inferred from the pointers). Required only for
+	 * GPU-initiated reads. */
+	int (*copy_async)(void *dst, const void *src, size_t bytes,
+	                  ds_accel_stream_t stream);
+	/* Launch the GPU-initiated read kernel over the ds_gpu_op at desc:
+	 * nblocks blocks of depth threads, one GPU-resident queue per block,
+	 * ordered on the stream. Required only for GPU-initiated reads. */
+	int (*gpu_io_launch)(ds_accel_devptr_t desc, uint32_t nblocks,
+	                     uint32_t depth, ds_accel_stream_t stream);
 };
 
 /* The active vendor, bound at link time by the one ds_accel_<vendor>.c

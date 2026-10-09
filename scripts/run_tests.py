@@ -4,7 +4,7 @@
 
 Each test step is identified by (backend, test). When no flag is
 passed every test runs. Use --backend to restrict to one or more
-backends (ref, gds, aisio) and --test to restrict to one or more
+backends (ref, cufile, aisio) and --test to restrict to one or more
 test names. Required setup steps (bind/mount/prep, plus unbind for
 aisio) and the rebind teardown are added automatically based on the
 selection.
@@ -14,13 +14,14 @@ import argparse
 
 from _helpers import ok, run_cijoe
 
-BACKENDS = ["ref", "gds", "aisio"]
+BACKENDS = ["ref", "cufile", "aisio"]
 TESTS_BY_BACKEND = {
     "ref":   ["smoke", "sync_read", "mt_read", "async_read", "batch_read"],
-    "gds":   ["sync_read"],
+    "cufile": ["sync_read"],
     "aisio": ["sync_read", "mt_read", "register_large", "coherency",
               "async_read", "async_read_busy_spin", "batch_read",
-              "stream_read", "stream_read_busy_spin", "sync_write",
+              "stream_read", "stream_read_busy_spin", "stream_read_gpu",
+              "sync_write",
               "stream_write", "block_alloc"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})

@@ -15,6 +15,10 @@
 /* The copy_stream kernel launcher, defined in the nvcc TU
  * (ds_bounce_kernel_cuda.cu). */
 int cuda_copy_stream(uint64_t desc_dev, void *stream);
+/* The GPU-initiated read kernel launcher, defined in the nvcc TU
+ * (ds_gpu_io_cuda.cu). */
+int cuda_gpu_io_launch(uint64_t op_dev, uint32_t nblocks, uint32_t depth,
+                       void *stream);
 
 static int
 cuda_ctx_get(ds_accel_ctx_t *out)
@@ -88,6 +92,20 @@ cuda_launch_host_func(ds_accel_stream_t s, void (*fn)(void *), void *arg)
 	return (int)cuLaunchHostFunc((CUstream)s, (CUhostFn)fn, arg);
 }
 
+static int
+cuda_copy_async(void *dst, const void *src, size_t bytes, ds_accel_stream_t s)
+{
+	return (int)cuMemcpyAsync((CUdeviceptr)dst, (CUdeviceptr)src, bytes,
+	                          (CUstream)s);
+}
+
+static int
+cuda_gpu_io(ds_accel_devptr_t desc, uint32_t nblocks, uint32_t depth,
+            ds_accel_stream_t s)
+{
+	return cuda_gpu_io_launch(desc, nblocks, depth, s);
+}
+
 static const struct ds_accel_ops cuda_ops = {
         .xnvme_be = "upcie-cuda",
         .ctx_get = cuda_ctx_get,
@@ -99,6 +117,8 @@ static const struct ds_accel_ops cuda_ops = {
         .stream_wait_value32_geq = cuda_stream_wait_value32_geq,
         .launch_host_func = cuda_launch_host_func,
         .copy_stream = cuda_copy_stream,
+        .copy_async = cuda_copy_async,
+        .gpu_io_launch = cuda_gpu_io,
 };
 
 const struct ds_accel_ops *const ds_accel = &cuda_ops;
