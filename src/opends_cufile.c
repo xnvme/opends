@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * opends_gds.c - GDS backend using NVIDIA cuFile.
+ * opends_cufile.c - cuFile backend for NVIDIA GPUDirect Storage.
  *
  * Thin wrapper around the cuFile API. Buffers are allocated on the GPU
  * with cudaMalloc and registered with cuFileBufRegister for DMA. Batch
@@ -29,7 +29,7 @@ _Static_assert((int)OPENDS_DRIVER_NOT_INITIALIZED ==
 _Static_assert((int)OPENDS_INTERNAL_ERROR == (int)CU_FILE_INTERNAL_ERROR,
                "opends/cuFile error code mismatch: INTERNAL_ERROR");
 
-struct gds_handle {
+struct cufile_handle {
 	CUfileHandle_t cufh;
 };
 
@@ -139,7 +139,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	if (!(oflags & O_DIRECT))
 		return opends_err(OPENDS_DIO_NOT_SET);
 
-	struct gds_handle *h = malloc(sizeof(*h));
+	struct cufile_handle *h = malloc(sizeof(*h));
 	if (!h)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
@@ -164,7 +164,7 @@ opends_handle_deregister(opends_handle_t fh)
 {
 	if (!fh)
 		return;
-	struct gds_handle *h = fh;
+	struct cufile_handle *h = fh;
 	cuFileHandleDeregister(h->cufh);
 	free(h);
 	use_count--;
@@ -272,7 +272,7 @@ ssize_t
 opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
                  off_t file_offset, off_t buf_offset)
 {
-	struct gds_handle *h = fh;
+	struct cufile_handle *h = fh;
 	return cuFileRead(h->cufh, buf_base, size, file_offset, buf_offset);
 }
 
@@ -280,7 +280,7 @@ ssize_t
 opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
                   off_t file_offset, off_t buf_offset)
 {
-	struct gds_handle *h = fh;
+	struct cufile_handle *h = fh;
 	return cuFileWrite(h->cufh, buf_base, size, file_offset, buf_offset);
 }
 
@@ -293,7 +293,7 @@ opends_stream_read(opends_handle_t fh, void *buf_base, size_t *size_p,
                    off_t *file_offset_p, off_t *buf_offset_p,
                    ssize_t *bytes_read_p, opends_stream_t stream)
 {
-	struct gds_handle *h = fh;
+	struct cufile_handle *h = fh;
 	CUfileError_t err =
 	        cuFileReadAsync(h->cufh, buf_base, size_p, file_offset_p,
 	                        buf_offset_p, bytes_read_p, (CUstream)stream);
@@ -307,7 +307,7 @@ opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
                     off_t *file_offset_p, off_t *buf_offset_p,
                     ssize_t *bytes_written_p, opends_stream_t stream)
 {
-	struct gds_handle *h = fh;
+	struct cufile_handle *h = fh;
 	CUfileError_t err = cuFileWriteAsync(h->cufh, buf_base, size_p,
 	                                     file_offset_p, buf_offset_p,
 	                                     bytes_written_p, (CUstream)stream);
@@ -363,7 +363,7 @@ opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
 	for (unsigned i = 0; i < nr; i++) {
-		struct gds_handle *h = iocbp[i].fh;
+		struct cufile_handle *h = iocbp[i].fh;
 		cu_params[i].mode = (CUfileBatchMode_t)iocbp[i].mode;
 		cu_params[i].fh = h->cufh;
 		cu_params[i].opcode = (CUfileOpcode_t)iocbp[i].opcode;

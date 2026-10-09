@@ -1,17 +1,18 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * test_aisio_homi.h - Shared setup for aisio tests against a live HOMI.
+ * test_aisio_homi.h - Shared setup for aisio tests against a live HOMI stack.
  *
  * The aisio backend no longer owns the controller or takes injected
- * extents: it attaches I/O qpairs from a running HOMI daemon and asks HOMI
- * to resolve a file's extents (homic_get_extents). These tests therefore
- * run while the HOMI/qublk stack is up and the test filesystem is mounted
- * (over /dev/ublkbN). The harness (tasks/test.yaml) brings the stack up,
- * exports OPENDS_HOMI_DEV / OPENDS_HOMI_SOCKET / OPENDS_HOMI_MNT, and passes
- * the path of a real file on the mount.
+ * extents: it joins the multi-process group of a running homi server and
+ * resolves a file's extents from the index xal-server publishes over shared
+ * memory. These tests therefore run while the homi/qublk/xal-server stack
+ * is up and the test filesystem is mounted (over /dev/ublkbN). The harness
+ * (tasks/test.yaml) brings the stack up, exports OPENDS_HOMI_DEV /
+ * OPENDS_XAL_SHM / OPENDS_HOMI_MNT, and passes the path of a real file on
+ * the mount.
  *
- * Each test opens that file, registers it (which resolves its extents via
- * HOMI and attaches qpairs), and runs the backend-agnostic test logic.
+ * Each test opens that file, registers it (which resolves its extents from
+ * the shared index), and runs the backend-agnostic test logic.
  */
 #ifndef TEST_AISIO_HOMI_H_
 #define TEST_AISIO_HOMI_H_
@@ -33,7 +34,7 @@ struct aisio_homi {
 /*
  * Create a CUDA context (the upcie-cuda backend needs one current for
  * device init and buffer allocation), open the aisio driver against the
- * HOMI daemon named by the environment, open `path`, and register it.
+ * HOMI stack named by the environment, open `path`, and register it.
  *
  * Returns 0 on success with *out filled in, or -1 on failure (a message is
  * printed). On failure nothing needs tearing down.
@@ -63,7 +64,7 @@ aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 	opends_error_t err = opends_driver_open();
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr,
-		        "driver_open: %s (is homid running and "
+		        "driver_open: %s (is the homi stack running and "
 		        "OPENDS_HOMI_DEV set?)\n",
 		        opends_op_status_error(err.err));
 		cuCtxDestroy(out->cuctx);

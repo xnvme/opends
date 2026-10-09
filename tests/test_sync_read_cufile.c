@@ -44,7 +44,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	fprintf(stderr, "opends_sync_read sync tests (gds backend)\n");
+	fprintf(stderr, "opends_sync_read sync tests (cufile backend)\n");
 
 	struct test_env env_alloc = {
 	        .fh = fh,

@@ -67,7 +67,8 @@ main(int argc, char **argv)
 		fprintf(stderr, "FAILED: opends_sync_read rc=%zd\n", n);
 		return 1;
 	}
-	printf("aisio: read %zd bytes into GPU memory via a HOMI-served qpair\n", n);
+	printf("aisio: read %zd bytes into GPU memory over a HOMI-shared controller\n",
+	       n);
 
 	void *got = malloc((size_t)n);
 	void *ref = malloc((size_t)n);
