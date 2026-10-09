@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 doc: |
-  GDS Bench Suite
-  ===============
+  cuFile Bench Suite
+  ==================
 
-  Drives filperf with the `gds` backend (cuFile reference baseline)
+  Drives filperf with the `cufile` backend (GDS reference baseline)
   across the four reference datasets (filesize8gib, tiktokish,
   imagenetish, lmcacheish). Runs while the kernel `nvme` driver owns
   the device.
@@ -43,76 +43,76 @@ steps:
     run: |
       '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
-  - name: gds_filesize8gib
+  - name: cufile_filesize8gib
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: filesize8gib
       batches: 1
       batch-size: 1
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_filesize8gib_stream
+  - name: cufile_filesize8gib_stream
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: filesize8gib
       batches: 1
       batch-size: 1
       mode: stream
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_tiktokish
+  - name: cufile_tiktokish
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: tiktokish
       batches: 200
       batch-size: 26
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_tiktokish_stream
+  - name: cufile_tiktokish_stream
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: tiktokish
       batches: 200
       batch-size: 26
       mode: stream
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_imagenetish
+  - name: cufile_imagenetish
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_imagenetish_stream
+  - name: cufile_imagenetish_stream
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: imagenetish
       batches: 300
       batch-size: 4096
       mode: stream
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_lmcacheish
+  - name: cufile_lmcacheish
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: lmcacheish
       batches: 70
       batch-size: 26
       mnt: "{{ config.test.mount_point }}"
 
-  - name: gds_lmcacheish_stream
+  - name: cufile_lmcacheish_stream
     uses: bench_run
     with:
-      backend: gds
+      backend: cufile
       data-dir: lmcacheish
       batches: 70
       batch-size: 26
