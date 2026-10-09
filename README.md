@@ -311,7 +311,7 @@ echo "What is the capital of France? /no_think" |
 ```
 
 For the baselines, stop the stack, give the drive back to the kernel
-(`stop_homi_stack.sh`, `rebind_nvme.sh`) and run the same command with
+(`clear_homi_stack.sh`, `rebind_nvme.sh`) and run the same command with
 `--load-mode dio`, `none` or `mmap`.
 
 _Measured 2026-11-02: OpenDS `5d37dff`, llama.cpp `opends-loader` at
