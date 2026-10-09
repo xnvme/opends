@@ -94,6 +94,16 @@ struct buf_entry {
 	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
 };
 
+/* One xnvme_mem_map of whole allocation chunks. A registered buffer references
+ * every run its chunks fall in; the run is unmapped when the last one leaves.
+ */
+struct map_run {
+	uintptr_t base;
+	size_t nbytes;
+	int refs;
+};
+#define MAX_MAP_RUNS MAX_BUF_ENTRIES
+
 struct registered_file {
 	int fd;
 	int oflags;
@@ -183,8 +193,11 @@ struct driver {
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
-	struct buf_entry bufs[MAX_BUF_ENTRIES];
+	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
 	int buf_count;
+	size_t chunk_nbytes; ///< Allocation granularity registrations round to
+	struct map_run runs[MAX_MAP_RUNS]; ///< Disjoint, sorted by base
+	int run_count;
 
 	bool workers_ready;
 	ds_accel_ctx_t accel_ctx;
@@ -236,6 +249,239 @@ cpu_relax(void)
 #elif defined(__aarch64__)
 	__asm__ __volatile__("yield");
 #endif
+}
+
+/* ------------------------------------------------------------------ */
+/*  Buffer table and chunk mappings                                   */
+/* ------------------------------------------------------------------ */
+
+static int
+buf_lower_bound(const struct driver *d, const void *base)
+{
+	int lo = 0, hi = d->buf_count;
+
+	while (lo < hi) {
+		int mid = lo + (hi - lo) / 2;
+		if ((uintptr_t)d->bufs[mid].base < (uintptr_t)base)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return lo;
+}
+
+static struct buf_entry *
+buf_find(struct driver *d, const void *base)
+{
+	int i = buf_lower_bound(d, base);
+
+	if (i < d->buf_count && d->bufs[i].base == base)
+		return &d->bufs[i];
+	return NULL;
+}
+
+/* The entry whose range holds [ptr, ptr + size), or NULL. */
+static const struct buf_entry *
+buf_covering(const struct driver *d, const void *ptr, size_t size)
+{
+	int i = buf_lower_bound(d, ptr);
+
+	if (i < d->buf_count && d->bufs[i].base == ptr)
+		i++;
+	while (i-- > 0) {
+		const struct buf_entry *e = &d->bufs[i];
+		uintptr_t off = (uintptr_t)ptr - (uintptr_t)e->base;
+
+		if (off <= e->length && size <= e->length - off)
+			return e;
+	}
+	return NULL;
+}
+
+static struct buf_entry *
+buf_insert(struct driver *d, const void *base, size_t length, bool owned)
+{
+	int i = buf_lower_bound(d, base);
+	struct buf_entry *e;
+
+	if (d->buf_count >= MAX_BUF_ENTRIES)
+		return NULL;
+	memmove(&d->bufs[i + 1], &d->bufs[i],
+	        (size_t)(d->buf_count - i) * sizeof(*e));
+	d->buf_count++;
+	e = &d->bufs[i];
+	e->base = base;
+	e->length = length;
+	e->owned = owned;
+	return e;
+}
+
+static void
+buf_remove(struct driver *d, struct buf_entry *e)
+{
+	int i = (int)(e - d->bufs);
+
+	memmove(&d->bufs[i], &d->bufs[i + 1],
+	        (size_t)(d->buf_count - i - 1) * sizeof(*e));
+	d->buf_count--;
+}
+
+/* A chunk mapping also covers neighbouring allocations, which xnvme then
+ * cannot refuse, so every op is checked against the table it came from. */
+static bool
+op_range_registered(struct driver *d, const void *ptr, size_t size)
+{
+	bool ok;
+
+	pthread_mutex_lock(&d->reg_lock);
+	ok = buf_covering(d, ptr, size) != NULL;
+	pthread_mutex_unlock(&d->reg_lock);
+	return ok;
+}
+
+/* First run ending after addr; runs are disjoint and sorted. */
+static int
+run_lower_bound(const struct driver *d, uintptr_t addr)
+{
+	int lo = 0, hi = d->run_count;
+
+	while (lo < hi) {
+		int mid = lo + (hi - lo) / 2;
+		if (d->runs[mid].base + d->runs[mid].nbytes <= addr)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return lo;
+}
+
+static void
+run_insert(struct driver *d, uintptr_t base, size_t nbytes)
+{
+	int i = run_lower_bound(d, base);
+
+	memmove(&d->runs[i + 1], &d->runs[i],
+	        (size_t)(d->run_count - i) * sizeof(d->runs[0]));
+	d->run_count++;
+	d->runs[i].base = base;
+	d->runs[i].nbytes = nbytes;
+	d->runs[i].refs = 1;
+}
+
+static void
+run_remove(struct driver *d, int i)
+{
+	memmove(&d->runs[i], &d->runs[i + 1],
+	        (size_t)(d->run_count - i - 1) * sizeof(d->runs[0]));
+	d->run_count--;
+}
+
+struct run_gap {
+	uintptr_t base;
+	size_t nbytes;
+};
+
+/* Map the chunks of [lo, hi) no run covers yet, one xnvme_mem_map per gap, and
+ * reference every run the range touches. A gap never overlaps a live mapping,
+ * which is what xnvme's registry refuses. Returns 0 or a negative errno. */
+static int
+runs_acquire(struct driver *d, uintptr_t lo, uintptr_t hi)
+{
+	int err = 0;
+	int first = run_lower_bound(d, lo);
+	int ngaps = 0, mapped;
+	uintptr_t cursor = lo;
+	struct run_gap *gaps;
+
+	for (int i = first; i < d->run_count && d->runs[i].base < hi; i++) {
+		if (cursor < d->runs[i].base)
+			ngaps++;
+		cursor = d->runs[i].base + d->runs[i].nbytes;
+	}
+	if (cursor < hi)
+		ngaps++;
+	if (d->run_count + ngaps > MAX_MAP_RUNS)
+		return -ENOSPC;
+
+	gaps = calloc(ngaps ? (size_t)ngaps : 1, sizeof(*gaps));
+	if (!gaps)
+		return -ENOMEM;
+	ngaps = 0;
+	cursor = lo;
+	for (int i = first; i < d->run_count && d->runs[i].base < hi; i++) {
+		if (cursor < d->runs[i].base) {
+			gaps[ngaps].base = cursor;
+			gaps[ngaps].nbytes = d->runs[i].base - cursor;
+			ngaps++;
+		}
+		cursor = d->runs[i].base + d->runs[i].nbytes;
+	}
+	if (cursor < hi) {
+		gaps[ngaps].base = cursor;
+		gaps[ngaps].nbytes = hi - cursor;
+		ngaps++;
+	}
+
+	for (mapped = 0; mapped < ngaps; mapped++) {
+		err = xnvme_mem_map(d->xdev, (void *)gaps[mapped].base,
+		                    gaps[mapped].nbytes);
+		if (err < 0) {
+			fprintf(stderr,
+			        "opends_buf_register: xnvme_mem_map(%p, %zu) "
+			        "rc=%d\n",
+			        (void *)gaps[mapped].base, gaps[mapped].nbytes,
+			        err);
+			break;
+		}
+	}
+	if (err < 0) {
+		for (int i = 0; i < mapped; i++)
+			xnvme_mem_unmap(d->xdev, (void *)gaps[i].base);
+		free(gaps);
+		return err;
+	}
+
+	for (int i = first; i < d->run_count && d->runs[i].base < hi; i++)
+		d->runs[i].refs++;
+	for (int i = 0; i < ngaps; i++)
+		run_insert(d, gaps[i].base, gaps[i].nbytes);
+	free(gaps);
+	return 0;
+}
+
+/* Drop the references [lo, hi) holds; unmap the runs nobody references. */
+static void
+runs_release(struct driver *d, uintptr_t lo, uintptr_t hi)
+{
+	int i = run_lower_bound(d, lo);
+
+	while (i < d->run_count && d->runs[i].base < hi) {
+		if (--d->runs[i].refs > 0) {
+			i++;
+			continue;
+		}
+		xnvme_mem_unmap(d->xdev, (void *)d->runs[i].base);
+		run_remove(d, i);
+	}
+}
+
+static void
+runs_clear(struct driver *d)
+{
+	for (int i = 0; i < d->run_count; i++)
+		xnvme_mem_unmap(d->xdev, (void *)d->runs[i].base);
+	d->run_count = 0;
+}
+
+/* The chunk span a buffer falls in. */
+static void
+buf_chunks(const struct driver *d, const void *base, size_t size, uintptr_t *lo,
+           uintptr_t *hi)
+{
+	uintptr_t mask = d->chunk_nbytes - 1;
+
+	*lo = (uintptr_t)base & ~mask;
+	*hi = ((uintptr_t)base + size + mask) & ~mask;
 }
 
 static void *
@@ -695,6 +941,10 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		req_start = (uint64_t)op->u.async.file_offset;
 		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	}
+	if (!op_range_registered(w->drv, dst_base, size)) {
+		op->err = OPENDS_MEMORY_NOT_REGISTERED;
+		return;
+	}
 	if (size > UINT64_MAX - req_start) {
 		op->err = OPENDS_INVALID_VALUE;
 		return;
@@ -834,6 +1084,7 @@ complete_read_op(struct file_op *op)
 static void
 dispatch_write(struct io_worker *w, struct file_op *op)
 {
+	struct driver *d = w->drv;
 	const void *src;
 	size_t size;
 	off_t file_offset;
@@ -848,11 +1099,16 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 		file_offset = op->u.async.file_offset;
 	}
 
-	ssize_t n = pwrite_op(op->h, src, size, file_offset);
-	if (n < 0)
-		n = (n == -(ssize_t)EINVAL)
-		            ? -(ssize_t)OPENDS_INVALID_VALUE
-		            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	ssize_t n;
+	if (!op_range_registered(d, src, size)) {
+		n = -(ssize_t)OPENDS_MEMORY_NOT_REGISTERED;
+	} else {
+		n = pwrite_op(op->h, src, size, file_offset);
+		if (n < 0)
+			n = (n == -(ssize_t)EINVAL)
+			            ? -(ssize_t)OPENDS_INVALID_VALUE
+			            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	}
 
 	if (op->mode == FILE_OP_STREAM) {
 		*op->u.stream.bytes_read_p = n;
@@ -1001,6 +1257,11 @@ workers_setup(struct driver *d)
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
+	rc = ds_accel->alloc_granularity(&d->chunk_nbytes);
+	if (rc != 0)
+		return rc;
+	if (!d->chunk_nbytes || (d->chunk_nbytes & (d->chunk_nbytes - 1)))
+		return -1;
 
 	/* Mapped so the device-side gate can address the word; the host
 	 * callback path uses the host view only. */
@@ -1348,10 +1609,9 @@ opends_driver_close(void)
 		struct buf_entry *e = &drv->bufs[i];
 		if (e->owned)
 			buf_free_locked(drv, (void *)e->base);
-		else
-			xnvme_mem_unmap(drv->xdev, (void *)e->base);
 	}
 	drv->buf_count = 0;
+	runs_clear(drv);
 
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
@@ -1465,11 +1725,7 @@ opends_alloc(size_t size)
 		pthread_mutex_unlock(&drv->reg_lock);
 		return NULL;
 	}
-
-	struct buf_entry *e = &drv->bufs[drv->buf_count++];
-	e->base = buf;
-	e->length = size;
-	e->owned = true;
+	buf_insert(drv, buf, size, true);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return buf;
 }
@@ -1481,15 +1737,10 @@ opends_free(void *buf)
 		return;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf) {
-			if (!drv->bufs[i].owned)
-				break;
-			buf_free_locked(drv, buf);
-			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
-			drv->buf_count--;
-			break;
-		}
+	struct buf_entry *e = buf_find(drv, buf);
+	if (e && e->owned) {
+		buf_free_locked(drv, buf);
+		buf_remove(drv, e);
 	}
 	pthread_mutex_unlock(&drv->reg_lock);
 }
@@ -1505,32 +1756,29 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base || !size)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (size > UINTPTR_MAX - (uintptr_t)buf_base - drv->chunk_nbytes)
+		return opends_err(OPENDS_INVALID_VALUE);
+
+	int err;
+	uintptr_t lo, hi;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf_base) {
-			pthread_mutex_unlock(&drv->reg_lock);
-			return opends_err(OPENDS_MEMORY_ALREADY_REGISTERED);
-		}
+	if (buf_find(drv, buf_base)) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return opends_err(OPENDS_MEMORY_ALREADY_REGISTERED);
 	}
 	if (drv->buf_count >= MAX_BUF_ENTRIES) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
-	if (rc < 0) {
+	buf_chunks(drv, buf_base, size, &lo, &hi);
+	err = runs_acquire(drv, lo, hi);
+	if (err < 0) {
 		pthread_mutex_unlock(&drv->reg_lock);
-		fprintf(stderr,
-		        "opends_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
-		        buf_base, size, rc);
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 	}
-
-	struct buf_entry *e = &drv->bufs[drv->buf_count++];
-	e->base = buf_base;
-	e->length = size;
-	e->owned = false;
+	buf_insert(drv, buf_base, size, false);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
 }
@@ -1545,22 +1793,23 @@ opends_buf_deregister(const void *buf_base)
 	if (!buf_base)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	uintptr_t lo, hi;
+
 	pthread_mutex_lock(&drv->reg_lock);
-	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf_base) {
-			if (drv->bufs[i].owned) {
-				pthread_mutex_unlock(&drv->reg_lock);
-				return opends_err(OPENDS_INVALID_VALUE);
-			}
-			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
-			drv->buf_count--;
-			xnvme_mem_unmap(drv->xdev, (void *)buf_base);
-			pthread_mutex_unlock(&drv->reg_lock);
-			return opends_ok();
-		}
+	struct buf_entry *e = buf_find(drv, buf_base);
+	if (!e) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
 	}
+	if (e->owned) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	buf_chunks(drv, e->base, e->length, &lo, &hi);
+	buf_remove(drv, e);
+	runs_release(drv, lo, hi);
 	pthread_mutex_unlock(&drv->reg_lock);
-	return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
+	return opends_ok();
 }
 
 /* ------------------------------------------------------------------ */

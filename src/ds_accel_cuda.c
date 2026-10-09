@@ -36,6 +36,22 @@ cuda_ctx_set(ds_accel_ctx_t ctx)
 }
 
 static int
+cuda_alloc_granularity(size_t *out)
+{
+	CUdevice dev;
+	CUmemAllocationProp prop = {0};
+	CUresult rc = cuCtxGetDevice(&dev);
+	if (rc != CUDA_SUCCESS)
+		return (int)rc;
+	prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+	prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+	prop.location.id = dev;
+	rc = cuMemGetAllocationGranularity(out, &prop,
+	                                   CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+	return (int)rc;
+}
+
+static int
 cuda_host_alloc_mapped(size_t bytes, void **host, ds_accel_devptr_t *dptr)
 {
 	CUresult rc = cuMemHostAlloc(host, bytes,
@@ -92,6 +108,7 @@ static const struct ds_accel_ops cuda_ops = {
         .xnvme_be = "upcie-cuda",
         .ctx_get = cuda_ctx_get,
         .ctx_set = cuda_ctx_set,
+        .alloc_granularity = cuda_alloc_granularity,
         .host_alloc_mapped = cuda_host_alloc_mapped,
         .host_free = cuda_host_free,
         .copy = cuda_copy,
