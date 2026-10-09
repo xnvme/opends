@@ -11,7 +11,7 @@ ubuntu-24.04 image).
 are compiled, then runs the ref test binaries against a pattern file in
 the build directory and the Python binding tests under `python/tests`.
 
-The gds and aisio backends are not covered by CI. Compiling them
+The cufile and aisio backends are not covered by CI. Compiling them
 requires CUDA and the pinned dependency stack, and running them requires
 a machine with an NVMe device and a GPU with dma-buf P2P support. That
 suite remains the manual flow described in the README: `rsync.py`,
