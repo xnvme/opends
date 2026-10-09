@@ -28,7 +28,12 @@ main(int argc, char **argv)
 	CUdevice cudev;
 	CUcontext cuctx;
 	cuDeviceGet(&cudev, 0);
+	/* CUDA 13 maps cuCtxCreate to the 4-argument _v4 form. */
+#if CUDA_VERSION >= 13000
+	cuCtxCreate(&cuctx, NULL, 0, cudev);
+#else
 	cuCtxCreate(&cuctx, 0, cudev);
+#endif
 
 	e = opends_driver_open();
 	if (e.err) {
@@ -67,7 +72,8 @@ main(int argc, char **argv)
 		fprintf(stderr, "FAILED: opends_sync_read rc=%zd\n", n);
 		return 1;
 	}
-	printf("aisio: read %zd bytes into GPU memory via a HOMI-served qpair\n", n);
+	printf("aisio: read %zd bytes into GPU memory over a HOMI-shared controller\n",
+	       n);
 
 	void *got = malloc((size_t)n);
 	void *ref = malloc((size_t)n);
