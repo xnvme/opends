@@ -663,6 +663,43 @@ struct test_entry {
 	int (*fn)(struct test_env *);
 };
 
+/*
+ * Register a page inside an already registered buffer, then read into the
+ * outer buffer past it and across it. A backend that refuses the nested
+ * registration is left alone.
+ */
+static int
+test_read_nested_register(struct test_env *env)
+{
+	size_t alloc = 4 * PAGE;
+	void *buf = env->buf_acquire(alloc);
+	if (!buf)
+		return 1;
+
+	void *inner = (char *)buf + PAGE;
+	opends_error_t err = opends_buf_register(inner, PAGE, 0);
+	if (err.err == OPENDS_MEMORY_ALREADY_REGISTERED) {
+		fprintf(stderr, "  nested_register: refused, skipped\n");
+		env->buf_release(buf);
+		return 0;
+	}
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  nested_register: register: %s\n",
+		        opends_op_status_error(err.err));
+		env->buf_release(buf);
+		return 1;
+	}
+
+	int rc = verify_read(env, buf, alloc, PAGE, 0, 2 * PAGE,
+	                     "nested_register_past");
+	rc |= verify_read(env, buf, alloc, 2 * PAGE, 0, PAGE,
+	                  "nested_register_across");
+
+	opends_buf_deregister(inner);
+	env->buf_release(buf);
+	return rc;
+}
+
 /* clang-format off */
 static const struct test_entry sync_read_tests[] = {
 	{"single_block",        test_read_single_block},
@@ -677,6 +714,7 @@ static const struct test_entry sync_read_tests[] = {
 	{"zero_size",           test_read_zero_size},
 	{"buf_offset",          test_read_buf_offset},
 	{"buf_offset_bounds",   test_read_buf_offset_boundaries},
+	{"nested_register",     test_read_nested_register},
 	{"sequential_regions",  test_read_sequential_regions},
 	{"overlapping_regions", test_read_overlapping_regions},
 	{"repeated",            test_read_repeated},

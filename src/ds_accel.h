@@ -38,6 +38,10 @@ struct ds_accel_ops {
 	/* Make this thread's accelerator work target the captured context
 	 * (CUDA: cuCtxSetCurrent; HIP: hipSetDevice). */
 	void (*ctx_set)(ds_accel_ctx_t ctx);
+	/* Granularity of the runtime's device allocations. A dma-buf export
+	 * of the whole chunk around any device pointer is backed, so buffer
+	 * registrations round to it (CUDA: cuMemGetAllocationGranularity). */
+	int (*alloc_granularity)(size_t *out);
 
 	/* Host pinned memory the accelerator can read by device pointer. */
 	int (*host_alloc_mapped)(size_t bytes, void **host,

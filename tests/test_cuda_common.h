@@ -57,15 +57,6 @@ cuda_check_buffer(const void *buf)
 	}
 }
 
-/*
- * xNVMe's upcie-cuda backend requires mem_map alignment to
- * cudamem_config.device_pagesize. Pad register-mode allocations up to that
- * granularity.
- */
-#define CUDA_REGISTER_PAGE 65536
-#define CUDA_REGISTER_ALIGN(x)                                                 \
-	(((x) + (CUDA_REGISTER_PAGE - 1)) & ~((size_t)CUDA_REGISTER_PAGE - 1))
-
 static inline void *
 cuda_alloc_acquire(size_t size)
 {
@@ -81,14 +72,13 @@ cuda_alloc_release(void *buf)
 static inline void *
 cuda_register_acquire(size_t size)
 {
-	size_t aligned = CUDA_REGISTER_ALIGN(size);
 	void *buf = NULL;
-	cudaError_t rc = cudaMalloc(&buf, aligned);
+	cudaError_t rc = cudaMalloc(&buf, size);
 	if (rc != cudaSuccess) {
 		fprintf(stderr, "  cudaMalloc: %s\n", cudaGetErrorString(rc));
 		return NULL;
 	}
-	opends_error_t err = opends_buf_register(buf, aligned, 0);
+	opends_error_t err = opends_buf_register(buf, size, 0);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  buf_register: %s\n",
 		        opends_op_status_error(err.err));
@@ -105,6 +95,55 @@ cuda_register_release(void *buf)
 		return;
 	opends_buf_deregister(buf);
 	cudaFree(buf);
+}
+
+/*
+ * Register mode with a 4 KiB spacer allocated first: cudaMalloc then packs
+ * the buffer behind it, off the GPU's 64 KiB page and sharing the spacer's
+ * allocation chunk.
+ */
+#define CUDA_PACKED_SLOTS 16
+static struct {
+	void *buf;
+	void *spacer;
+} cuda_packed[CUDA_PACKED_SLOTS];
+
+static inline void *
+cuda_register_packed_acquire(size_t size)
+{
+	int slot;
+	for (slot = 0; slot < CUDA_PACKED_SLOTS && cuda_packed[slot].buf;
+	     slot++)
+		;
+	if (slot == CUDA_PACKED_SLOTS)
+		return NULL;
+	void *spacer = NULL;
+	if (cudaMalloc(&spacer, 4096) != cudaSuccess)
+		return NULL;
+	void *buf = cuda_register_acquire(size);
+	if (!buf) {
+		cudaFree(spacer);
+		return NULL;
+	}
+	cuda_packed[slot].buf = buf;
+	cuda_packed[slot].spacer = spacer;
+	return buf;
+}
+
+static inline void
+cuda_register_packed_release(void *buf)
+{
+	if (!buf)
+		return;
+	cuda_register_release(buf);
+	for (int slot = 0; slot < CUDA_PACKED_SLOTS; slot++) {
+		if (cuda_packed[slot].buf == buf) {
+			cudaFree(cuda_packed[slot].spacer);
+			cuda_packed[slot].buf = NULL;
+			cuda_packed[slot].spacer = NULL;
+			break;
+		}
+	}
 }
 
 #endif /* OPENDS_TEST_CUDA_COMMON_H */
