@@ -44,7 +44,7 @@ main(int argc, char **argv)
 	        "opends_sync_write block-alloc test (aisio backend, HOMI)\n");
 
 	int failed = 0;
-	void *gpu = opends_alloc(blk);
+	void *gpu = cuda_alloc_acquire(blk);
 	unsigned char *exp = malloc(blk);
 	unsigned char *host = malloc(blk);
 	if (!gpu || !exp || !host) {

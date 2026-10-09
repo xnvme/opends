@@ -112,10 +112,26 @@ opends_handle_deregister(opends_handle_t fh)
 
 #define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((a) - 1))
 
-void *
-opends_alloc(size_t size)
+opends_error_t
+opends_mem_alloc(size_t size, int flags, int device, void **out)
 {
-	return aligned_alloc(4096, ALIGN_UP(size, 4096));
+	int type = opends_mem_type(flags, device);
+	void *buf;
+
+	if (!out || !size || !type) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	if (type == OPENDS_MEM_DEVICE && device != OPENDS_DEVICE_CURRENT &&
+	    device != 0) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
+
+	buf = aligned_alloc(4096, ALIGN_UP(size, 4096));
+	if (!buf) {
+		return opends_err(OPENDS_INTERNAL_ERROR);
+	}
+	*out = buf;
+	return opends_ok();
 }
 
 void

@@ -191,7 +191,7 @@ def _install_signal_handlers():
 
 # ---------------------------------------------------------------------------
 # Buffer registration cache. Externally allocated buffers must be registered
-# before I/O (required by the aisio/gds backends; a no-op effect on ref).
+# before I/O (required by the aisio/cufile backends; a no-op effect on ref).
 # Registration is keyed by base pointer and lazily established on first use.
 # ---------------------------------------------------------------------------
 
@@ -279,17 +279,17 @@ def deregister_buffer(buf):
 
 
 # ---------------------------------------------------------------------------
-# HostBuffer: an opends_alloc-backed, 4096-aligned host allocation. Useful on
-# the ref backend and as a DMA-able staging buffer without pulling in numpy.
+# HostBuffer: a 4096-aligned opends_mem_alloc buffer in host memory.
+# Useful on the ref backend and as a DMA-able staging buffer without pulling
+# in numpy.
 # ---------------------------------------------------------------------------
 
 
 class HostBuffer:
     def __init__(self, size):
-        ptr = _c.alloc(size)
-        if not ptr:
-            raise MemoryError("opends_alloc(%d) failed" % size)
-        self._ptr = int(ptr)
+        ptr = ctypes.c_void_p()
+        _check(_c.mem_alloc(size, _c.OPENDS_MEM_HOST, 0, ctypes.byref(ptr)))
+        self._ptr = int(ptr.value)
         self._size = int(size)
 
     @property

@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 
 #include "opends.h"
+#include "test_mem.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -68,9 +69,9 @@ test_buf_offset(opends_handle_t fh, char *wbuf)
 	}
 
 	size_t big_size = BUF_SIZE + 512;
-	char *bigbuf = opends_alloc(big_size);
+	char *bigbuf = test_dev_alloc(big_size);
 	if (!bigbuf) {
-		fprintf(stderr, "opends_alloc failed\n");
+		fprintf(stderr, "opends_mem_alloc failed\n");
 		return 1;
 	}
 	memset(bigbuf, 0, big_size);
@@ -268,10 +269,10 @@ main(int argc, char **argv)
 	if (check(opends_handle_register(&fh, fd), "handle_register"))
 		return 1;
 
-	char *wbuf = opends_alloc(BUF_SIZE);
-	char *rbuf = opends_alloc(BUF_SIZE);
+	char *wbuf = test_dev_alloc(BUF_SIZE);
+	char *rbuf = test_dev_alloc(BUF_SIZE);
 	if (!wbuf || !rbuf) {
-		fprintf(stderr, "opends_alloc failed\n");
+		fprintf(stderr, "opends_mem_alloc failed\n");
 		return 1;
 	}
 

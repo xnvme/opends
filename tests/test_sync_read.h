@@ -30,7 +30,7 @@ struct test_env {
 	 * (e.g. "this is a CUDA device pointer"). NULL means no check. */
 	void (*check_buffer)(const void *buf);
 	/* Buffer acquisition. In alloc-mode these wrap
-	 * opends_alloc/opends_free; in register-mode they wrap a
+	 * opends_mem_alloc/opends_free; in register-mode they wrap a
 	 * backend-specific allocator plus opends_buf_register/deregister. */
 	void *(*buf_acquire)(size_t size);
 	void (*buf_release)(void *buf);

@@ -10,7 +10,13 @@ doc: |
 
   xal (eXtent Access Library) is a transitive dependency of fil; fil's
   iter walks the on-device XFS metadata via xal to enumerate the
-  dataset.
+  dataset. OpenDS links it too, to attach to the extent index that
+  xal-server publishes over shared memory.
+
+  The pin is upstream main with xal-server (xnvme/xal#47) merged. It
+  adds the xal-server tool, which indexes a mounted filesystem and
+  publishes the index over POSIX shared memory, and the xal_from_shm
+  attach path the aisio backend reads it through.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
@@ -26,4 +32,4 @@ doc: |
 steps:
   - name: setup_xal
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xal.repository.remote }}' '{{ config.xal.repository.ref }}' '{{ config.deps.src_root }}/xal' '{{ config.deps.build_root }}/xal-build'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xal.repository.remote }}' '{{ config.xal.repository.ref }}' '{{ config.deps.src_root }}/xal' '{{ config.deps.build_root }}/xal-build' -Dxal-server=enabled

@@ -39,9 +39,15 @@ main(int argc, char **argv)
 	        .fd = a.fd,
 	        .stream = NULL,
 	        .submit_write = sync_submit_write,
+	        .buf_acquire = cuda_alloc_acquire,
+	        .buf_release = cuda_alloc_release,
+	        .buf_from_host = cuda_buf_from_host,
+	        .buf_to_host = cuda_buf_to_host,
+	        .buf_zero = cuda_buf_zero,
 	        .mode_label = "sync",
 	};
 	int failed = run_write_homi_tests(&env);
+	failed += run_write_homi_tests_host(path, &env);
 
 	int bfd = open(path, O_RDWR);
 	opends_handle_t bfh = NULL;

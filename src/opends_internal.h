@@ -39,4 +39,20 @@ opends_err_dev(opends_op_error_t e, opends_result_t dev_err)
 	return (opends_error_t){e, dev_err};
 }
 
+/* The memory type named by the opends_mem_alloc arguments: exactly one
+ * known type bit, and device 0 for host memory. 0 when malformed. */
+static inline int
+opends_mem_type(int flags, int device)
+{
+	int type = flags & (OPENDS_MEM_DEVICE | OPENDS_MEM_HOST);
+
+	if (flags != type || (type & (type - 1))) {
+		return 0;
+	}
+	if (type == OPENDS_MEM_HOST && device != 0) {
+		return 0;
+	}
+	return type;
+}
+
 #endif /* OPENDS_INTERNAL_H_ */

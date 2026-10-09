@@ -5,10 +5,10 @@ The artifact is the verbatim filperf output (CSV plus `--summary`
 block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is
-required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
+required for opends and harmless elsewhere. cufile runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
-kernel page cache is irrelevant and the device's BDF/socket are
-passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
+kernel page cache is irrelevant and the index shm name is passed
+through OPENDS_XAL_SHM.
 """
 
 import json
@@ -121,7 +121,7 @@ def main(args, cijoe):
     args.batches = _batches_override(args.data_dir, args.batches)
     if args.batches is None:
         return 1
-    io_threads = os.environ.get("OPENDS_AISIO_IO_THREADS")
+    workers = os.environ.get("OPENDS_AISIO_WORKERS_PER_DRIVE")
     queue_depth = os.environ.get("OPENDS_AISIO_QUEUE_DEPTH")
     cpu_mask = os.environ.get("OPENDS_AISIO_CPU_MASK")
     aligned = os.environ.get("OPENDS_AISIO_ASSUME_ALIGNED_ONLY")
@@ -129,7 +129,7 @@ def main(args, cijoe):
     spin = os.environ.get("OPENDS_AISIO_IDLE_SPIN")
     busy_spin = spin == "busy"
     idle_spin = None if busy_spin else spin
-    knobs = (f" io_threads={io_threads} queue_depth={queue_depth}"
+    knobs = (f" workers_per_drive={workers} queue_depth={queue_depth}"
              f" cpu_mask={cpu_mask}"
              f" assume_aligned_only={int(assume_aligned_only)}"
              f" idle_spin={spin}"
@@ -140,31 +140,28 @@ def main(args, cijoe):
     bdf = cijoe.getconf("test.nvme_bdf")
     env = ""
     mnt = args.mnt
-    if args.backend == "gds":
+    if args.backend == "cufile":
         repo = cijoe.getconf("test.repo_path")
         err, state = cijoe.run(f"'{repo}/tasks/steps/resolve_nvme_ns.sh' '{bdf}'")
         if err:
             return err
         target = state.output().strip().splitlines()[-1]
     elif args.backend == "opends":
-        # HOMI owns the controller; qublk re-exports it as a ublk block device
-        # that fil walks with xal for enumeration, exactly like gds walks the
-        # kernel-bound NVMe. The aisio backend attaches a qpair from HOMI per
-        # file (via OPENDS_HOMI_DEV/SOCKET), so the device read path bypasses
+        # homi owns the controller; qublk re-exports it as a ublk block device
+        # that fil walks with xal for enumeration, exactly like cufile walks the
+        # kernel-bound NVMe. The aisio backend joins the homi group and reads
+        # extents from the xal-server index, so the device read path bypasses
         # the ublk target.
         err, state = cijoe.run("cat /run/homi/ublk_dev")
         if err:
             return err
         target = state.output().strip().splitlines()[-1]
-        sock = "/run/homi/homi.sock"
+        shm = "/xal_dev0"
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
-        env = (
-            f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
-            f"OPENDS_HOMI_MNT='{mnt}' "
-        )
-        if io_threads:
-            env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
+        env = f"OPENDS_XAL_SHM='{shm}' OPENDS_HOMI_MNT='{mnt}' "
+        if workers:
+            env += f"OPENDS_AISIO_WORKERS_PER_DRIVE='{workers}' "
         if queue_depth:
             env += f"OPENDS_AISIO_QUEUE_DEPTH='{queue_depth}' "
         if cpu_mask:

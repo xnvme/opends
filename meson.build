@@ -40,30 +40,33 @@ cufile_dep = cc.find_library('cufile',
   required : false,
 )
 
-gds_enabled = cuda_dep.found() and cufile_dep.found()
+cufile_enabled = cuda_dep.found() and cufile_dep.found()
 
-if gds_enabled
-  libopends_gds = shared_library('opends_gds',
+if cufile_enabled
+  libopends_cufile = shared_library('opends_cufile',
     'src/opends_common.c',
-    'src/opends_gds.c',
+    'src/opends_cufile.c',
     include_directories : opends_inc,
     dependencies : [cuda_dep, cufile_dep],
     install : true,
   )
 
-  opends_gds_dep = declare_dependency(
+  opends_cufile_dep = declare_dependency(
     include_directories : opends_inc,
-    link_with : libopends_gds,
+    link_with : libopends_cufile,
   )
 endif
 
 xnvme_dep = dependency('xnvme', required : false)
-homic_dep = dependency('homic', required : false)
+xal_dep = dependency('xal', required : false)
 
 accel_backend = get_option('accel_backend')
 accel_src = 'src/ds_accel_@0@.c'.format(accel_backend)
 accel_kernel_lang = 'cuda'
-accel_kernel_args = []
+# Compile device code for the GPU present at build time. The nvcc default
+# arch has no SASS for newer GPUs, and the driver rejects PTX from a newer
+# toolkit, so the first kernel launch fails with CUDA error 222.
+accel_kernel_args = ['-arch=native']
 accel_sys_inc_dirs = []
 
 if accel_backend == 'cuda'
@@ -103,7 +106,7 @@ if accel_sys_inc_dirs.length() > 0
   accel_inc = [include_directories(accel_sys_inc_dirs, is_system : true)]
 endif
 
-aisio_enabled = xnvme_dep.found() and accel_runtime_found and homic_dep.found()
+aisio_enabled = xnvme_dep.found() and accel_runtime_found and xal_dep.found()
 
 if aisio_enabled
   # The async path links a tiny D2D copy kernel compiled from
@@ -116,12 +119,13 @@ if aisio_enabled
   libopends_aisio = shared_library('opends_aisio',
     'src/opends_common.c',
     'src/opends_aisio.c',
+    'src/ds_aisio_config.c',
     'src/opends_sync_async.c',
     'src/opends_batch_async.c',
     accel_src,
     accel_kernel_src,
     include_directories : aisio_inc_dirs,
-    dependencies : [xnvme_dep, homic_dep] + accel_deps,
+    dependencies : [xnvme_dep, xal_dep] + accel_deps,
     cuda_args : accel_kernel_args,
     install : true,
   )
@@ -181,13 +185,13 @@ executable('test_batch_read_ref',
   dependencies : [opends_ref_dep],
 )
 
-if gds_enabled
-  executable('test_sync_read_gds',
-    'tests/test_sync_read_gds.c',
-    dependencies : [opends_gds_dep, cuda_dep],
+if cufile_enabled
+  executable('test_sync_read_cufile',
+    'tests/test_sync_read_cufile.c',
+    dependencies : [opends_cufile_dep, cuda_dep],
   )
 else
-  executable('test_sync_read_gds', 'tests/skip.c')
+  executable('test_sync_read_cufile', 'tests/skip.c')
 endif
 
 aisio_test_enabled = aisio_enabled and cuda_dep.found()
@@ -266,7 +270,7 @@ endif
 
 summary({
   'Reference backend' : true,
-  'GDS backend' : gds_enabled,
+  'cuFile backend' : cufile_enabled,
   'aisio backend' : aisio_enabled,
   'aisio accelerator vendor' : accel_backend,
 }, section : 'Backends')

@@ -17,12 +17,16 @@
 #include "opends.h"
 #include "read_pattern.h"
 #include "test_cuda_common.h"
+#include "test_host_common.h"
 
+#include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #define WRITE_TAIL_KEEP 100
 #define WRITE_PARTIAL_LEN (PAGE - WRITE_TAIL_KEEP)
@@ -34,6 +38,12 @@ struct write_homi_env {
 	opends_stream_t stream; /* unused by sync submit. */
 	ssize_t (*submit_write)(struct write_homi_env *e, void *gpu,
 	                        size_t size, off_t foff);
+	/* The buffer written from and read back into, and how to reach it. */
+	void *(*buf_acquire)(size_t size);
+	void (*buf_release)(void *buf);
+	void (*buf_from_host)(void *dst, const void *src, size_t n);
+	void *(*buf_to_host)(void *dst, const void *src, size_t n);
+	void (*buf_zero)(void *buf, size_t n);
 	const char *mode_label;
 };
 
@@ -50,7 +60,7 @@ write_verify(struct write_homi_env *e, void *gpu, unsigned char *host,
              const unsigned char *image, size_t *file_size, size_t size,
              off_t foff)
 {
-	cuda_buf_from_host(gpu, image + foff, size);
+	e->buf_from_host(gpu, image + foff, size);
 	ssize_t w = e->submit_write(e, gpu, size, foff);
 	if (w != (ssize_t)size) {
 		fprintf(stderr, "[%s] write %zu@%lld: %zd (%s)\n",
@@ -76,9 +86,9 @@ write_verify(struct write_homi_env *e, void *gpu, unsigned char *host,
 	if (rend > *file_size)
 		rend = *file_size;
 	size_t rlen = rend - (size_t)roff;
-	cuda_buf_zero(gpu, rlen);
+	e->buf_zero(gpu, rlen);
 	ssize_t r = opends_sync_read(e->fh, gpu, rlen, roff, 0);
-	cuda_buf_to_host(host, gpu, rlen);
+	e->buf_to_host(host, gpu, rlen);
 	if (r != (ssize_t)rlen || memcmp(host, image + roff, rlen)) {
 		fprintf(stderr, "[%s] verify %zu@%lld failed (r=%zd)\n",
 		        e->mode_label, rlen, (long long)roff, r);
@@ -95,7 +105,7 @@ run_write_homi_tests(struct write_homi_env *e)
 {
 	int failed = 0;
 	size_t file_size = 0;
-	void *gpu = opends_alloc(FILE_SIZE);
+	void *gpu = e->buf_acquire(FILE_SIZE);
 	unsigned char *host = malloc(FILE_SIZE);
 	unsigned char *image = malloc(WRITE_IMAGE_SIZE);
 	if (!gpu || !host || !image) {
@@ -139,7 +149,54 @@ out:
 	free(image);
 	free(host);
 	if (gpu)
-		opends_free(gpu);
+		e->buf_release(gpu);
+	return failed;
+}
+
+/* Run the write tests again with host buffers, on a scratch file next to
+ * path, when the driver was opened with host memory. Returns the
+ * failure count. */
+static int
+run_write_homi_tests_host(const char *path, const struct write_homi_env *base)
+{
+	struct write_homi_env e = *base;
+	char hpath[PATH_MAX];
+	char label[32];
+	opends_error_t err;
+	int host = host_mem_available();
+	int failed;
+
+	if (host <= 0)
+		return host < 0 ? 1 : 0;
+
+	snprintf(hpath, sizeof(hpath), "%s.host", path);
+	snprintf(label, sizeof(label), "%s/host", base->mode_label);
+	e.fh = NULL;
+	e.fd = open(hpath, O_RDWR | O_CREAT | O_TRUNC | O_DIRECT, 0644);
+	if (e.fd < 0) {
+		fprintf(stderr, "open(%s) failed\n", hpath);
+		return 1;
+	}
+	err = opends_handle_register(&e.fh, e.fd);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "handle_register(%s): %s\n", hpath,
+		        opends_op_status_error(err.err));
+		close(e.fd);
+		unlink(hpath);
+		return 1;
+	}
+	e.buf_acquire = host_alloc_acquire;
+	e.buf_release = host_alloc_release;
+	e.buf_from_host = host_buf_from_host;
+	e.buf_to_host = host_buf_to_host;
+	e.buf_zero = host_buf_zero;
+	e.mode_label = label;
+
+	failed = run_write_homi_tests(&e);
+
+	opends_handle_deregister(e.fh);
+	close(e.fd);
+	unlink(hpath);
 	return failed;
 }
 

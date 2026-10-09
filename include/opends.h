@@ -21,10 +21,10 @@
  *     not supported.
  *
  *   - Buffer registration (cuFileBufRegister/Deregister) is offered
- *     alongside backend-owned allocation via opends_alloc/opends_free.
+ *     alongside backend-owned allocation via opends_mem_alloc/opends_free.
  *     Callers may allocate their own memory (e.g. cudaMalloc) and call
  *     opends_buf_register, or let the backend handle both with
- *     opends_alloc.
+ *     opends_mem_alloc.
  *
  * Error reporting:
  *
@@ -171,17 +171,39 @@ void opends_handle_deregister(opends_handle_t fh);
 
 /*
  * Buffer allocation. Buffers used for I/O must be either allocated
- * through opends_alloc or registered with opends_buf_register so the
- * backend can set up DMA mappings.
+ * through opends_mem_alloc, or registered with opends_buf_register so
+ * the backend can set up DMA mappings.
+ *
+ * A buffer lives in one memory: an accelerator's, or host memory the
+ * storage device can DMA to. opends_mem_alloc chooses it. flags names
+ * the memory type, exactly one of OPENDS_MEM_DEVICE or OPENDS_MEM_HOST,
+ * and the other bits are reserved. device is the accelerator ordinal
+ * or OPENDS_DEVICE_CURRENT for accelerator memory, and 0 for host
+ * memory. opends_free releases the buffer.
+ *
+ * Errors: OPENDS_INVALID_VALUE when flags or device is malformed;
+ * OPENDS_MEMORY_TYPE_INVALID when the backend does not serve
+ * the memory type, or the driver was not opened with it (aisio: see
+ * OPENDS_AISIO_WORKERS_PER_DRIVE); OPENDS_DEVICE_NOT_FOUND when the
+ * accelerator is not one the driver serves; OPENDS_INTERNAL_ERROR when
+ * that memory is exhausted.
  */
-void *opends_alloc(size_t size);
+#define OPENDS_MEM_DEVICE (1 << 0) /* accelerator memory */
+#define OPENDS_MEM_HOST (1 << 1)   /* host memory, DMA-able by storage */
+
+/* The accelerator of the caller's current context. */
+#define OPENDS_DEVICE_CURRENT (-1)
+
+opends_error_t opends_mem_alloc(size_t size, int flags, int device, void **out);
 void opends_free(void *buf);
 
 /*
  * Register an externally allocated buffer for use in I/O calls. The
  * caller retains ownership of the allocation, so deregister before
  * freeing. flags is forwarded to the backend (e.g. cuFileBufRegister
- * flags for gds).
+ * flags for cufile). The aisio backend exports the range as a dma-buf,
+ * so buf_base and size must be multiples of the GPU's 64 KiB device
+ * page; cudaMalloc does not guarantee that alignment for small sizes.
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
                                    int flags);
