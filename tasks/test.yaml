@@ -4,16 +4,17 @@ doc: |
   ==================
 
   Runs all available backend tests. Reference backend tests always run.
-  GDS tests run only when the GDS backend was built. aisio tests run
+  cuFile tests run only when the cuFile backend was built. aisio tests run
   when both xNVMe and CUDA were found.
 
-  The ref/GDS phases run against the kernel-mounted filesystem. The
+  The ref/cuFile phases run against the kernel-mounted filesystem. The
   aisio phase then brings up the HOMI/qublk stack (homi_stack_up): it
   hands the controller to userspace, exposes it as a ublk block device,
   and remounts the same XFS over it, so the sync-read pattern written
-  during prep is still present. The aisio tests attach I/O qpairs from
-  HOMI and read that pattern file. homi_stack_down tears the stack down
-  and rebinds nvme so iterative runs leave the target usable.
+  during prep is still present. The aisio tests join HOMI's
+  multi-process group and read that pattern file. homi_stack_down tears
+  the stack down and rebinds nvme so iterative runs leave the target
+  usable.
 
   Prerequisites:
     - setup_opends.yaml has been run (sync_and_build.py does this).
@@ -75,9 +76,9 @@ steps:
     run: |
       '{{ config.test.build_dir }}/test_batch_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
-  - name: test_sync_read_gds
+  - name: test_sync_read_cufile
     run: |
-      '{{ config.test.build_dir }}/test_sync_read_gds' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+      '{{ config.test.build_dir }}/test_sync_read_cufile' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: homi_stack_up
     run: |
@@ -85,14 +86,14 @@ steps:
 
   - name: test_sync_read_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_mt_read_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_mt_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -101,7 +102,7 @@ steps:
     run: |
       # Two workers so concurrent async ops exercise the per-op tail bounce
       # and serialized allocator paths.
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
         '{{ config.test.build_dir }}/test_async_read_aisio' \
@@ -111,7 +112,7 @@ steps:
     run: |
       # Two spinning workers, so the async submit path runs with no worker
       # ever napping. Each one holds a CPU until the driver closes.
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
         OPENDS_AISIO_IDLE_SPIN=busy \
@@ -122,7 +123,7 @@ steps:
     run: |
       # Two workers so the batched ops actually run concurrently on the
       # backend.
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
         '{{ config.test.build_dir }}/test_batch_read_aisio' \
@@ -132,7 +133,7 @@ steps:
     run: |
       # Increase fd limit to support more than enough file descriptors needed for xnvme cuda memory mapping.
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         prlimit --nofile=1048576:1048576 -- \
           '{{ config.test.build_dir }}/test_register_large_aisio' \
@@ -140,21 +141,21 @@ steps:
 
   - name: test_coherency_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_coherency_aisio' \
           '{{ config.test.mount_point }}/opends_tests/coherency_large.bin'
 
   - name: test_stream_read_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_stream_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
 
   - name: test_stream_read_busy_spin_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IDLE_SPIN=busy \
         '{{ config.test.build_dir }}/test_stream_read_aisio' \
@@ -162,24 +163,31 @@ steps:
 
   - name: test_sync_write_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
   - name: test_stream_write_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_stream_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
   - name: test_block_alloc_aisio
     run: |
-      OPENDS_HOMI_DEV='{{ config.test.nvme_bdf }}' OPENDS_HOMI_SOCKET=/run/homi/homi.sock \
+      OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_block_alloc_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+
+  - name: test_python_aisio
+    run: |
+      cd '{{ config.test.repo_path }}/python' && \
+      OPENDS_BACKEND=aisio OPENDS_LIBRARY='{{ config.test.build_dir }}/libopends_aisio.so' \
+        OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        python3 tests/test_aisio_cuda.py
 
   - name: homi_stack_down
     run: |

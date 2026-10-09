@@ -9,10 +9,16 @@ doc: |
   OpenDS. The remote and ref are read from [xnvme.repository] in
   deps.toml, which pins the build dependency for the whole project.
 
-  The aisio backend's opends_buf_register path requires the
-  fmma/xnvme#feat/upcie-cuda-mem-map fork which adds .mem_map and
-  .mem_unmap hooks to the upcie-cuda backend; deps.toml pins a commit
-  on that branch.
+  The pin is the head of xnvme/xnvme#770, the tip of the homi series
+  (#795, #769, #803, #764, #770): controllers served over a socket, GPU
+  clients, and I/O the GPU issues itself. It is a frozen sha because the
+  series is rebased under review. Move the pin to upstream main once the
+  series lands.
+
+  The homi and qublk tools install with the library; the test and
+  bench tasks start them from PATH. Building qublk needs liburing
+  (>= 2.3) and the ublk kernel headers (kernel >= 6.0); running it
+  needs the ublk_drv module loaded.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
