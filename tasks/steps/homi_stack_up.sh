@@ -43,7 +43,7 @@ mkdir -p /run/homi
 
 # Clear any stale stack from a crashed or aborted prior run before bringing up
 # a fresh one.
-"$HERE/stop_homi_stack.sh"
+"$HERE/clear_homi_stack.sh"
 
 # Hand the controller to userspace (unmounts the kernel mount, unbinds nvme,
 # leaves the controller in a clean power-on state).
