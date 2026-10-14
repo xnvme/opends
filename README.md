@@ -86,8 +86,9 @@ kernel over the bytes and a copy back on one CUDA stream.
   every device the server holds gets its own queues and I/O threads. File
   extents come from per-device indexes xal-server publishes over POSIX shared
   memory, built over the qublk-exported block devices, and a registered file
-  is bound to the device whose index resolves its path. Reads and writes are
-  supported. Requires xNVMe, xal, and the CUDA toolkit.
+  is bound to the device whose index resolves its path. Reads are P2P DMA, and
+  so are writes inside the file's allocated extents; see Writes and the extent
+  index below. Requires xNVMe, xal, and the CUDA toolkit.
 
 ## OpenDS AiSIO configuration
 
@@ -135,17 +136,31 @@ that xal-server publishes. The stack runs xal-server with `watchmode = 0`, so
 the index describes the file system as it was when xal-server started, and
 nothing updates it while the stack is up.
 
-Writes through OpenDS (`opends_sync_write`, `opends_async_write`,
-`opends_stream_write`) go through the kernel and are correct: the bytes land
-in the file, and a kernel read sees them.
+A write whose range lies inside the file's allocated extents, at or below the
+file size, goes GPU to NVMe by DMA when it is LBA-aligned and its source is a
+registered buffer. It changes no mapping, so a read that follows returns the
+written bytes. Every other write, an append, a write into a hole, an unaligned
+one or one from an unregistered buffer, is staged to a host buffer and written
+through the kernel-mounted filesystem, which allocates blocks as needed. These
+writes are correct too: the bytes land in the file, and a kernel read sees
+them.
 
-**Undefined behaviour:** reading through OpenDS what was written after
-xal-server indexed. That read may return the bytes from before the write,
-zeros, or another file's blocks, and no error. It covers a file created
+**Undefined behaviour:** reading through OpenDS what the kernel path wrote
+after xal-server indexed. That read may return the bytes from before the
+write, zeros, or another file's blocks, and no error. It covers a file created
 after the index, bytes appended to a file, a hole that a write filled, and an
-overwrite the file system placed in new blocks. An in-place overwrite of
-blocks that were allocated at index time usually reads back correctly, but
-XFS does not promise it, and OpenDS does not check it.
+overwrite the file system placed in new blocks. A DMA write trusts the index
+the same way: a file rewritten in new blocks after xal-server indexed is
+written in the blocks it had then, which may belong to another file by now.
+
+The DMA path treats every allocated extent as data and ignores the
+filesystem's unwritten state. A range preallocated with `fallocate` reads back
+through OpenDS as whatever bytes the DMA put there, while the kernel reports
+zeros for it until something writes it through the filesystem. A DMA write
+also leaves the file's timestamps and other processes' cached pages alone.
+Files shared by reflink are not supported for writes, and the caller keeps a
+registered file's layout stable: no truncate, hole punch or defragmentation
+while a handle is registered, as cuFile requires.
 
 To read written data through OpenDS, restart xal-server after the writes so it
 indexes again. This restriction is temporary: a re-index on request is being

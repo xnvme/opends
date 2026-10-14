@@ -15,9 +15,11 @@
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
  *
- * Writes go through the kernel-mounted filesystem: the source is staged to a
- * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
- * writes the data; the file's extents are then re-resolved for later P2P reads.
+ * A write that lands inside the file's allocated extents goes the same way in
+ * reverse, GPU memory to NVMe by DMA, and leaves the index alone. A write that
+ * needs blocks allocated, or that the DMA path cannot take, is staged to a
+ * host buffer and pwritten via the fd, so XFS over qublk allocates and writes
+ * it; the index does not follow it (see the README).
  */
 
 #define _GNU_SOURCE
@@ -149,10 +151,10 @@ struct file_op {
 	} u;
 };
 
-struct read_cursor {
+struct io_cursor {
 	struct xnvme_queue *queue;
 	uint64_t cur_slba;
-	uint8_t *abs_dst;
+	uint8_t *abs_buf;
 	size_t remaining;
 };
 
@@ -645,18 +647,29 @@ out:
 }
 
 static int
-resolve_extents(struct registered_file *h, struct ds_extent **out,
-                uint32_t *out_n)
+handle_path(struct registered_file *h, char *path, size_t path_len)
 {
-	char fdpath[64], path[PATH_MAX];
+	char fdpath[64];
 	ssize_t plen;
-	int rc;
 
 	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", h->fd);
-	plen = readlink(fdpath, path, sizeof(path) - 1);
+	plen = readlink(fdpath, path, path_len - 1);
 	if (plen < 0)
 		return -errno;
 	path[plen] = '\0';
+	return 0;
+}
+
+static int
+resolve_extents(struct registered_file *h, struct ds_extent **out,
+                uint32_t *out_n)
+{
+	char path[PATH_MAX];
+	int rc;
+
+	rc = handle_path(h, path, sizeof(path));
+	if (rc < 0)
+		return rc;
 
 	/* The index is dirty while xal-server rebuilds it. Retry until a
 	 * clean snapshot resolves. */
@@ -791,8 +804,8 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_middle(struct nvme_device *dev, struct read_cursor *c,
-                   struct file_op *op, uint64_t middle_lbas)
+submit_middle(struct nvme_device *dev, struct io_cursor *c, struct file_op *op,
+              uint64_t middle_lbas, bool is_write)
 {
 	uint32_t lba_nbytes = dev->lba_size;
 	uint64_t max_chunk_lbas = dev->mdts_nbytes >> dev->lba_shift;
@@ -813,11 +826,13 @@ submit_read_middle(struct nvme_device *dev, struct read_cursor *c,
 
 		uint16_t nlb = (uint16_t)(chunk_lbas - 1);
 		uint64_t chunk_slba = c->cur_slba + lbas_done;
-		uint8_t *dst_chunk = c->abs_dst + lbas_done * lba_nbytes;
+		uint8_t *buf_chunk = c->abs_buf + lbas_done * lba_nbytes;
 
 		op->chunks_remaining++;
-		int srv = xnvme_nvm_read(ctx, dev->nsid, chunk_slba, nlb,
-		                         dst_chunk, NULL);
+		int srv = is_write ? xnvme_nvm_write(ctx, dev->nsid, chunk_slba,
+		                                     nlb, buf_chunk, NULL)
+		                   : xnvme_nvm_read(ctx, dev->nsid, chunk_slba,
+		                                    nlb, buf_chunk, NULL);
 		if (srv == -EBUSY) {
 			op->chunks_remaining--;
 			xnvme_queue_put_cmd_ctx(c->queue, ctx);
@@ -835,7 +850,7 @@ submit_read_middle(struct nvme_device *dev, struct read_cursor *c,
 	}
 
 	c->cur_slba += middle_lbas;
-	c->abs_dst += middle_lbas * lba_nbytes;
+	c->abs_buf += middle_lbas * lba_nbytes;
 	c->remaining -= middle_lbas * lba_nbytes;
 	return 0;
 }
@@ -1040,16 +1055,16 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		size_t tail_bytes = remaining & lba_mask;
 		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
 		if (middle_lbas) {
-			struct read_cursor c = {
+			struct io_cursor c = {
 			        .queue = w->queue,
 			        .cur_slba = cur_slba,
-			        .abs_dst = abs_dst,
+			        .abs_buf = abs_dst,
 			        .remaining = remaining,
 			};
-			if (submit_read_middle(dev, &c, op, middle_lbas) < 0)
+			if (submit_middle(dev, &c, op, middle_lbas, false) < 0)
 				goto out;
 			cur_slba = c.cur_slba;
-			abs_dst = c.abs_dst;
+			abs_dst = c.abs_buf;
 			remaining = c.remaining;
 		}
 
@@ -1095,7 +1110,7 @@ run_bounce_copies(struct file_op *op)
 }
 
 static void
-complete_read_op(struct file_op *op)
+complete_op(struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 
@@ -1106,7 +1121,8 @@ complete_read_op(struct file_op *op)
 		                              : (uint32_t)op->bounces[0].nbytes;
 
 		*op->u.stream.bytes_read_p = n;
-		s->bounce_desc_host->n_bytes = tail_bytes;
+		if (!op->is_write)
+			s->bounce_desc_host->n_bytes = tail_bytes;
 		release_gate(s, op->u.stream.seq);
 		__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 		return;
@@ -1119,55 +1135,163 @@ complete_read_op(struct file_op *op)
 	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
 
-static void
-dispatch_write(struct file_op *op)
+/* True when every byte of [start, end) is in an extent. The extents are in
+ * file order. */
+static bool
+range_covered(const struct ds_extent *ex, uint32_t n, uint64_t start,
+              uint64_t end)
 {
-	const void *src;
+	uint64_t pos = start;
+
+	for (uint32_t i = 0; i < n && pos < end; i++) {
+		uint64_t ext_end = ex[i].file_offset + ex[i].length;
+
+		if (ex[i].file_offset > pos)
+			return false;
+		if (ext_end > pos)
+			pos = ext_end;
+	}
+	return pos >= end;
+}
+
+enum write_class {
+	WRITE_ALLOCATING,
+	WRITE_IN_PLACE,
+};
+
+/* A write is in place when the file already holds blocks for all of
+ * [start, end) and end is at or below the file size: it then changes no
+ * mapping, whichever path carries it. Blocks past the file size do not count,
+ * since a DMA cannot move the file size. A stale snapshot is not waited for;
+ * the write then counts as allocating, which is always safe. On
+ * WRITE_IN_PLACE the snapshot is handed back for the DMA path. */
+static enum write_class
+classify_write(struct registered_file *h, uint64_t start, uint64_t end,
+               struct ds_extent **out, uint32_t *out_n)
+{
+	char path[PATH_MAX];
+	struct stat st;
+	int rc;
+
+	rc = fstat(h->fd, &st);
+	if (rc < 0 || end > (uint64_t)st.st_size)
+		return WRITE_ALLOCATING;
+	rc = handle_path(h, path, sizeof(path));
+	if (rc < 0)
+		return WRITE_ALLOCATING;
+	rc = extents_snapshot(h->dev, path, out, out_n);
+	if (rc < 0)
+		return WRITE_ALLOCATING;
+	if (!range_covered(*out, *out_n, start, end)) {
+		free(*out);
+		*out = NULL;
+		return WRITE_ALLOCATING;
+	}
+	return WRITE_IN_PLACE;
+}
+
+/* DMA an in-place op over its snapshot. The range is covered and LBA-aligned,
+ * and extents start on LBA boundaries, so every span is whole LBAs. */
+static void
+start_write_op(struct io_worker *w, struct file_op *op,
+               const struct ds_extent *extents, uint32_t extent_count,
+               uint8_t *src_base, uint64_t req_start, uint64_t req_end)
+{
+	struct nvme_device *dev = w->dev;
+	uint32_t lba_shift = dev->lba_shift;
+	uint32_t lba_mask = dev->lba_size - 1;
+
+	for (uint32_t i = 0; i < extent_count; i++) {
+		const struct ds_extent *e = &extents[i];
+		uint64_t ext_start = e->file_offset;
+		uint64_t ext_end = ext_start + e->length;
+		if (ext_start >= req_end)
+			break;
+
+		uint64_t span_start = max_u64(req_start, ext_start);
+		uint64_t span_end = XNVME_MIN_U64(req_end, ext_end);
+		if (span_start >= span_end)
+			continue;
+
+		uint64_t off_in_ext = span_start - ext_start;
+		size_t span = span_end - span_start;
+		if ((off_in_ext & lba_mask) || (span & lba_mask)) {
+			op->err = OPENDS_INTERNAL_ERROR;
+			return;
+		}
+		struct io_cursor c = {
+		        .queue = w->queue,
+		        .cur_slba = e->slba + (off_in_ext >> lba_shift),
+		        .abs_buf = src_base + (span_start - req_start),
+		        .remaining = span,
+		};
+		if (submit_middle(dev, &c, op, span >> lba_shift, true) < 0)
+			return;
+	}
+}
+
+static void
+dispatch_write(struct io_worker *w, struct file_op *op)
+{
+	struct nvme_device *dev = w->dev;
+	struct ds_extent *extents = NULL;
+	uint32_t extent_count = 0;
+	enum write_class class = WRITE_ALLOCATING;
+	uint8_t *src;
 	size_t size;
 	off_t file_offset;
+	uint64_t start;
+	bool dma;
+	ssize_t n;
+
 	if (op->mode == FILE_OP_STREAM) {
-		src = (const uint8_t *)op->buf_base +
-		      *op->u.stream.buf_offset_p;
+		src = (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
 		size = *op->u.stream.size_p;
 		file_offset = *op->u.stream.file_offset_p;
 	} else {
-		src = (const uint8_t *)op->buf_base + op->u.async.buf_offset;
+		src = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 		size = op->u.async.size;
 		file_offset = op->u.async.file_offset;
 	}
+	start = (uint64_t)file_offset;
+	if (size && file_offset >= 0 && size <= UINT64_MAX - start)
+		class = classify_write(op->h, start, start + size, &extents,
+		                       &extent_count);
 
-	ssize_t n;
-	if (!op_range_registered(drv, src, size)) {
-		n = -(ssize_t)OPENDS_MEMORY_NOT_REGISTERED;
-	} else {
-		n = pwrite_op(op->h, src, size, file_offset);
-		if (n < 0)
-			n = (n == -(ssize_t)EINVAL)
-			            ? -(ssize_t)OPENDS_INVALID_VALUE
-			            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	dma = class == WRITE_IN_PLACE &&
+	      !((start | size) & (dev->lba_size - 1)) &&
+	      op_range_registered(w->drv, src, size);
+	if (dma) {
+		__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT,
+		                 __ATOMIC_RELEASE);
+		start_write_op(w, op, extents, extent_count, src, start,
+		               start + size);
+		free(extents);
+		return;
 	}
+	free(extents);
 
-	if (op->mode == FILE_OP_STREAM) {
-		*op->u.stream.bytes_read_p = n;
-		release_gate(op->u.stream.opends_stream, op->u.stream.seq);
-	} else {
-		async_future_complete(op->u.async.future, n);
-	}
-	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
+	n = pwrite_op(op->h, src, size, file_offset);
+	if (n < 0)
+		op->err = (n == -(ssize_t)EINVAL) ? OPENDS_INVALID_VALUE
+		                                  : OPENDS_DEVICE_DRIVER_ERROR;
+	else
+		op->bytes_acc = (size_t)n;
+	complete_op(op);
 }
 
 static void
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
-	if (op->is_write) {
-		dispatch_write(op);
-		return;
-	}
 	op->chunks_remaining = 0;
 	op->bounces_outstanding = 0;
 	op->bytes_acc = 0;
 	op->err = 0;
 	op->n_bounces = 0;
+	if (op->is_write) {
+		dispatch_write(w, op);
+		return;
+	}
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_read_op(w, op);
 }
@@ -1176,7 +1300,7 @@ static void
 reap_in_flight(struct file_op *op)
 {
 	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
-		complete_read_op(op);
+		complete_op(op);
 }
 
 /* Service a PENDING async op: dispatch it once its stream gate has opened,
@@ -2055,8 +2179,9 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	/* Order the I/O thread against the user's stream through a per-stream
 	 * gate word (strictly monotonic, two phases per op): the submitter
 	 * publishes 2*seq on arrival and parks, and the I/O thread's store of
-	 * 2*seq+1 releases it once the I/O is done (a read's DMA landed, or a
-	 * write's source was staged). Do not roll back seq on failure: a reused
+	 * 2*seq+1 releases it once the I/O is done (a read's or write's DMA
+	 * landed, or a write's source was staged for the kernel path). Do not
+	 * roll back seq on failure: a reused
 	 * seq would let the I/O thread's gate check pass before the stream is
 	 * ready.
 	 *
