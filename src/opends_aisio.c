@@ -556,8 +556,8 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 	s->bounce_desc_dev = 0;
 }
 
-#define ESTALE_RETRIES 6000
-#define ESTALE_BACKOFF_US 50000
+#define ESTALE_RETRIES 300000
+#define ESTALE_BACKOFF_US 1000
 
 /* True while the seqlock snapshot taken at `seq` is still valid: the server
  * is not rewriting the shared pools, they did not move since `seq` was read,
