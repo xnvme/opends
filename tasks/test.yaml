@@ -64,6 +64,12 @@ steps:
         of='{{ config.test.mount_point }}/opends_tests/coherency_large.bin' \
         bs=1M count=64 status=none conv=fsync
 
+  - name: test_p2p_write_prep
+    run: |
+      dd if=/dev/urandom \
+        of='{{ config.test.mount_point }}/opends_tests/p2p_write.bin' \
+        bs=1M count=1 status=none conv=fsync
+
   - name: test_sync_read_ref
     run: |
       '{{ config.test.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -180,6 +186,14 @@ steps:
         '{{ config.test.build_dir }}/test_stream_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
+  - name: test_p2p_write_aisio
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        OPENDS_XAL_SHM=/xal_dev0 \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_p2p_write_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/p2p_write.bin'
+
   - name: test_python_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
@@ -190,7 +204,7 @@ steps:
 
   - name: clean_test_dir
     run: |
-      rm -f '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' '{{ config.test.mount_point }}/opends_tests/coherency_large.bin' '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+      rm -f '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' '{{ config.test.mount_point }}/opends_tests/coherency_large.bin' '{{ config.test.mount_point }}/opends_tests/write_scratch.bin' '{{ config.test.mount_point }}/opends_tests/p2p_write.bin'
 
   - name: homi_stack_down
     run: |
