@@ -3,7 +3,7 @@
 """Sweep the filperf-driven bench suites on the target.
 
 Every suite sweeps its own knob grid into cijoe-output-bench/<suite>/.
-gds has no knobs: its sweep is the singleton, one run of the whole suite.
+cufile has no knobs: its sweep is the singleton, one run of the whole suite.
 opends runs the config list in scripts/bench/sweep.toml. --full-sweep runs the
 whole io_threads x queue_depth x assume_aligned_only x idle_spin cross product
 instead, --sweep-file swaps in another list, and the knob flags sweep the
@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _helpers import fail, ok, run_cijoe
 
 SUITES = {
-    "gds": "tasks/bench_gds.yaml",
+    "cufile": "tasks/bench_cufile.yaml",
     "opends": "tasks/bench_opends.yaml",
 }
 
@@ -43,7 +43,7 @@ DATASETS = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 
 MODES = ["sync", "stream", "async"]
 # fil implements --async for the opends backend only
-BACKEND_MODES = {"gds": ["sync", "stream"]}
+BACKEND_MODES = {"cufile": ["sync", "stream"]}
 
 DEFAULT_CONFIGS = Path(__file__).resolve().parent / "sweep.toml"
 
@@ -57,7 +57,7 @@ GRID_AXES = {"io_threads": [1, 2, 4, 8],
 KNOB_DEFAULTS = {"io_threads": 2, "queue_depth": 8,
                  "assume_aligned_only": 0, "idle_spin": 200}
 
-GDS_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
+CUFILE_SETUP = ["cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
 
 def _bench_steps(backend, modes, datasets):
     avail = BACKEND_MODES.get(backend, MODES)
@@ -89,24 +89,24 @@ def _mode_list(s):
     return modes
 
 
-def _run_gds(args, modes, datasets):
-    """Singleton sweep: the gds suite has no knobs to grid over."""
-    bench = _bench_steps("gds", modes, datasets)
+def _run_cufile(args, modes, datasets):
+    """Singleton sweep: the cufile suite has no knobs to grid over."""
+    bench = _bench_steps("cufile", modes, datasets)
     if not bench:
-        print(f"\n=== gds suite: nothing to run for --mode "
+        print(f"\n=== cufile suite: nothing to run for --mode "
               f"{','.join(modes)} ===", flush=True)
         return
     if set(modes) == set(MODES) and set(datasets) == set(DATASETS):
         steps = []
     else:
-        steps = GDS_SETUP + bench
-    print(f"\n=== gds suite: "
+        steps = CUFILE_SETUP + bench
+    print(f"\n=== cufile suite: "
           f"{', '.join(steps) if steps else 'all steps'} ===", flush=True)
     try:
-        run_cijoe(SUITES["gds"], *steps, out=f"{args.out}/gds")
+        run_cijoe(SUITES["cufile"], *steps, out=f"{args.out}/cufile")
     finally:
-        run_cijoe(SUITES["gds"], "cpu_governor_restore",
-                  out=f"{args.out}/gds/_teardown")
+        run_cijoe(SUITES["cufile"], "cpu_governor_restore",
+                  out=f"{args.out}/cufile/_teardown")
 
 
 def _axis_configs(axes, modes, datasets):
@@ -229,7 +229,7 @@ parser.add_argument("--suite", action="append", choices=list(SUITES),
 parser.add_argument("--mode", type=_mode_list,
                     metavar="LIST",
                     help="Comma-separated modes to keep: sync, stream, "
-                         "async. Default all three; the gds suite has no "
+                         "async. Default all three; the cufile suite has no "
                          "async leg and skips it.")
 parser.add_argument("--dataset", action="append", choices=DATASETS,
                     help="Narrow every config to this dataset, dropping the "
@@ -319,8 +319,8 @@ else:
 
 failed = []
 for name in args.suite or list(SUITES):
-    if name == "gds":
-        _run_gds(args, modes, datasets)
+    if name == "cufile":
+        _run_cufile(args, modes, datasets)
     else:
         failed += _run_opends(args, modes, datasets, configs)
 
