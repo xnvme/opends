@@ -22,7 +22,7 @@ fi
 # A HOMI stack leaked by an aborted prior run still owns this controller via
 # upcie; tear it down first, or it contends with the kernel nvme driver bound
 # below and wedges the device.
-"$HERE/stop_homi_stack.sh"
+"$HERE/clear_homi_stack.sh"
 
 DRIVER=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")" 2>/dev/null)
 if [ "$DRIVER" != "nvme" ]; then
