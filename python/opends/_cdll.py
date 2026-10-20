@@ -79,8 +79,15 @@ handle_register = _decl(
 )
 handle_deregister = _decl("opends_handle_deregister", None, [c_void_p])
 
-alloc = _decl("opends_alloc", c_void_p, [c_size_t])
 free = _decl("opends_free", None, [c_void_p])
+
+
+OPENDS_MEM_GPU = 0
+OPENDS_MEM_CPU = 1
+
+mem_alloc = _decl(
+    "opends_mem_alloc", DsError, [c_size_t, c_int, c_int, ctypes.POINTER(c_void_p)]
+)
 
 buf_register = _decl(
     "opends_buf_register", DsError, [c_void_p, c_size_t, c_int]

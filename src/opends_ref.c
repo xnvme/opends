@@ -112,10 +112,25 @@ opends_handle_deregister(opends_handle_t fh)
 
 #define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((a) - 1))
 
-void *
-opends_alloc(size_t size)
+opends_error_t
+opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind, int ordinal,
+                 void **out)
 {
-	return aligned_alloc(4096, ALIGN_UP(size, 4096));
+	void *buf;
+
+	if (!out || !size || !opends_mem_valid(mem_kind, ordinal)) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	if (ordinal != 0) {
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
+	}
+
+	buf = aligned_alloc(4096, ALIGN_UP(size, 4096));
+	if (!buf) {
+		return opends_err(OPENDS_INTERNAL_ERROR);
+	}
+	*out = buf;
+	return opends_ok();
 }
 
 void
@@ -177,13 +192,6 @@ host_copy(void *dst, const void *src, size_t bytes)
 	return 0;
 }
 
-static bool
-direct_aligned(const void *p, size_t size, off_t off)
-{
-	return (((uintptr_t)p | size | (uintptr_t)off) &
-	        (OPENDS_DIRECT_ALIGN - 1)) == 0;
-}
-
 static opends_error_t
 ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
                  off_t file_offset, off_t buf_offset,
@@ -196,7 +204,7 @@ ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
 
 	struct ref_handle *h = fh;
 	char *p = (char *)buf_base + buf_offset;
-	bool aligned = direct_aligned(p, size, file_offset);
+	bool aligned = opends_direct_aligned(p, size, file_offset);
 	ssize_t result;
 	if (is_write && aligned)
 		result = pwrite(h->fd, p, size, file_offset);
