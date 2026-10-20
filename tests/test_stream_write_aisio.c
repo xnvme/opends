@@ -9,6 +9,7 @@
 #include <cuda.h>
 
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -48,9 +49,16 @@ main(int argc, char **argv)
 	                           &a) < 0)
 		return 1;
 
+	/* The GPU engine takes only streams whose flags fix the shape at
+	 * submit, so the GPU test step registers the stream that way. */
+	const char *gpu = getenv("OPENDS_AISIO_GPU_INITIATED");
+	bool gpu_engine = gpu && gpu[0] && gpu[0] != '0';
+	unsigned stream_flags = gpu_engine ? OPENDS_STREAM_FIXED_SHAPE : 0;
+
 	CUstream stream;
 	if (cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING) != CUDA_SUCCESS ||
-	    opends_stream_register(stream, 0).err != OPENDS_SUCCESS) {
+	    opends_stream_register(stream, stream_flags).err !=
+	            OPENDS_SUCCESS) {
 		fprintf(stderr, "stream setup failed\n");
 		aisio_homi_teardown(&a);
 		unlink(path);

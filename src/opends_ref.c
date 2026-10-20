@@ -113,6 +113,18 @@ opends_handle_deregister(opends_handle_t fh)
 #define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((a) - 1))
 
 void *
+opends_result_alloc(size_t size)
+{
+	return malloc(size);
+}
+
+void
+opends_result_free(void *p)
+{
+	free(p);
+}
+
+void *
 opends_alloc(size_t size)
 {
 	return aligned_alloc(4096, ALIGN_UP(size, 4096));
@@ -273,7 +285,9 @@ opends_error_t
 opends_stream_register(opends_stream_t stream, unsigned flags)
 {
 	(void)stream;
-	(void)flags;
+	if (flags & ~OPENDS_STREAM_FLAGS_ALL) {
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
 	return opends_ok();
 }
 

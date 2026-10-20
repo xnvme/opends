@@ -76,6 +76,11 @@ struct stream_test_env {
 	void (*buf_release)(void *buf);
 	const char *mode_label;
 	bool sub_lba_unsupported;
+	/* Flags stream and extra_streams were registered with. */
+	unsigned stream_flags;
+	/* A stream registered without OPENDS_STREAM_FIXED_SHAPE for the
+	 * deferred evaluation test; NULL uses stream. */
+	CUstream deferred_stream;
 };
 
 static ssize_t
@@ -108,8 +113,9 @@ verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
 	                                        &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "  %s: opends_stream_read: %s\n", label,
-		        opends_op_status_error(err.err));
+		fprintf(stderr, "  %s: opends_stream_read: %s (dev_err=%d)\n",
+		        label, opends_op_status_error(err.err),
+		        (int)err.dev_err);
 		return 1;
 	}
 
@@ -658,6 +664,8 @@ stream_test_deferred_mutate(void *userdata)
 static int
 stream_test_deferred_eval(struct stream_test_env *env)
 {
+	CUstream stream =
+	        env->deferred_stream ? env->deferred_stream : env->stream;
 	size_t alloc = 2 * PAGE;
 	void *buf = env->buf_acquire(alloc);
 	if (!buf)
@@ -680,21 +688,21 @@ stream_test_deferred_eval(struct stream_test_env *env)
 	};
 
 	int rc = 1;
-	if (cuLaunchHostFunc(env->stream, stream_test_deferred_mutate, &mut) !=
+	if (cuLaunchHostFunc(stream, stream_test_deferred_mutate, &mut) !=
 	    CUDA_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: cuLaunchHostFunc failed\n");
 		goto out;
 	}
 
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
-	                                        &br, env->stream);
+	                                        &br, stream);
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr, "  deferred_eval: submit: %s\n",
 		        opends_op_status_error(err.err));
 		goto out;
 	}
 
-	if (cuStreamSynchronize(env->stream) != CUDA_SUCCESS)
+	if (cuStreamSynchronize(stream) != CUDA_SUCCESS)
 		goto out;
 
 	if (br != (ssize_t)PAGE) {
@@ -1036,6 +1044,77 @@ out:
 	return rc;
 }
 
+/*
+ * A stream registered with OPENDS_STREAM_PAGE_ALIGNED_INPUTS rejects a
+ * sub-LBA read with OPENDS_INVALID_VALUE through bytes_read, stays usable
+ * for aligned reads, and leaves the other streams alone.
+ */
+static int
+stream_test_aligned_stream(struct stream_test_env *env)
+{
+	struct stream_test_env aligned_env = *env;
+	CUstream stream;
+	void *buf;
+	size_t sz = 167;
+	off_t foff = 0;
+	off_t boff = 0;
+	ssize_t bytes_read = 0;
+	opends_error_t err;
+	int rc = 1;
+
+	if (cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING) != CUDA_SUCCESS) {
+		fprintf(stderr, "  aligned_stream: cuStreamCreate failed\n");
+		return 1;
+	}
+	err = opends_stream_register(
+	        stream, env->stream_flags | OPENDS_STREAM_PAGE_ALIGNED_INPUTS);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  aligned_stream: register: %s\n",
+		        opends_op_status_error(err.err));
+		cuStreamDestroy(stream);
+		return 1;
+	}
+	aligned_env.stream = stream;
+
+	buf = env->buf_acquire(PAGE);
+	if (!buf) {
+		goto out;
+	}
+	env->buf_zero(buf, PAGE);
+
+	err = opends_stream_read(env->fh, buf, &sz, &foff, &boff, &bytes_read,
+	                         stream);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  aligned_stream: submit: %s\n",
+		        opends_op_status_error(err.err));
+		goto out_buf;
+	}
+	if (stream_test_stream_sync_timeout(stream, 20.0, "aligned_stream") !=
+	    0) {
+		goto out_buf;
+	}
+	if (bytes_read != -(ssize_t)OPENDS_INVALID_VALUE) {
+		fprintf(stderr,
+		        "  aligned_stream: bytes_read = %zd, expected %zd\n",
+		        bytes_read, -(ssize_t)OPENDS_INVALID_VALUE);
+		goto out_buf;
+	}
+
+	rc = verify_stream_read(&aligned_env, buf, PAGE, PAGE, 0, 0,
+	                        "aligned_stream/aligned_after");
+	if (rc == 0) {
+		rc = verify_stream_read(env, buf, PAGE, PAGE, PAGE, 0,
+		                        "aligned_stream/other_stream");
+	}
+out_buf:
+	env->buf_release(buf);
+out:
+	/* The stream is deregistered but not destroyed: a backend may keep its
+	 * entry, and CUDA could hand the handle value to a later stream. */
+	opends_stream_deregister(stream);
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct stream_test_entry {
@@ -1063,6 +1142,7 @@ static const struct stream_test_entry stream_read_tests[] = {
 	{"concurrent_short_reads",  stream_test_concurrent_short_reads, true},
 	{"unaligned_rejected",      stream_test_unaligned_rejected, false, true},
 	{"unaligned_head_rejected", stream_test_unaligned_head_rejected},
+	{"aligned_stream",          stream_test_aligned_stream},
 	{"burst_single_stream",     stream_test_burst_single_stream},
 	{"multi_stream_burst",      stream_test_multi_stream_burst},
 };
