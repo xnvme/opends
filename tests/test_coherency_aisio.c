@@ -65,7 +65,7 @@ main(int argc, char **argv)
 	}
 
 	int failed = 0;
-	void *gpu = opends_alloc(size);
+	void *gpu = cuda_alloc_acquire(size);
 	unsigned char *got = malloc(size);
 	unsigned char *want = NULL;
 	if (posix_memalign((void **)&want, 4096, size) != 0)

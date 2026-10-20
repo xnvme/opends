@@ -38,6 +38,8 @@ struct ds_accel_ops {
 	/* Make this thread's accelerator work target the captured context
 	 * (CUDA: cuCtxSetCurrent; HIP: hipSetDevice). */
 	void (*ctx_set)(ds_accel_ctx_t ctx);
+	/* Ordinal of the accelerator a captured context belongs to. */
+	int (*ctx_device)(ds_accel_ctx_t ctx, int *ordinal);
 
 	/* Host pinned memory the accelerator can read by device pointer. */
 	int (*host_alloc_mapped)(size_t bytes, void **host,
