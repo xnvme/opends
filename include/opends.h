@@ -181,7 +181,10 @@ void opends_free(void *buf);
  * Register an externally allocated buffer for use in I/O calls. The
  * caller retains ownership of the allocation, so deregister before
  * freeing. flags is forwarded to the backend (e.g. cuFileBufRegister
- * flags for gds).
+ * flags for cufile). The aisio backend maps the allocation-granularity
+ * chunks the range falls in (2 MiB on NVIDIA GPUs), so any base and
+ * size work and buffers in one chunk share its mapping; I/O outside
+ * the registered range is refused with OPENDS_MEMORY_NOT_REGISTERED.
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
                                    int flags);
