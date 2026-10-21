@@ -218,3 +218,14 @@ out:
 	free(bounce);
 	return ret;
 }
+
+opends_error_t
+opends_batch_check(unsigned nr, const opends_io_params_t *iocbp)
+{
+	for (unsigned i = 0; i < nr; i++)
+		if (iocbp[i].mode != OPENDS_BATCH ||
+		    (iocbp[i].opcode != OPENDS_READ &&
+		     iocbp[i].opcode != OPENDS_WRITE))
+			return opends_err(OPENDS_INVALID_VALUE);
+	return opends_ok();
+}

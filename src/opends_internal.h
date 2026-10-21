@@ -21,6 +21,10 @@ ssize_t opends_direct_pwrite(int fd, int oflags, const void *src, size_t size,
  * Returns the bytes read (short at EOF) or a negative errno. */
 ssize_t opends_direct_pread(int fd, void *dst, size_t size, off_t off);
 
+/* OPENDS_INVALID_VALUE unless every operation in iocbp[0..nr) has mode
+ * OPENDS_BATCH and opcode OPENDS_READ or OPENDS_WRITE. */
+opends_error_t opends_batch_check(unsigned nr, const opends_io_params_t *iocbp);
+
 static inline opends_error_t
 opends_ok(void)
 {

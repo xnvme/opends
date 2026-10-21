@@ -357,6 +357,9 @@ opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
 {
 	if (!batch_idp || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
+	opends_error_t check = opends_batch_check(nr, iocbp);
+	if (check.err != OPENDS_SUCCESS)
+		return check;
 
 	CUfileIOParams_t *cu_params = calloc(nr, sizeof(*cu_params));
 	if (!cu_params)

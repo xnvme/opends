@@ -10,7 +10,9 @@
  * in-memory pattern by cookie. A second get_status must deliver
  * nothing: completions are reported exactly once. A second round on the
  * same handle then checks that delivered slots are free again, and that
- * a submit past the free slots returns OPENDS_BATCH_FULL.
+ * a submit past the free slots returns OPENDS_BATCH_FULL. Before all of
+ * that, on handles of their own, a submit with one undefined opcode or
+ * mode must fail with OPENDS_INVALID_VALUE and take no slot.
  *
  * Expects the 16-page pattern file written by test_sync_read_prep.
  */
@@ -133,6 +135,106 @@ batch_reap_round(struct batch_read_env *env, opends_batch_handle_t batch,
 	return failures;
 }
 
+/* Reap the two valid reads that follow a rejected submit in
+ * batch_invalid_round: cases 0 and 1, each delivered once. */
+static int
+batch_reap_pair(struct batch_read_env *env, opends_batch_handle_t batch,
+                void **bufs, char *host, const char *what)
+{
+	opends_io_events_t events[2];
+	bool seen[2] = {false, false};
+	unsigned nr = 2;
+	int failures = 0;
+
+	opends_error_t err =
+	        opends_batch_get_status(batch, 2, &nr, events, NULL);
+	if (err.err != OPENDS_SUCCESS || nr != 2) {
+		fprintf(stderr,
+		        "  batch_get_status(after %s): %s, %u events, "
+		        "expected 2\n",
+		        what, opends_op_status_error(err.err), nr);
+		return 1;
+	}
+
+	for (unsigned k = 0; k < nr; k++) {
+		size_t ci = (size_t)(uintptr_t)events[k].cookie;
+
+		if (batch_verify_event(env, &events[k], bufs, host) < 0)
+			failures++;
+		else if (ci < 2)
+			seen[ci] = true;
+	}
+	if (!seen[0] || !seen[1]) {
+		fprintf(stderr,
+		        "  batch_get_status(after %s): cases 0 and 1 not "
+		        "both delivered\n",
+		        what);
+		failures++;
+	}
+	return failures;
+}
+
+/* Submit a valid read next to an operation whose opcode or mode is not
+ * one opends.h defines, on a handle with two slots. The submit must fail
+ * with OPENDS_INVALID_VALUE and start neither: both slots stay free, so
+ * the two valid reads fit right after and complete once each. Without
+ * the check the bad operation may run as a write. It points past EOF,
+ * where every backend writes through the file descriptor, and the
+ * read-only handle refuses it, so a regression cannot change the pattern
+ * file. */
+static int
+batch_invalid_round(struct batch_read_env *env,
+                    const opends_io_params_t *params, void **bufs, char *host)
+{
+	static const struct {
+		int mode;
+		int opcode;
+		const char *what;
+	} bad[] = {
+	        {OPENDS_BATCH, 7, "opcode 7"},
+	        {OPENDS_BATCH, -1, "opcode -1"},
+	        {0, OPENDS_READ, "mode 0"},
+	};
+	int failures = 0;
+
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		opends_io_params_t p[2] = {params[0], params[1]};
+		opends_batch_handle_t batch;
+
+		opends_error_t err = opends_batch_setup(&batch, 2);
+		if (err.err != OPENDS_SUCCESS) {
+			fprintf(stderr, "  batch_setup(%s): %s\n", bad[i].what,
+			        opends_op_status_error(err.err));
+			failures++;
+			continue;
+		}
+
+		p[1].mode = (opends_batch_mode_t)bad[i].mode;
+		p[1].opcode = (opends_opcode_t)bad[i].opcode;
+		p[1].u.batch.file_offset = FILE_SIZE;
+		err = opends_batch_submit(batch, 2, p, 0);
+		if (err.err != OPENDS_INVALID_VALUE) {
+			fprintf(stderr, "  batch_submit(%s): %s, expected %s\n",
+			        bad[i].what, opends_op_status_error(err.err),
+			        opends_op_status_error(OPENDS_INVALID_VALUE));
+			failures++;
+		}
+
+		p[1] = params[1];
+		err = opends_batch_submit(batch, 2, p, 0);
+		if (err.err != OPENDS_SUCCESS) {
+			fprintf(stderr, "  batch_submit(after %s): %s\n",
+			        bad[i].what, opends_op_status_error(err.err));
+			failures++;
+		} else {
+			failures += batch_reap_pair(env, batch, bufs, host,
+			                            bad[i].what);
+		}
+		opends_batch_destroy(batch);
+	}
+	return failures;
+}
+
 static int
 run_batch_read_test(struct batch_read_env *env)
 {
@@ -172,6 +274,10 @@ run_batch_read_test(struct batch_read_env *env)
 		failures = 1;
 		goto out;
 	}
+
+	failures += batch_invalid_round(env, params, bufs, host);
+	if (failures)
+		goto out;
 
 	err = opends_batch_submit(batch, BATCH_READ_NCASES, params, 0);
 	if (err.err != OPENDS_SUCCESS) {

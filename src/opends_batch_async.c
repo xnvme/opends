@@ -83,6 +83,9 @@ opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
 
 	if (!b || !iocbp)
 		return opends_err(OPENDS_INVALID_VALUE);
+	opends_error_t check = opends_batch_check(nr, iocbp);
+	if (check.err != OPENDS_SUCCESS)
+		return check;
 	if (nr > b->capacity - b->inflight)
 		return opends_err(OPENDS_BATCH_FULL);
 

@@ -271,7 +271,9 @@ opends_error_t opends_stream_deregister(opends_stream_t stream);
  * the most operations the handle holds in flight at once. A slot is
  * free again after get_status has delivered its completion.
  * opends_batch_submit returns OPENDS_BATCH_FULL when it submits more
- * operations than there are free slots.
+ * operations than there are free slots. It returns OPENDS_INVALID_VALUE
+ * and starts none of the operations when one has a mode other than
+ * OPENDS_BATCH or an opcode other than OPENDS_READ and OPENDS_WRITE.
  *
  * opends_batch_cancel cannot stop I/O the backend already accepted:
  * it awaits outstanding operations and reports their undelivered
