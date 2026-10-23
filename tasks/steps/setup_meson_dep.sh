@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 set -e
 
-if [ $# -ne 4 ]; then
-	echo "usage: setup_meson_dep.sh REMOTE REF SRC_DIR BUILD_DIR" >&2
-	echo "  REF is a branch, tag, or commit hash" >&2
+if [ $# -lt 4 ] || [ $# -gt 5 ]; then
+	echo "usage: setup_meson_dep.sh REMOTE REF SRC_DIR BUILD_DIR [INSTALL_PREFIX]" >&2
+	echo "  REF is a branch, tag, or commit hash; INSTALL_PREFIX defaults to /usr/local" >&2
 	exit 1
 fi
 
@@ -12,6 +12,8 @@ REMOTE=$1
 REF=$2
 SRC_DIR=$3
 BUILD_DIR=$4
+HERE=$(dirname "$0")
+. "$HERE/install_prefix.sh" "${5:-}"
 
 if [ ! -d "$SRC_DIR/.git" ]; then
 	rm -rf "$SRC_DIR"
@@ -39,7 +41,9 @@ fi
 git submodule update --init --recursive
 
 rm -rf "$BUILD_DIR"
-meson setup "$BUILD_DIR" "$SRC_DIR"
+meson setup "${MESON_ARGS[@]}" "$BUILD_DIR" "$SRC_DIR"
 meson compile -C "$BUILD_DIR"
 meson install -C "$BUILD_DIR"
-ldconfig
+if [ "$INSTALL_PREFIX" = /usr/local ]; then
+	ldconfig
+fi

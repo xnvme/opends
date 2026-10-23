@@ -6,8 +6,8 @@ Each test step is identified by (backend, test). When no flag is
 passed every test runs. Use --backend to restrict to one or more
 backends (ref, gds, aisio) and --test to restrict to one or more
 test names. Required setup steps (bind/mount/prep, plus unbind for
-aisio) and the rebind teardown are added automatically based on the
-selection.
+aisio), the cleanup of the suite's files and the rebind teardown are
+added automatically based on the selection.
 """
 
 import argparse
@@ -45,7 +45,7 @@ def _steps_for(backends, tests):
     needs_prep = any(t != "smoke" for _, t in selected)
     needs_stack = any(b == "aisio" for b, _ in selected)
 
-    steps = ["bind_nvme", "mount", "prepare_test_dir"]
+    steps = ["check_stack_down", "bind_nvme", "mount", "prepare_test_dir"]
     if needs_prep:
         steps.append("test_sync_read_prep")
     if any(t == "coherency" for _, t in selected):
@@ -61,6 +61,8 @@ def _steps_for(backends, tests):
         for b, t in selected:
             if b == "aisio":
                 steps.append(f"test_{t}_{b}")
+    steps.append("clean_test_dir")
+    if needs_stack:
         steps.append("homi_stack_down")
     return steps
 

@@ -248,7 +248,8 @@ Integration tests run on a remote target via
   hugepages allocated (prerequisites for the GPU↔NVMe dma-buf P2P path that
   aisio uses).
 - An XFS filesystem on the test namespace; the mount step does not format. Test
-  artifacts live under `<mount_point>/opends_tests/`.
+  artifacts live under `<mount_point>/opends_tests/` and are removed at the end
+  of a run.
 
 The [aisio](https://github.com/xnvme/aisio) project ships cijoe tasks that take
 a fresh Ubuntu 24.04 install through every step above (custom kernel, NVIDIA
@@ -307,13 +308,11 @@ With `scripts/setup_deps.py`, `scripts/build.py` and
 ```sh
 python scripts/bench/run.py          # --full-sweep measures the whole grid
 python scripts/bench/report.py
-python scripts/bench/artifacts.py --push
 ```
 
 `run.py` measures the configs in `scripts/bench/sweep.toml`. `report.py` turns
-the records into `report.md`, `sweep.csv` and `report.png`, and `artifacts.py`
-publishes those to the orphan `artifacts` branch. Each script's `--help` covers
-its own flags.
+the records into `report.md`, `sweep.csv` and `report.png`. Each script's
+`--help` covers its own flags.
 
 The perf table above is edited by hand from these reports. Every `filperf` run
 drops page caches first, so the numbers are cold-cache, N=1.

@@ -70,13 +70,15 @@ done
 for _ in $(seq 1 120); do
 	[ -S "$SOCK" ] && break
 	if ! pgrep -x homid > /dev/null; then
-		echo "error: homid exited during startup (see: journalctl -t homi)" >&2
+		echo "error: homid exited during startup" >&2
+		journalctl -t homi -t homid -n 20 --no-pager -o short-iso >&2
 		exit 1
 	fi
 	sleep 0.5
 done
 if [ ! -S "$SOCK" ]; then
 	echo "error: homid socket did not come up" >&2
+	journalctl -t homi -t homid -n 20 --no-pager -o short-iso >&2
 	exit 1
 fi
 

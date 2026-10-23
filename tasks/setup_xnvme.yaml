@@ -28,4 +28,4 @@ doc: |
 steps:
   - name: setup_xnvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xnvme.repository.remote }}' '{{ config.xnvme.repository.ref }}' '{{ config.deps.src_root }}/xnvme' '{{ config.deps.build_root }}/xnvme-build'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xnvme.repository.remote }}' '{{ config.xnvme.repository.ref }}' '{{ config.deps.src_root }}/xnvme' '{{ config.deps.build_root }}/xnvme-build' '{{ config.deps.install_prefix | default("/usr/local") }}'

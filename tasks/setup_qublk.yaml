@@ -28,4 +28,4 @@ doc: |
 steps:
   - name: setup_qublk
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.qublk.repository.remote }}' '{{ config.qublk.repository.ref }}' '{{ config.deps.src_root }}/qublk' '{{ config.deps.build_root }}/qublk-build'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.qublk.repository.remote }}' '{{ config.qublk.repository.ref }}' '{{ config.deps.src_root }}/qublk' '{{ config.deps.build_root }}/qublk-build' '{{ config.deps.install_prefix | default("/usr/local") }}'

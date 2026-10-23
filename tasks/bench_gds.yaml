@@ -24,6 +24,10 @@ doc: |
   parsing by scripts/bench/report.py.
 
 steps:
+  - name: check_stack_down
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
+
   - name: cpu_governor
     run: |
       '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'

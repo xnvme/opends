@@ -55,16 +55,18 @@ def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
         return
     meta = json.loads(meta_path.read_text())
     opends = args.backend == "opends"
-    env_keys = ("hostname", "kernel", "cuda", "nvme_bdf", "nvme_model",
-                "gpu_model", "hugepages_2m")
+    env_keys = ("hostname", "kernel", "kernel_cmdline", "cpu_model",
+                "cpu_governor", "cuda", "nvme_bdf", "nvme_model", "nvme_link",
+                "fs", "gpu_model", "hugepages_2m")
     record = {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": f"{meta['timestamp']}-{meta['hostname']}",
         "run_timestamp": meta["timestamp"],
         "opends": {"sha": meta.get("commit_sha", ""),
                    "dirty": meta.get("dirty", False)},
         "deps": meta.get("deps", {}),
         "env": {k: meta.get(k) for k in env_keys},
+        "ci": meta.get("ci"),
         "config": {
             "backend": args.backend,
             "dataset": args.data_dir,
@@ -138,10 +140,11 @@ def main(args, cijoe):
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
           flush=True)
     bdf = cijoe.getconf("test.nvme_bdf")
+    repo = cijoe.getconf("test.repo_path")
+    prefix = cijoe.getconf("deps.install_prefix", "/usr/local")
     env = ""
     mnt = args.mnt
     if args.backend == "gds":
-        repo = cijoe.getconf("test.repo_path")
         err, state = cijoe.run(f"'{repo}/tasks/steps/resolve_nvme_ns.sh' '{bdf}'")
         if err:
             return err
@@ -189,7 +192,8 @@ def main(args, cijoe):
     if MODE_FLAG[args.mode]:
         filperf.append(MODE_FLAG[args.mode])
 
-    cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
+    cmd = (f". '{repo}/tasks/steps/install_prefix.sh' '{prefix}'\n"
+           "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf))
     err, state = cijoe.run(cmd)
     # assume_aligned_only rejects any read with a sub-LBA tail, so a dataset
     # whose files are not LBA-multiples fails by construction. Record it and
