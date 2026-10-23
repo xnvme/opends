@@ -5,10 +5,10 @@ The artifact is the verbatim filperf output (CSV plus `--summary`
 block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 
 Each bench run runs filperf under `prlimit --nofile`. nofile is
-required for opends and harmless elsewhere. gds runs get a cold-cache `drop_caches`; opends
+required for opends and harmless elsewhere. cufile runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
-kernel page cache is irrelevant and the device's BDF/socket are
-passed through OPENDS_HOMI_DEV/OPENDS_HOMI_SOCKET.
+kernel page cache is irrelevant and the index shm name is passed
+through OPENDS_XAL_SHM.
 """
 
 import json
@@ -55,16 +55,18 @@ def _append_record(cijoe, args, log_name, text, io_threads, queue_depth,
         return
     meta = json.loads(meta_path.read_text())
     opends = args.backend == "opends"
-    env_keys = ("hostname", "kernel", "cuda", "nvme_bdf", "nvme_model",
-                "gpu_model", "hugepages_2m")
+    env_keys = ("hostname", "kernel", "kernel_cmdline", "cpu_model",
+                "cpu_governor", "cuda", "nvme_bdf", "nvme_model", "nvme_link",
+                "fs", "gpu_model", "hugepages_2m")
     record = {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": f"{meta['timestamp']}-{meta['hostname']}",
         "run_timestamp": meta["timestamp"],
         "opends": {"sha": meta.get("commit_sha", ""),
                    "dirty": meta.get("dirty", False)},
         "deps": meta.get("deps", {}),
         "env": {k: meta.get(k) for k in env_keys},
+        "ci": meta.get("ci"),
         "config": {
             "backend": args.backend,
             "dataset": args.data_dir,
@@ -138,31 +140,29 @@ def main(args, cijoe):
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
           flush=True)
     bdf = cijoe.getconf("test.nvme_bdf")
+    repo = cijoe.getconf("test.repo_path")
+    prefix = cijoe.getconf("deps.install_prefix", "/usr/local")
     env = ""
     mnt = args.mnt
-    if args.backend == "gds":
-        repo = cijoe.getconf("test.repo_path")
+    if args.backend == "cufile":
         err, state = cijoe.run(f"'{repo}/tasks/steps/resolve_nvme_ns.sh' '{bdf}'")
         if err:
             return err
         target = state.output().strip().splitlines()[-1]
     elif args.backend == "opends":
-        # HOMI owns the controller; qublk re-exports it as a ublk block device
-        # that fil walks with xal for enumeration, exactly like gds walks the
-        # kernel-bound NVMe. The aisio backend attaches a qpair from HOMI per
-        # file (via OPENDS_HOMI_DEV/SOCKET), so the device read path bypasses
+        # homi owns the controller; qublk re-exports it as a ublk block device
+        # that fil walks with xal for enumeration, exactly like cufile walks the
+        # kernel-bound NVMe. The aisio backend joins the homi group and reads
+        # extents from the xal-server index, so the device read path bypasses
         # the ublk target.
         err, state = cijoe.run("cat /run/homi/ublk_dev")
         if err:
             return err
         target = state.output().strip().splitlines()[-1]
-        sock = "/run/homi/homi.sock"
+        shm = "/xal_dev0"
         if not mnt:
             mnt = cijoe.getconf("test.mount_point")
-        env = (
-            f"OPENDS_HOMI_DEV='{bdf}' OPENDS_HOMI_SOCKET='{sock}' "
-            f"OPENDS_HOMI_MNT='{mnt}' "
-        )
+        env = f"OPENDS_XAL_SHM='{shm}' OPENDS_HOMI_MNT='{mnt}' "
         if io_threads:
             env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
         if queue_depth:
@@ -189,7 +189,8 @@ def main(args, cijoe):
     if MODE_FLAG[args.mode]:
         filperf.append(MODE_FLAG[args.mode])
 
-    cmd = "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf)
+    cmd = (f". '{repo}/tasks/steps/install_prefix.sh' '{prefix}'\n"
+           "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf))
     err, state = cijoe.run(cmd)
     # assume_aligned_only rejects any read with a sub-LBA tail, so a dataset
     # whose files are not LBA-multiples fails by construction. Record it and

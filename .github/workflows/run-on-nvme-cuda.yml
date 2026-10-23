@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: BSD-3-Clause
+name: run on nvme-cuda
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: The calling job's name; part of the lease identity
+        required: true
+        type: string
+      run:
+        description: The command that runs the suite or the benchmark
+        required: true
+        type: string
+      teardown:
+        description: The cijoe task and steps that bring the stack down
+        required: true
+        type: string
+      report:
+        description: Render the bench report before uploading
+        type: boolean
+        default: false
+      timeout-minutes:
+        description: Run budget plus a day of waiting for the machine
+        required: true
+        type: number
+
+jobs:
+  nvme-cuda:
+    runs-on: nvme-cuda
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      LG_USERNAME: gh-run-${{ github.run_id }}-${{ inputs.name }}
+      OPENDS_CI_JOB: ${{ inputs.name }}
+      OPENDS_CI_PR: ${{ github.event.pull_request.number }}
+      OPENDS_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      OPENDS_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install target configs
+        run: cp "${OPENDS_CI_CONFIG_DIR:-$HOME/.config/opends-ci}"/{test,transport}.toml configs/
+      - name: Wait for the machine
+        id: lease
+        run: |
+          labgrid-client show | grep '^  acquired:'
+          eval "$(labgrid-client reserve --wait --shell name="$LG_PLACE")"
+          echo "LG_TOKEN=$LG_TOKEN" >> "$GITHUB_ENV"
+          labgrid-client -p + acquire
+      - run: scripts/rsync.py
+      - name: Check the stack is down
+        id: check
+        run: cijoe -m -s -o cijoe-output-check -c configs/transport.toml -c configs/deps.toml -c configs/test.toml tasks/test.yaml check_stack_down
+      - run: scripts/setup_deps.py
+      - run: scripts/build.py
+      - run: ${{ inputs.run }}
+      - name: Render the report
+        if: inputs.report
+        run: scripts/bench/report.py
+      - name: Bundle the results
+        if: inputs.report
+        run: scripts/bench/results.py
+      - name: Upload the results
+        if: inputs.report
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ inputs.name }}
+          path: results
+      - name: Tear the stack down
+        if: always() && steps.check.outcome == 'success'
+        run: cijoe -m -s -o cijoe-output-teardown -c configs/transport.toml -c configs/deps.toml -c configs/test.toml ${{ inputs.teardown }}
+      - name: Upload the cijoe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.name }}
+          path: cijoe-output-*
+      - name: Give the machine back
+        if: always() && steps.lease.outcome == 'success'
+        run: |
+          labgrid-client release-from "$(hostname)/$LG_USERNAME"
+          labgrid-client cancel-reservation || true

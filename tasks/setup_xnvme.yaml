@@ -9,10 +9,16 @@ doc: |
   OpenDS. The remote and ref are read from [xnvme.repository] in
   deps.toml, which pins the build dependency for the whole project.
 
-  The aisio backend's opends_buf_register path requires the
-  fmma/xnvme#feat/upcie-cuda-mem-map fork which adds .mem_map and
-  .mem_unmap hooks to the upcie-cuda backend; deps.toml pins a commit
-  on that branch.
+  The pin is the head of xnvme/xnvme#770, the tip of the homi series:
+  controllers served over a socket (#764), GPU clients and I/O the GPU
+  issues itself (#770). The rest of the series has merged. It is a
+  frozen sha because the open part is rebased under review. Move the
+  pin to upstream main once it lands.
+
+  The homi and qublk tools install with the library; the test and
+  bench tasks start them from PATH. Building qublk needs liburing
+  (>= 2.3) and the ublk kernel headers (kernel >= 6.0); running it
+  needs the ublk_drv module loaded.
 
   Assumes the OpenDS tree has been synced to the target (setup_deps.py
   does this).
@@ -28,4 +34,4 @@ doc: |
 steps:
   - name: setup_xnvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xnvme.repository.remote }}' '{{ config.xnvme.repository.ref }}' '{{ config.deps.src_root }}/xnvme' '{{ config.deps.build_root }}/xnvme-build'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.xnvme.repository.remote }}' '{{ config.xnvme.repository.ref }}' '{{ config.deps.src_root }}/xnvme' '{{ config.deps.build_root }}/xnvme-build' '{{ config.deps.install_prefix | default("/usr/local") }}'
