@@ -63,7 +63,7 @@
 #define NVME_MAX_NLB 65536
 #define NVME_PRP_OFFSET_ALIGN 4
 #define BOUNCE_SLOTS 2
-#define DEFAULT_QUEUE_DEPTH 8
+#define DEFAULT_QUEUE_DEPTH 32
 #define MAX_QUEUE_DEPTH 4096
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
