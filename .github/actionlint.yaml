@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
+self-hosted-runner:
+  labels:
+    - nvme-cuda

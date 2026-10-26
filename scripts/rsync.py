@@ -28,7 +28,7 @@ dest = test["test"]["repo_path"]
 target = f"{ssh['username']}@{ssh['hostname']}"
 
 rc = subprocess.run(
-    ["rsync", "-az", "--delete",
+    ["rsync", "-az", "--delete", "--mkpath",
      "--filter=:- .gitignore",
      "--exclude=.git/",
      "--exclude=cijoe-output*/",
@@ -40,15 +40,19 @@ if rc != 0:
     fail(f"rsync (rc={rc})")
     sys.exit(rc)
 
-desc = subprocess.check_output(
-    ["git", "describe", "--always", "--dirty", "--abbrev=7"],
-    cwd=root, text=True,
+sha = subprocess.check_output(
+    ["git", "rev-parse", "HEAD"], cwd=root, text=True,
 ).strip()
+dirty = bool(subprocess.check_output(
+    ["git", "status", "--porcelain", "--untracked-files=no"],
+    cwd=root, text=True,
+).strip())
+stamp = sha + ("-dirty" if dirty else "")
 rc = subprocess.run(
-    ["ssh", target, f"printf '%s\\n' '{desc}' > '{dest}/.commit_stamp'"],
+    ["ssh", target, f"printf '%s\\n' '{stamp}' > '{dest}/.commit_stamp'"],
 ).returncode
 if rc != 0:
     fail(f"commit stamp (rc={rc})")
     sys.exit(rc)
 
-ok(f"synced to {target}:{dest} @ {desc}")
+ok(f"synced to {target}:{dest} @ {sha[:7]}{'-dirty' if dirty else ''}")

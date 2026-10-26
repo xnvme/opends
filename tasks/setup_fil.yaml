@@ -29,4 +29,4 @@ doc: |
 steps:
   - name: setup_fil
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' '{{ config.fil.repository.remote }}' '{{ config.fil.repository.ref }}' '{{ config.deps.src_root }}/fil' '{{ config.deps.build_root }}/fil-build'
+      '{{ config.test.repo_path }}/tasks/steps/setup_meson_dep.sh' {{ '--reset' if config.deps.reset else '' }} '{{ config.fil.repository.remote }}' '{{ config.fil.repository.ref }}' '{{ config.deps.src_root }}/fil' '{{ config.deps.build_root }}/fil-build' '{{ config.deps.install_prefix | default("/usr/local") }}'

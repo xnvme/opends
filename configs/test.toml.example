@@ -7,3 +7,7 @@ mount_point = "CHANGE_ME" # "/mnt/datasets"
 [deps]
 src_root = "/root/src"
 build_root = "/root/build"
+install_prefix = "/usr/local"
+# true resets each dependency checkout to its pin and removes leftovers; false
+# refuses a checkout with local changes. Set true where the checkouts are CI's.
+reset = false

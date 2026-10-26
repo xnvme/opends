@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -40,3 +41,46 @@ jobs:
       - name: Run python binding tests
         run: python3 -m pytest tests
         working-directory: python
+
+  test-full:
+    if: success() && contains(github.event.pull_request.labels.*.name, 'test-full')
+    needs: [lint, test-ref]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: test-full
+      run: scripts/run_tests.py
+      teardown: tasks/test.yaml clean_test_dir homi_stack_down
+      timeout-minutes: 1560
+
+  bench:
+    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench')"
+    needs: [lint, test-ref, test-full]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: bench
+      run: scripts/bench/run.py --suite opends --io-threads 2
+      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      report: true
+      timeout-minutes: 1500
+
+  bench-sweep:
+    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-sweep')"
+    needs: [lint, test-ref, test-full]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: bench-sweep
+      run: scripts/bench/run.py --suite opends
+      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      report: true
+      timeout-minutes: 2160
+
+  bench-full-sweep:
+    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-full-sweep')"
+    needs: [lint, test-ref, test-full]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: bench-full-sweep
+      run: scripts/bench/run.py --suite opends --full-sweep
+      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      report: true
+      timeout-minutes: 4320
