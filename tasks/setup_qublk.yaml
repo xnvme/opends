@@ -3,7 +3,7 @@ doc: |
   Setup qublk
   ===========
 
-  Clones or updates the qublk repository on the target, checks out the
+  Clones the qublk repository on the target afresh, checks out the
   configured ref (branch, tag, or commit), then builds and installs the
   qublk ublk server. The remote and ref are read from [qublk.repository]
   in deps.toml.

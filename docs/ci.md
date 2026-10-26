@@ -97,11 +97,12 @@ One-time setup on the hardware machine, as an unprivileged user:
    runner user and authorize it for `root@localhost`.
 4. Copy `configs/{test,transport}.toml.example` to
    `~/.config/opends-ci/{test,transport}.toml` and fill them in. Set
-   `localhost` as the hostname. Use a `repo_path`, a `build_dir` and a
-   `deps.install_prefix` dedicated to CI, so a run installs nothing into
-   /usr/local; homi's install still writes its unit to /usr/lib/systemd
-   and its default config to /etc/homi. The workflow copies the files
-   into the checkout.
+   `localhost` as the hostname. Use a `repo_path`, a `build_dir`, a
+   `deps.src_root`, a `deps.build_root` and a `deps.install_prefix`
+   dedicated to CI: a job deletes and clones the dependency checkouts
+   afresh, and installs nothing into /usr/local; homi's install still
+   writes its unit to /usr/lib/systemd and its default config to
+   /etc/homi. The workflow copies the files into the checkout.
 5. Install cijoe and the python dependencies of `scripts/` for the
    runner user. `config.sh` records the PATH of the shell that runs it
    in the runner's `.path`, so configure from a shell that finds them.

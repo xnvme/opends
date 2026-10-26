@@ -3,7 +3,7 @@ doc: |
   Setup fil
   =========
 
-  Clones or updates the fil repository on the target, checks out the
+  Clones the fil repository on the target afresh, checks out the
   configured ref (branch, tag, or commit), then builds and installs
   fil so the filperf binary is available for benchmarking. The remote
   and ref are read from [fil.repository] in deps.toml.

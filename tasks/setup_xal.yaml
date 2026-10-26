@@ -3,7 +3,7 @@ doc: |
   Setup xal
   =========
 
-  Clones or updates the xal repository on the target, checks out the
+  Clones the xal repository on the target afresh, checks out the
   configured ref (branch, tag, or commit), then builds and installs xal
   so its pkg-config file becomes discoverable by fil. The remote and
   ref are read from [xal.repository] in deps.toml.

@@ -5,6 +5,7 @@ nvme_bdf = "CHANGE_ME" # "0000:01:00.0"
 mount_point = "CHANGE_ME" # "/mnt/datasets"
 
 [deps]
+# The setup tasks delete and clone each dependency checkout under src_root.
 src_root = "/root/src"
 build_root = "/root/build"
 install_prefix = "/usr/local"

@@ -3,7 +3,7 @@ doc: |
   Setup HOMI
   ==========
 
-  Clones or updates the HOMI repository on the target, checks out the
+  Clones the HOMI repository on the target afresh, checks out the
   configured ref (branch, tag, or commit), then builds and installs the
   homid daemon and libhomic client. The remote and ref are read from
   [homi.repository] in deps.toml.

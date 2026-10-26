@@ -3,7 +3,7 @@ doc: |
   Setup xNVMe
   ============
 
-  Clones or updates the xNVMe repository on the target, checks out the
+  Clones the xNVMe repository on the target afresh, checks out the
   configured ref (branch, tag, or commit), then builds and installs
   xNVMe so its pkg-config file becomes discoverable when building
   OpenDS. The remote and ref are read from [xnvme.repository] in
