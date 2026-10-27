@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opends"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python bindings for the OpenDS accelerator direct storage API"
 requires-python = ">=3.8"
 readme = "README.md"
