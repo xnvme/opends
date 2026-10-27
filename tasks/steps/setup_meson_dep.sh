@@ -19,6 +19,11 @@ HERE=$(dirname "$0")
 rm -rf "$SRC_DIR" "$BUILD_DIR"
 git clone "$REMOTE" "$SRC_DIR"
 cd "$SRC_DIR"
+# A pinned commit may sit on no branch (e.g. a PR head); fetch it by hash.
+if ! git rev-parse --verify --quiet "origin/$REF^{commit}" > /dev/null &&
+   ! git rev-parse --verify --quiet "$REF^{commit}" > /dev/null; then
+	git fetch origin "$REF"
+fi
 # origin/REF for a branch; a tag or a commit hash is REF itself.
 if git rev-parse --verify --quiet "origin/$REF^{commit}" > /dev/null; then
 	git checkout --detach "origin/$REF"
