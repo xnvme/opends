@@ -4,6 +4,7 @@
 #include "test_aisio_homi.h"
 #include "test_stream_read.h"
 #include "test_cuda_common.h"
+#include "test_host_common.h"
 
 #include <cuda.h>
 
@@ -102,6 +103,29 @@ main(int argc, char **argv)
 	for (int i = 0; i < extra_count; i++)
 		env_register.extra_streams[i] = extras[i];
 	failed += run_stream_read_tests(&env_register);
+
+	if (!failed) {
+		int host = host_mem_available();
+		if (host < 0) {
+			failed++;
+		} else if (host) {
+			struct stream_test_env env_host = {
+			        .fh = a.fh,
+			        .stream = main_stream,
+			        .extra_stream_count = extra_count,
+			        .buf_to_host = host_buf_to_host,
+			        .buf_zero = host_buf_zero,
+			        .check_buffer = host_check_buffer,
+			        .buf_acquire = host_alloc_acquire,
+			        .buf_release = host_alloc_release,
+			        .mode_label = "host",
+			        .sub_lba_unsupported = no_sub_lba,
+			};
+			for (int i = 0; i < extra_count; i++)
+				env_host.extra_streams[i] = extras[i];
+			failed += run_stream_read_tests(&env_host);
+		}
+	}
 
 	if (failed) {
 		/* A timed-out test leaves streams stuck on

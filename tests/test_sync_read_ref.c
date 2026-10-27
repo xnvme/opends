@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 
 #include "test_sync_read.h"
+#include "test_mem.h"
 
 #include <fcntl.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@ ref_buf_zero(void *buf, size_t n)
 static void *
 ref_alloc_acquire(size_t size)
 {
-	return opends_alloc(size);
+	return test_dev_alloc(size);
 }
 
 static void

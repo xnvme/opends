@@ -21,10 +21,10 @@
  *     not supported.
  *
  *   - Buffer registration (cuFileBufRegister/Deregister) is offered
- *     alongside backend-owned allocation via opends_alloc/opends_free.
+ *     alongside backend-owned allocation via opends_mem_alloc/opends_free.
  *     Callers may allocate their own memory (e.g. cudaMalloc) and call
  *     opends_buf_register, or let the backend handle both with
- *     opends_alloc.
+ *     opends_mem_alloc.
  *
  * Error reporting:
  *
@@ -171,17 +171,37 @@ void opends_handle_deregister(opends_handle_t fh);
 
 /*
  * Buffer allocation. Buffers used for I/O must be either allocated
- * through opends_alloc or registered with opends_buf_register so the
- * backend can set up DMA mappings.
+ * through opends_mem_alloc, or registered with opends_buf_register so
+ * the backend can set up DMA mappings.
+ *
+ * A buffer lives in one memory: a GPU's, or a CPU socket's that the
+ * storage device can DMA to. The memory is selected at opends_mem_alloc
+ * by mem_kind, and ordinal is the index within it: the GPU for GPU memory,
+ * the NUMA node for CPU memory. The buffer is released with opends_free.
+ *
+ * Errors:
+ * - OPENDS_INVALID_VALUE: mem_kind or ordinal is malformed.
+ * - OPENDS_MEMORY_TYPE_INVALID: the backend does not serve the memory
+ *   kind, or the driver was not opened with it (aisio: see
+ *   OPENDS_AISIO_WORKERS_PER_DRIVE).
+ * - OPENDS_DEVICE_NOT_FOUND: the GPU or NUMA node is not one the driver
+ *   serves.
+ * - OPENDS_INTERNAL_ERROR: that memory is exhausted.
  */
-void *opends_alloc(size_t size);
+enum opends_mem_kind {
+	OPENDS_MEM_GPU = 0, /* a GPU's memory */
+	OPENDS_MEM_CPU = 1, /* a CPU socket's memory, DMA-able by storage */
+};
+
+opends_error_t opends_mem_alloc(size_t size, enum opends_mem_kind mem_kind,
+                                int ordinal, void **out);
 void opends_free(void *buf);
 
 /*
  * Register an externally allocated buffer for use in I/O calls. The
  * caller retains ownership of the allocation, so deregister before
  * freeing. flags is forwarded to the backend (e.g. cuFileBufRegister
- * flags for gds).
+ * flags for cufile).
  */
 opends_error_t opends_buf_register(const void *buf_base, size_t size,
                                    int flags);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // End-to-end demo: read a file on a HOMI/qublk-backed mounted XFS into GPU
-// memory via the OpenDS aisio backend, and verify against the kernel-read bytes.
+// memory via the OpenDS aisio backend, and verify against the kernel-read
+// bytes.
 #define _GNU_SOURCE
 #include <opends.h>
 
@@ -23,7 +24,8 @@ main(int argc, char **argv)
 	opends_error_t e;
 
 	/* The upcie-cuda backend needs a current CUDA context for device init
-	 * (identify) and buffer allocation; create one up front (driver API). */
+	 * (identify) and buffer allocation; create one up front (driver API).
+	 */
 	cuInit(0);
 	CUdevice cudev;
 	CUcontext cuctx;
@@ -57,13 +59,16 @@ main(int argc, char **argv)
 	opends_handle_t h;
 	e = opends_handle_register(&h, fd);
 	if (e.err) {
-		fprintf(stderr, "FAILED: opends_handle_register err=%d\n", e.err);
+		fprintf(stderr, "FAILED: opends_handle_register err=%d\n",
+		        e.err);
 		return 1;
 	}
 
-	void *gbuf = opends_alloc(size);
-	if (!gbuf) {
-		fprintf(stderr, "FAILED: opends_alloc(%zu)\n", size);
+	void *gbuf = NULL;
+	e = opends_mem_alloc(size, OPENDS_MEM_GPU, 0, &gbuf);
+	if (e.err) {
+		fprintf(stderr, "FAILED: opends_mem_alloc(%zu) err=%d\n", size,
+		        e.err);
 		return 1;
 	}
 
@@ -72,7 +77,9 @@ main(int argc, char **argv)
 		fprintf(stderr, "FAILED: opends_sync_read rc=%zd\n", n);
 		return 1;
 	}
-	printf("aisio: read %zd bytes into GPU memory via a HOMI-served qpair\n", n);
+	printf("aisio: read %zd bytes into GPU memory over a HOMI-shared "
+	       "controller\n",
+	       n);
 
 	void *got = malloc((size_t)n);
 	void *ref = malloc((size_t)n);
@@ -80,7 +87,8 @@ main(int argc, char **argv)
 		fprintf(stderr, "FAILED: malloc\n");
 		return 1;
 	}
-	CUresult cr = cuMemcpyDtoH(got, (CUdeviceptr)(uintptr_t)gbuf, (size_t)n);
+	CUresult cr =
+	        cuMemcpyDtoH(got, (CUdeviceptr)(uintptr_t)gbuf, (size_t)n);
 	if (cr != CUDA_SUCCESS) {
 		fprintf(stderr, "FAILED: cuMemcpyDtoH cr=%d\n", cr);
 		return 1;
@@ -91,7 +99,8 @@ main(int argc, char **argv)
 	}
 
 	if (memcmp(got, ref, (size_t)n) == 0) {
-		printf("SUCCESS: GPU bytes == file bytes (%zd) — OpenDS aisio read a file "
+		printf("SUCCESS: GPU bytes == file bytes (%zd) — OpenDS aisio "
+		       "read a file "
 		       "on the HOMI/qublk-mounted XFS into GPU memory\n",
 		       n);
 	} else {
