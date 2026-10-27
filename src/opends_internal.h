@@ -4,10 +4,19 @@
 
 #include "opends.h"
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
 
 /* Practical upper bound of the logical block size O_DIRECT aligns to. */
 #define OPENDS_DIRECT_ALIGN 4096
+
+static inline bool
+opends_direct_aligned(const void *p, size_t size, off_t off)
+{
+	return (((uintptr_t)p | size | (uintptr_t)off) &
+	        (OPENDS_DIRECT_ALIGN - 1)) == 0;
+}
 
 /* O_DIRECT pwrite of size bytes at off, from src through copy(). The edge
  * blocks are completed by read-modify-write when off or size is unaligned.
@@ -41,6 +50,14 @@ static inline opends_error_t
 opends_err_dev(opends_op_error_t e, opends_result_t dev_err)
 {
 	return (opends_error_t){e, dev_err};
+}
+
+/* True when mem_kind is a known memory and ordinal a possible index in it. */
+static inline bool
+opends_mem_valid(enum opends_mem_kind mem_kind, int ordinal)
+{
+	return (mem_kind == OPENDS_MEM_GPU || mem_kind == OPENDS_MEM_CPU) &&
+	       ordinal >= 0;
 }
 
 #endif /* OPENDS_INTERNAL_H_ */

@@ -64,9 +64,15 @@ main(int argc, char **argv)
 	        .fd = a.fd,
 	        .stream = stream,
 	        .submit_write = stream_submit_write,
+	        .buf_acquire = cuda_alloc_acquire,
+	        .buf_release = cuda_alloc_release,
+	        .buf_from_host = cuda_buf_from_host,
+	        .buf_to_host = cuda_buf_to_host,
+	        .buf_zero = cuda_buf_zero,
 	        .mode_label = "stream",
 	};
 	int failed = run_write_homi_tests(&env);
+	failed += run_write_homi_tests_host(path, &env);
 
 	opends_stream_deregister(stream);
 	cuStreamDestroy(stream);

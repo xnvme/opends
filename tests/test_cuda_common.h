@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * Shared CUDA helpers for GPU-backed backend tests (gds, aisio).
+ * Shared CUDA helpers for GPU-backed backend tests (cufile, aisio).
  *
  * Provides the test_env callbacks that copy device buffers to host,
- * zero device buffers, and assert that opends_alloc returned CUDA
+ * zero device buffers, and assert that opends_mem_alloc returned CUDA
  * device memory.
  */
 
@@ -11,6 +11,7 @@
 #define OPENDS_TEST_CUDA_COMMON_H
 
 #include "opends.h"
+#include "test_mem.h"
 
 #include <cuda_runtime.h>
 
@@ -50,7 +51,7 @@ cuda_check_buffer(const void *buf)
 	}
 	if (attrs.type != cudaMemoryTypeDevice) {
 		fprintf(stderr,
-		        "opends_alloc returned non-device memory "
+		        "opends_mem_alloc returned non-device memory "
 		        "(type=%d)\n",
 		        (int)attrs.type);
 		abort();
@@ -69,7 +70,7 @@ cuda_check_buffer(const void *buf)
 static inline void *
 cuda_alloc_acquire(size_t size)
 {
-	return opends_alloc(size);
+	return test_dev_alloc(size);
 }
 
 static inline void

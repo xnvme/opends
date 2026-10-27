@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "test_mt_read.h"
+#include "test_mem.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -14,7 +15,7 @@ ref_buf_to_host(void *dst, const void *src, size_t n)
 static void *
 ref_buf_acquire(size_t size)
 {
-	return opends_alloc(size);
+	return test_dev_alloc(size);
 }
 
 static void

@@ -36,6 +36,24 @@ cuda_ctx_set(ds_accel_ctx_t ctx)
 }
 
 static int
+cuda_ctx_device(ds_accel_ctx_t ctx, int *ordinal)
+{
+	CUcontext prev;
+	CUdevice dev;
+	CUresult rc;
+
+	rc = cuCtxPushCurrent((CUcontext)ctx);
+	if (rc != CUDA_SUCCESS)
+		return (int)rc;
+	rc = cuCtxGetDevice(&dev);
+	cuCtxPopCurrent(&prev);
+	if (rc != CUDA_SUCCESS)
+		return (int)rc;
+	*ordinal = (int)dev;
+	return 0;
+}
+
+static int
 cuda_host_alloc_mapped(size_t bytes, void **host, ds_accel_devptr_t *dptr)
 {
 	CUresult rc = cuMemHostAlloc(host, bytes,
@@ -92,6 +110,7 @@ static const struct ds_accel_ops cuda_ops = {
         .xnvme_be = "upcie-cuda",
         .ctx_get = cuda_ctx_get,
         .ctx_set = cuda_ctx_set,
+        .ctx_device = cuda_ctx_device,
         .host_alloc_mapped = cuda_host_alloc_mapped,
         .host_free = cuda_host_free,
         .copy = cuda_copy,
