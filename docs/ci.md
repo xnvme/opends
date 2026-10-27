@@ -52,9 +52,8 @@ hosted ones.
 
 The job checks out the PR on the machine. It drives the hardware
 through cijoe over a local SSH loop (`root@localhost`). This is the
-same rsync/build/run_tests flow as manual development (see "Remote
-testing with CIJOE" in the README). The full log lands on the
-workflow run.
+same rsync/build/run_tests flow as manual development (the quick
+start in the README). The full log lands on the workflow run.
 
 The bench labels work the same way, except that a bench job waits for
 `test-full` and is skipped when that one fails; without the `test-full`
@@ -85,8 +84,8 @@ One-time GitHub configuration on the repository the workflow runs in:
 
 One-time setup on the hardware machine, as an unprivileged user:
 
-1. Bring the machine to the target requirements ("Remote testing with
-   CIJOE" in the README). Populate the reference datasets for bench.
+1. Provision the machine as the quick start in the README says.
+   Populate the reference datasets for bench.
 2. Install the GitHub Actions runner under `~/actions-runner`.
    Register it with an extra `nvme-cuda` label. Install it as a
    service (`sudo ./svc.sh install <user> && sudo ./svc.sh start`) and
