@@ -54,7 +54,7 @@ GRID_AXES = {"io_threads": [1, 2, 4, 8],
 
 # The aisio defaults. A knob the flags leave out sweeps this one value, so
 # --io-threads 2 is one leg, not a plane.
-KNOB_DEFAULTS = {"io_threads": 2, "queue_depth": 8,
+KNOB_DEFAULTS = {"io_threads": 2, "queue_depth": 32,
                  "assume_aligned_only": 0, "idle_spin": 200}
 
 GDS_SETUP = ["check_stack_down", "cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
@@ -273,7 +273,7 @@ grid.add_argument("--io-threads", type=_int_list, metavar="LIST",
                        "the dir its knobs name, as a list entry would.")
 grid.add_argument("--queue-depth", type=_int_list, metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_QUEUE_DEPTH values. "
-                       "Default 8; over 512 may exceed the device MQES and "
+                       "Default 32; over 512 may exceed the device MQES and "
                        "fail.")
 grid.add_argument("--assume-aligned-only", type=_int_list, metavar="LIST",
                   help="Comma-separated OPENDS_AISIO_ASSUME_ALIGNED_ONLY "

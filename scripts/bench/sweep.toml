@@ -63,7 +63,7 @@ io_threads = 2
 queue_depth = 8
 assume_aligned_only = 0
 idle_spin = 200
-datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
 mode = ["sync", "stream", "async"]
 
 [[config]]
@@ -72,6 +72,14 @@ queue_depth = 16
 assume_aligned_only = 0
 idle_spin = 200
 datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 32
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 mode = ["sync", "stream", "async"]
 
 [[config]]

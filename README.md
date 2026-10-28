@@ -32,7 +32,7 @@ the open.
 - `OPENDS_HOMI_SOCKET`: HOMI daemon socket. Default `/run/homi/homi.sock`.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
   Driver open attaches one NVMe qpair per worker.
-- `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
+- `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 32.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
   worker i takes set bit i mod popcount, so a mask with fewer bits than
