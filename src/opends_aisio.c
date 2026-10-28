@@ -3,9 +3,12 @@
  * opends_aisio.c - aisio backend for raw-NVMe direct storage.
  *
  * Reads go straight from an NVMe device into GPU memory via xNVMe's upcie-cuda
- * backend (PCIe P2P DMA). HOMI owns the device: it hands out the I/O qpair the
- * reads are driven over. A registered file's extents come from
- * homic_get_extents.
+ * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi serve") is the
+ * primary of an xNVMe multi-process group and holds the controller up. This
+ * driver joins the same group as a secondary and allocates its own I/O
+ * queues. A registered file's extents come from a xal index that xal-server
+ * publishes over POSIX shared memory. The index is in byte units, and this
+ * driver converts to LBAs with its own device geometry.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -28,26 +31,32 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
-#include <homic.h>
+#include <libxal.h>
 #include <libxnvme.h>
 
-#define ENV_HOMI_SOCKET "OPENDS_HOMI_SOCKET"
+#define ENV_XAL_SHM "OPENDS_XAL_SHM"
 #define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
 #define ENV_ASSUME_ALIGNED_ONLY "OPENDS_AISIO_ASSUME_ALIGNED_ONLY"
 #define ENV_IDLE_SPIN "OPENDS_AISIO_IDLE_SPIN"
-#define DEFAULT_HOMI_SOCKET "/run/homi/homi.sock"
+#define ENV_HOMI_ID "OPENDS_AISIO_HOMI_ID"
+#define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
+#define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
+#define DEFAULT_XAL_SHM "/xal_dev0"
+#define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
 #define MAX_BUF_ENTRIES 8192
@@ -57,6 +66,13 @@
 #define BOUNCE_SLOTS 2
 #define DEFAULT_QUEUE_DEPTH 8
 #define MAX_QUEUE_DEPTH 4096
+
+/* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
+ * per I/O thread. 256 MiB covers the largest configuration the knobs allow
+ * (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise default to
+ * 1 GiB, which does not multiply across the processes sharing the hugepages. */
+#define DEFAULT_HOST_HEAP_MB 256
+#define MAX_HEAP_MB (64 * 1024)
 #define DEFAULT_IDLE_SPIN_US 200
 #define MAX_IDLE_SPIN_US 1000000
 #define MAX_STREAMS 8192
@@ -77,6 +93,16 @@ struct buf_entry {
 	size_t length;
 	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
 };
+
+/* One xnvme_mem_map of whole allocation chunks. A registered buffer references
+ * every run its chunks fall in; the run is unmapped when the last one leaves.
+ */
+struct map_run {
+	uintptr_t base;
+	size_t nbytes;
+	int refs;
+};
+#define MAX_MAP_RUNS MAX_BUF_ENTRIES
 
 struct registered_file {
 	int fd;
@@ -157,15 +183,21 @@ struct io_worker {
 };
 
 struct driver {
-	char dev_uri[64];      ///< NVMe device (BDF) the HOMI daemon owns
-	char *attach_descpath; ///< HOMI-served qpair attach descriptor file
+	char dev_uri[64]; ///< NVMe device (BDF) the HOMI server owns
+	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
+	struct xal *xal;  ///< Attach to the index xal-server publishes
+	size_t host_heap_nbytes;
+	size_t device_heap_nbytes;
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
-	struct buf_entry bufs[MAX_BUF_ENTRIES];
+	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
 	int buf_count;
+	size_t chunk_nbytes; ///< Allocation granularity registrations round to
+	struct map_run runs[MAX_MAP_RUNS]; ///< Disjoint, sorted by base
+	int run_count;
 
 	bool workers_ready;
 	ds_accel_ctx_t accel_ctx;
@@ -217,6 +249,241 @@ cpu_relax(void)
 #elif defined(__aarch64__)
 	__asm__ __volatile__("yield");
 #endif
+}
+
+/* ------------------------------------------------------------------ */
+/*  Buffer table and chunk mappings                                   */
+/* ------------------------------------------------------------------ */
+
+static int
+buf_lower_bound(const struct driver *d, const void *base)
+{
+	int lo = 0, hi = d->buf_count;
+
+	while (lo < hi) {
+		int mid = lo + (hi - lo) / 2;
+		if ((uintptr_t)d->bufs[mid].base < (uintptr_t)base)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return lo;
+}
+
+static struct buf_entry *
+buf_find(struct driver *d, const void *base)
+{
+	int i = buf_lower_bound(d, base);
+
+	if (i < d->buf_count && d->bufs[i].base == base)
+		return &d->bufs[i];
+	return NULL;
+}
+
+/* The entry whose range holds [ptr, ptr + size), or NULL. */
+static const struct buf_entry *
+buf_covering(const struct driver *d, const void *ptr, size_t size)
+{
+	int i = buf_lower_bound(d, ptr);
+	const struct buf_entry *e;
+	uintptr_t off;
+
+	if (i < d->buf_count && d->bufs[i].base == ptr)
+		e = &d->bufs[i];
+	else if (i > 0)
+		e = &d->bufs[i - 1];
+	else
+		return NULL;
+	off = (uintptr_t)ptr - (uintptr_t)e->base;
+	if (off > e->length || size > e->length - off)
+		return NULL;
+	return e;
+}
+
+static struct buf_entry *
+buf_insert(struct driver *d, const void *base, size_t length, bool owned)
+{
+	int i = buf_lower_bound(d, base);
+	struct buf_entry *e;
+
+	if (d->buf_count >= MAX_BUF_ENTRIES)
+		return NULL;
+	memmove(&d->bufs[i + 1], &d->bufs[i],
+	        (size_t)(d->buf_count - i) * sizeof(*e));
+	d->buf_count++;
+	e = &d->bufs[i];
+	e->base = base;
+	e->length = length;
+	e->owned = owned;
+	return e;
+}
+
+static void
+buf_remove(struct driver *d, struct buf_entry *e)
+{
+	int i = (int)(e - d->bufs);
+
+	memmove(&d->bufs[i], &d->bufs[i + 1],
+	        (size_t)(d->buf_count - i - 1) * sizeof(*e));
+	d->buf_count--;
+}
+
+/* A chunk mapping also covers neighbouring allocations, which xnvme then
+ * cannot refuse, so every op is checked against the table it came from. */
+static bool
+op_range_registered(struct driver *d, const void *ptr, size_t size)
+{
+	bool ok;
+
+	pthread_mutex_lock(&d->reg_lock);
+	ok = buf_covering(d, ptr, size) != NULL;
+	pthread_mutex_unlock(&d->reg_lock);
+	return ok;
+}
+
+/* First run ending after addr; runs are disjoint and sorted. */
+static int
+run_lower_bound(const struct driver *d, uintptr_t addr)
+{
+	int lo = 0, hi = d->run_count;
+
+	while (lo < hi) {
+		int mid = lo + (hi - lo) / 2;
+		if (d->runs[mid].base + d->runs[mid].nbytes <= addr)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return lo;
+}
+
+static void
+run_insert(struct driver *d, uintptr_t base, size_t nbytes)
+{
+	int i = run_lower_bound(d, base);
+
+	memmove(&d->runs[i + 1], &d->runs[i],
+	        (size_t)(d->run_count - i) * sizeof(d->runs[0]));
+	d->run_count++;
+	d->runs[i].base = base;
+	d->runs[i].nbytes = nbytes;
+	d->runs[i].refs = 1;
+}
+
+static void
+run_remove(struct driver *d, int i)
+{
+	memmove(&d->runs[i], &d->runs[i + 1],
+	        (size_t)(d->run_count - i - 1) * sizeof(d->runs[0]));
+	d->run_count--;
+}
+
+struct run_gap {
+	uintptr_t base;
+	size_t nbytes;
+};
+
+/* Map the chunks of [lo, hi) no run covers yet, one xnvme_mem_map per gap, and
+ * reference every run the range touches. A gap never overlaps a live mapping,
+ * which is what xnvme's registry refuses. Returns 0 or a negative errno. */
+static int
+runs_acquire(struct driver *d, uintptr_t lo, uintptr_t hi)
+{
+	int err = 0;
+	int first = run_lower_bound(d, lo);
+	int ngaps = 0, mapped;
+	uintptr_t cursor = lo;
+	struct run_gap *gaps;
+
+	for (int i = first; i < d->run_count && d->runs[i].base < hi; i++) {
+		if (cursor < d->runs[i].base)
+			ngaps++;
+		cursor = d->runs[i].base + d->runs[i].nbytes;
+	}
+	if (cursor < hi)
+		ngaps++;
+	if (d->run_count + ngaps > MAX_MAP_RUNS)
+		return -ENOSPC;
+
+	gaps = calloc(ngaps ? (size_t)ngaps : 1, sizeof(*gaps));
+	if (!gaps)
+		return -ENOMEM;
+	ngaps = 0;
+	cursor = lo;
+	for (int i = first; i < d->run_count && d->runs[i].base < hi; i++) {
+		if (cursor < d->runs[i].base) {
+			gaps[ngaps].base = cursor;
+			gaps[ngaps].nbytes = d->runs[i].base - cursor;
+			ngaps++;
+		}
+		cursor = d->runs[i].base + d->runs[i].nbytes;
+	}
+	if (cursor < hi) {
+		gaps[ngaps].base = cursor;
+		gaps[ngaps].nbytes = hi - cursor;
+		ngaps++;
+	}
+
+	for (mapped = 0; mapped < ngaps; mapped++) {
+		err = xnvme_mem_map(d->xdev, (void *)gaps[mapped].base,
+		                    gaps[mapped].nbytes);
+		if (err < 0) {
+			fprintf(stderr,
+			        "opends_buf_register: xnvme_mem_map(%p, %zu) "
+			        "rc=%d\n",
+			        (void *)gaps[mapped].base, gaps[mapped].nbytes,
+			        err);
+			break;
+		}
+	}
+	if (err < 0) {
+		for (int i = 0; i < mapped; i++)
+			xnvme_mem_unmap(d->xdev, (void *)gaps[i].base);
+		free(gaps);
+		return err;
+	}
+
+	for (int i = first; i < d->run_count && d->runs[i].base < hi; i++)
+		d->runs[i].refs++;
+	for (int i = 0; i < ngaps; i++)
+		run_insert(d, gaps[i].base, gaps[i].nbytes);
+	free(gaps);
+	return 0;
+}
+
+/* Drop the references [lo, hi) holds; unmap the runs nobody references. */
+static void
+runs_release(struct driver *d, uintptr_t lo, uintptr_t hi)
+{
+	int i = run_lower_bound(d, lo);
+
+	while (i < d->run_count && d->runs[i].base < hi) {
+		if (--d->runs[i].refs > 0) {
+			i++;
+			continue;
+		}
+		xnvme_mem_unmap(d->xdev, (void *)d->runs[i].base);
+		run_remove(d, i);
+	}
+}
+
+static void
+runs_clear(struct driver *d)
+{
+	for (int i = 0; i < d->run_count; i++)
+		xnvme_mem_unmap(d->xdev, (void *)d->runs[i].base);
+	d->run_count = 0;
+}
+
+/* The chunk span a buffer falls in. */
+static void
+buf_chunks(const struct driver *d, const void *base, size_t size, uintptr_t *lo,
+           uintptr_t *hi)
+{
+	uintptr_t mask = d->chunk_nbytes - 1;
+
+	*lo = (uintptr_t)base & ~mask;
+	*hi = ((uintptr_t)base + size + mask) & ~mask;
 }
 
 static void *
@@ -297,80 +564,149 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 #define ESTALE_RETRIES 6000
 #define ESTALE_BACKOFF_US 50000
 
-static int
-resolve_extents(int fd, struct ds_extent **out, uint32_t *out_n)
+/* True while the seqlock snapshot taken at `seq` is still valid: the server
+ * is not rewriting the shared pools, they did not move since `seq` was read,
+ * and the filesystem is not dirty (changed but not yet re-indexed). */
+static bool
+snapshot_held(struct xal *xal, int seq)
 {
-	struct homic_extent *hx = NULL;
-	uint32_t n = 0;
-	int rc = -ESTALE;
+	int cur;
+	bool dirty;
 
-	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = homic_get_extents(fd, &hx, &n);
-		if (rc != -ESTALE)
-			break;
-		usleep(ESTALE_BACKOFF_US);
-	}
+	atomic_thread_fence(memory_order_acquire);
+	cur = xal_get_seq_lock(xal);
+	dirty = xal_is_dirty(xal);
+	return !(seq & 1) && cur == seq && !dirty;
+}
+
+/* Copy the extents for `path` out of the shared index. The server rewrites
+ * the shared pools in place, concurrent with this read, so validate the
+ * snapshot before trusting anything read from them. -ESTALE means retry. */
+static int
+extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
+                 uint32_t *out_n)
+{
+	struct xal *xal = d->xal;
+	struct xal_extents *xe = NULL;
+	struct ds_extent *ex = NULL;
+	uint32_t n = 0, base;
+	bool held;
+	int seq, rc;
+
+	seq = xal_get_seq_lock(xal);
+	held = snapshot_held(xal, seq);
+	if (!held)
+		return -ESTALE;
+
+	rc = xal_get_extents(xal, path, &xe);
 	if (rc < 0)
-		return rc;
+		goto out;
 
-	struct ds_extent *ex = calloc(n ? n : 1, sizeof(*ex));
-	if (!ex) {
-		free(hx);
+	/* xe points into the shared inode pool, so count/extent_idx may be
+	 * torn. Capture them, then validate before using them as allocation
+	 * size and pool indices. */
+	n = xe->count;
+	base = xe->extent_idx;
+	held = snapshot_held(xal, seq);
+	if (!held)
+		return -ESTALE;
+
+	ex = calloc(n ? n : 1, sizeof(*ex));
+	if (!ex)
 		return -ENOMEM;
-	}
-	for (uint32_t i = 0; i < n; i++) {
-		ex[i].file_offset = hx[i].file_offset;
-		ex[i].slba = hx[i].slba;
-		ex[i].length = hx[i].length;
-	}
-	free(hx);
 
+	for (uint32_t i = 0; i < n; i++) {
+		struct xal_extent *e = xal_extent_at(xal, base + i);
+		struct xal_extent_converted b = {0};
+
+		rc = xal_extent_in_bytes(xal, e, &b);
+		if (rc < 0)
+			goto out;
+		/* xal-server never opens the device, so its index carries no
+		 * LBA size; convert with our own geometry. */
+		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
+			rc = -EIO;
+			goto out;
+		}
+		ex[i].file_offset = b.start_offset;
+		ex[i].slba = b.start_block >> d->lba_shift;
+		ex[i].length = b.size;
+	}
+
+out:
+	/* A torn read during a rewrite can surface as a spurious error, and a
+	 * clean result may hold torn extents; only trust either if the
+	 * snapshot held. */
+	held = snapshot_held(xal, seq);
+	if (!held) {
+		free(ex);
+		return -ESTALE;
+	}
+	if (rc < 0) {
+		free(ex);
+		return rc;
+	}
 	*out = ex;
 	*out_n = n;
 	return 0;
 }
 
-static ssize_t
-pwrite_op(struct driver *d, struct registered_file *h, const void *src,
-          size_t size, off_t file_offset)
+static int
+resolve_extents(struct driver *d, int fd, struct ds_extent **out,
+                uint32_t *out_n)
 {
-	int err;
-	ssize_t ret = opends_direct_pwrite(h->fd, h->oflags, src, size,
-	                                   file_offset, ds_accel->copy);
-	if (ret <= 0)
-		return ret;
+	char fdpath[64], path[PATH_MAX];
+	ssize_t plen;
+	int rc;
 
-	err = homic_mark_dirty(d->dev_uri);
-	if (err < 0)
-		return err;
-	return ret;
+	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
+	plen = readlink(fdpath, path, sizeof(path) - 1);
+	if (plen < 0)
+		return -errno;
+	path[plen] = '\0';
+
+	/* A write marks the index dirty (dispatch_write), and the server's
+	 * watcher re-indexes on filesystem events. Retry until a clean
+	 * snapshot resolves. */
+	rc = -ESTALE;
+	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
+		rc = extents_snapshot(d, path, out, out_n);
+		if (rc != -ESTALE)
+			break;
+		usleep(ESTALE_BACKOFF_US);
+	}
+	return rc;
+}
+
+static ssize_t
+pwrite_op(struct registered_file *h, const void *src, size_t size,
+          off_t file_offset)
+{
+	return opends_direct_pwrite(h->fd, h->oflags, src, size, file_offset,
+	                            ds_accel->copy);
 }
 
 static int
 open_device(struct driver *d)
 {
-	int nqpairs = 1 + d->n_io_threads;
-	int rc = homic_attach_qpair(d->dev_uri, nqpairs, &d->attach_descpath);
-	if (rc < 0) {
-		fprintf(stderr,
-		        "aisio open_device: homic_attach_qpair(%s) rc=%d\n",
-		        d->dev_uri, rc);
-		if (rc == -ENOMEM || rc == -EINVAL)
-			fprintf(stderr,
-			        "aisio: HOMI refused %d qpairs "
-			        "(1 producer + %d IO threads); lower %s\n",
-			        nqpairs, d->n_io_threads, ENV_IO_THREADS);
-		return rc;
-	}
-
-	setenv("XNVME_UPCIE_ATTACH", d->attach_descpath, 1);
+	/* Joins the group the HOMI server is primary of. Whoever opens first
+	 * wins the role election, so a homi_id the server does not serve would
+	 * silently make this process the controller owner; both sides use
+	 * homi_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = xnvme_opts_default();
 	opts.be = ds_accel->xnvme_be;
+	opts.homi_id = d->homi_id;
+	opts.host_heap_size = d->host_heap_nbytes;
+	opts.device_heap_size = d->device_heap_nbytes;
 
 	d->xdev = xnvme_dev_open(d->dev_uri, &opts);
-	unsetenv("XNVME_UPCIE_ATTACH");
-	if (!d->xdev)
+	if (!d->xdev) {
+		fprintf(stderr,
+		        "aisio open_device: xnvme_dev_open(%s, be=%s, "
+		        "homi_id=%u) failed\n",
+		        d->dev_uri, opts.be, d->homi_id);
 		return -EIO;
+	}
 
 	const struct xnvme_geo *geo = xnvme_dev_get_geo(d->xdev);
 	d->nsid = xnvme_dev_get_nsid(d->xdev);
@@ -608,6 +944,10 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		req_start = (uint64_t)op->u.async.file_offset;
 		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	}
+	if (!op_range_registered(w->drv, dst_base, size)) {
+		op->err = OPENDS_MEMORY_NOT_REGISTERED;
+		return;
+	}
 	if (size > UINT64_MAX - req_start) {
 		op->err = OPENDS_INVALID_VALUE;
 		return;
@@ -616,7 +956,7 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 	struct ds_extent *extents;
 	uint32_t extent_count;
-	int frc = resolve_extents(op->h->fd, &extents, &extent_count);
+	int frc = resolve_extents(d, op->h->fd, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
@@ -762,11 +1102,18 @@ dispatch_write(struct io_worker *w, struct file_op *op)
 		file_offset = op->u.async.file_offset;
 	}
 
-	ssize_t n = pwrite_op(d, op->h, src, size, file_offset);
-	if (n < 0)
-		n = (n == -(ssize_t)EINVAL)
-		            ? -(ssize_t)OPENDS_INVALID_VALUE
-		            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	ssize_t n;
+	if (!op_range_registered(d, src, size)) {
+		n = -(ssize_t)OPENDS_MEMORY_NOT_REGISTERED;
+	} else {
+		n = pwrite_op(op->h, src, size, file_offset);
+		if (n >= 0)
+			xal_mark_dirty(d->xal);
+		if (n < 0)
+			n = (n == -(ssize_t)EINVAL)
+			            ? -(ssize_t)OPENDS_INVALID_VALUE
+			            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	}
 
 	if (op->mode == FILE_OP_STREAM) {
 		*op->u.stream.bytes_read_p = n;
@@ -915,6 +1262,11 @@ workers_setup(struct driver *d)
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
+	rc = ds_accel->alloc_granularity(&d->chunk_nbytes);
+	if (rc != 0)
+		return rc;
+	if (!d->chunk_nbytes || (d->chunk_nbytes & (d->chunk_nbytes - 1)))
+		return -1;
 
 	/* Mapped so the device-side gate can address the word; the host
 	 * callback path uses the host view only. */
@@ -1088,6 +1440,21 @@ read_env_config(struct driver *d)
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	d->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
 
+	if (env_int(ENV_HOMI_ID, DEFAULT_HOMI_ID, 0, INT_MAX, &n) < 0)
+		return -EINVAL;
+	d->homi_id = (uint32_t)n;
+
+	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
+	            &n) < 0)
+		return -EINVAL;
+	d->host_heap_nbytes = (size_t)n << 20;
+
+	/* 0 leaves the device heap at the xNVMe default; GPU memory is not the
+	 * scarce resource the host hugepages are. */
+	if (env_int(ENV_DEVICE_HEAP_MB, 0, 0, MAX_HEAP_MB, &n) < 0)
+		return -EINVAL;
+	d->device_heap_nbytes = (size_t)n << 20;
+
 	/* The tail mode picks the async gate mechanism, and the vendor ops it
 	 * drives are required only for that mode (see ds_accel.h). A partial
 	 * port may leave the other mode's ops NULL; fail open instead of
@@ -1142,6 +1509,34 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 /*  Driver lifecycle                                                  */
 /* ------------------------------------------------------------------ */
 
+#define ATTACH_RETRIES 1200
+#define ATTACH_BACKOFF_US 50000
+
+/*
+ * Attach to the index xal-server publishes. -ENOENT (not yet published),
+ * -EAGAIN (still being set up) and -ESTALE (first index not finished) all
+ * mean "not yet" for a server starting alongside us, so retry on them.
+ */
+static int
+xal_attach(struct driver *d)
+{
+	const char *shm = getenv(ENV_XAL_SHM);
+	if (!shm || !shm[0])
+		shm = DEFAULT_XAL_SHM;
+
+	int rc = -ENOENT;
+	for (int i = 0; i < ATTACH_RETRIES; i++) {
+		rc = xal_from_shm(shm, &d->xal);
+		if (rc != -ENOENT && rc != -EAGAIN && rc != -ESTALE)
+			break;
+		usleep(ATTACH_BACKOFF_US);
+	}
+	if (rc < 0)
+		fprintf(stderr, "aisio: xal_from_shm(%s) failed; err(%d)\n",
+		        shm, rc);
+	return rc;
+}
+
 opends_error_t
 opends_driver_open(void)
 {
@@ -1151,7 +1546,7 @@ opends_driver_open(void)
 	const char *dev = getenv(ENV_HOMI_DEV);
 	if (!dev || !dev[0]) {
 		fprintf(stderr,
-		        "aisio: %s must name the NVMe device the HOMI daemon "
+		        "aisio: %s must name the NVMe device the homi server "
 		        "owns\n",
 		        ENV_HOMI_DEV);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
@@ -1170,9 +1565,7 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 
-	const char *sock = getenv(ENV_HOMI_SOCKET);
-	int rc = homic_connect(
-	        (char *)(sock && sock[0] ? sock : DEFAULT_HOMI_SOCKET));
+	int rc = xal_attach(d);
 	if (rc < 0) {
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
@@ -1185,8 +1578,7 @@ opends_driver_open(void)
 
 	int orc = open_device(d);
 	if (orc < 0) {
-		homic_disconnect();
-		free(d->attach_descpath);
+		xal_close(d->xal);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1198,9 +1590,7 @@ opends_driver_open(void)
 	if (arc != 0) {
 		fprintf(stderr, "aisio: workers_setup failed\n");
 		xnvme_dev_close(d->xdev);
-		homic_detach_qpair();
-		homic_disconnect();
-		free(d->attach_descpath);
+		xal_close(d->xal);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1224,17 +1614,14 @@ opends_driver_close(void)
 		struct buf_entry *e = &drv->bufs[i];
 		if (e->owned)
 			buf_free_locked(drv, (void *)e->base);
-		else
-			xnvme_mem_unmap(drv->xdev, (void *)e->base);
 	}
 	drv->buf_count = 0;
+	runs_clear(drv);
 
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
 
-	homic_detach_qpair();
-	homic_disconnect();
-	free(drv->attach_descpath);
+	xal_close(drv->xal);
 
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
@@ -1343,11 +1730,7 @@ opends_alloc(size_t size)
 		pthread_mutex_unlock(&drv->reg_lock);
 		return NULL;
 	}
-
-	struct buf_entry *e = &drv->bufs[drv->buf_count++];
-	e->base = buf;
-	e->length = size;
-	e->owned = true;
+	buf_insert(drv, buf, size, true);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return buf;
 }
@@ -1359,15 +1742,10 @@ opends_free(void *buf)
 		return;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf) {
-			if (!drv->bufs[i].owned)
-				break;
-			buf_free_locked(drv, buf);
-			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
-			drv->buf_count--;
-			break;
-		}
+	struct buf_entry *e = buf_find(drv, buf);
+	if (e && e->owned) {
+		buf_free_locked(drv, buf);
+		buf_remove(drv, e);
 	}
 	pthread_mutex_unlock(&drv->reg_lock);
 }
@@ -1383,32 +1761,29 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	if (!buf_base || !size)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (size > UINTPTR_MAX - (uintptr_t)buf_base - drv->chunk_nbytes)
+		return opends_err(OPENDS_INVALID_VALUE);
+
+	int err;
+	uintptr_t lo, hi;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf_base) {
-			pthread_mutex_unlock(&drv->reg_lock);
-			return opends_err(OPENDS_MEMORY_ALREADY_REGISTERED);
-		}
+	if (buf_find(drv, buf_base)) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return opends_err(OPENDS_MEMORY_ALREADY_REGISTERED);
 	}
 	if (drv->buf_count >= MAX_BUF_ENTRIES) {
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	}
 
-	int rc = xnvme_mem_map(drv->xdev, (void *)buf_base, size);
-	if (rc < 0) {
+	buf_chunks(drv, buf_base, size, &lo, &hi);
+	err = runs_acquire(drv, lo, hi);
+	if (err < 0) {
 		pthread_mutex_unlock(&drv->reg_lock);
-		fprintf(stderr,
-		        "opends_buf_register: xnvme_mem_map(%p, %zu) rc=%d\n",
-		        buf_base, size, rc);
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 	}
-
-	struct buf_entry *e = &drv->bufs[drv->buf_count++];
-	e->base = buf_base;
-	e->length = size;
-	e->owned = false;
+	buf_insert(drv, buf_base, size, false);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
 }
@@ -1423,22 +1798,23 @@ opends_buf_deregister(const void *buf_base)
 	if (!buf_base)
 		return opends_err(OPENDS_INVALID_VALUE);
 
+	uintptr_t lo, hi;
+
 	pthread_mutex_lock(&drv->reg_lock);
-	for (int i = 0; i < drv->buf_count; i++) {
-		if (drv->bufs[i].base == buf_base) {
-			if (drv->bufs[i].owned) {
-				pthread_mutex_unlock(&drv->reg_lock);
-				return opends_err(OPENDS_INVALID_VALUE);
-			}
-			drv->bufs[i] = drv->bufs[drv->buf_count - 1];
-			drv->buf_count--;
-			xnvme_mem_unmap(drv->xdev, (void *)buf_base);
-			pthread_mutex_unlock(&drv->reg_lock);
-			return opends_ok();
-		}
+	struct buf_entry *e = buf_find(drv, buf_base);
+	if (!e) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
 	}
+	if (e->owned) {
+		pthread_mutex_unlock(&drv->reg_lock);
+		return opends_err(OPENDS_INVALID_VALUE);
+	}
+	buf_chunks(drv, e->base, e->length, &lo, &hi);
+	buf_remove(drv, e);
+	runs_release(drv, lo, hi);
 	pthread_mutex_unlock(&drv->reg_lock);
-	return opends_err(OPENDS_MEMORY_NOT_REGISTERED);
+	return opends_ok();
 }
 
 /* ------------------------------------------------------------------ */
