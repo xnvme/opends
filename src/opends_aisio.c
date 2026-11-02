@@ -46,7 +46,6 @@
 #include <libxnvme.h>
 
 #define ENV_XAL_SHM "OPENDS_XAL_SHM"
-#define ENV_HOMI_DEV "OPENDS_HOMI_DEV"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
@@ -183,7 +182,7 @@ struct io_worker {
 };
 
 struct driver {
-	char dev_uri[64]; ///< NVMe device (BDF) the HOMI server owns
+	char dev_uri[XNVME_IDENT_URI_LEN]; ///< NVMe device the HOMI server owns
 	uint32_t homi_id; ///< Multi-process group the HOMI server is primary of
 	struct xal *xal;  ///< Attach to the index xal-server publishes
 	size_t host_heap_nbytes;
@@ -1532,29 +1531,58 @@ xal_attach(struct driver *d)
 	return rc;
 }
 
+/* Ask homi which device it holds; -ENOENT and an empty list mean "not yet". */
+static int
+homi_device(struct driver *d)
+{
+	struct xnvme_cplane_info info;
+	int rc = -ENOENT;
+
+	for (int i = 0; i < ATTACH_RETRIES; i++) {
+		rc = xnvme_cplane_get_info(d->homi_id, &info);
+		if (rc == 0 && info.nctrlrs > 0)
+			break;
+		if (rc < 0 && rc != -ENOENT && rc != -EAGAIN)
+			break;
+		usleep(ATTACH_BACKOFF_US);
+	}
+	if (rc < 0) {
+		fprintf(stderr,
+		        "aisio: xnvme_cplane_get_info(homi_id=%u) failed; "
+		        "err(%d)\n",
+		        d->homi_id, rc);
+		return rc;
+	}
+	if (info.nctrlrs_held != 1) {
+		fprintf(stderr,
+		        "aisio: the homi group (homi_id=%u) serves %u devices; "
+		        "the driver takes exactly one\n",
+		        d->homi_id, info.nctrlrs_held);
+		return -EINVAL;
+	}
+
+	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", info.ctrlrs[0]);
+
+	return 0;
+}
+
 opends_error_t
 opends_driver_open(void)
 {
 	if (drv)
 		return opends_err(OPENDS_DRIVER_ALREADY_OPEN);
 
-	const char *dev = getenv(ENV_HOMI_DEV);
-	if (!dev || !dev[0]) {
-		fprintf(stderr,
-		        "aisio: %s must name the NVMe device the homi server "
-		        "owns\n",
-		        ENV_HOMI_DEV);
-		return opends_err(OPENDS_FS_SETUP_ERROR);
-	}
-
 	struct driver *d = calloc(1, sizeof(*d));
 	if (!d)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	snprintf(d->dev_uri, sizeof(d->dev_uri), "%s", dev);
 	if (read_env_config(d) < 0) {
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
+	}
+	if (homi_device(d) < 0) {
+		free(d);
+		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
 	pthread_mutex_init(&d->submit_lock, NULL);
 	pthread_mutex_init(&d->reg_lock, NULL);

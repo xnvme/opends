@@ -92,7 +92,6 @@ The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
 the open.
 
-- `OPENDS_HOMI_DEV` (required): The NVMe device the homi server owns (PCI BDF).
 - `OPENDS_XAL_SHM`: Shared-memory name of the xal-server extent index.
   Default `/xal_dev0`.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
@@ -112,7 +111,9 @@ the open.
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
 - `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
-  the test tasks also pass to homi, so both sides agree.
+  the test tasks also pass to homi, so both sides agree. The driver asks the
+  homi server of this group for its device, and the group must hold exactly
+  one.
 - `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
   queue rings and PRP lists. Default 256. The heap comes out of the hugepages
   every process in the group shares, so xNVMe's 1 GiB default is too large.

@@ -7,9 +7,8 @@ block) written to artifacts/<backend>_<data_dir>_<mode>.log.
 Each bench run runs filperf under `prlimit --nofile`. nofile is
 required for opends and harmless elsewhere. cufile runs get a cold-cache `drop_caches`; opends
 reads files on the HOMI/qublk mount via DMA into GPU memory, so the
-kernel page cache is irrelevant and the device BDF is passed through
-OPENDS_HOMI_DEV. The mode selects the filperf backend: opends,
-opends-stream or opends-async, and cufile or cufile-stream.
+kernel page cache is irrelevant. The mode selects the filperf backend:
+opends, opends-stream or opends-async, and cufile or cufile-stream.
 """
 
 import json
@@ -140,7 +139,6 @@ def main(args, cijoe):
     print(f"--- {args.backend} {args.data_dir} {args.mode} "
           f"(batches={args.batches} batch_size={args.batch_size}{knobs}) ---",
           flush=True)
-    bdf = cijoe.getconf("test.nvme_bdf")
     repo = cijoe.getconf("test.repo_path")
     prefix = cijoe.getconf("deps.install_prefix", "/usr/local")
     env = ""
@@ -151,7 +149,6 @@ def main(args, cijoe):
         # stack with. filperf hands both to the OpenDS driver, which joins
         # the homi group and resolves extents from the xal-server index.
         extra = ["--xal-shm /xal_dev0 --homi-id 1"]
-        env = f"OPENDS_HOMI_DEV='{bdf}' "
         if io_threads:
             env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
         if queue_depth:
