@@ -263,3 +263,63 @@ script's `--help` covers its own flags.
 
 The perf table above is edited by hand from these reports. Every `filperf`
 run drops page caches first, so the numbers are cold-cache, N=1.
+
+## Model loading with llama.cpp
+
+Every loader llama.cpp ships moves the weights twice: off the drive into
+host memory, then across the bus again into VRAM. OpenDS cuts the host
+out and lets the drive write them into VRAM itself. Our fork of llama.cpp,
+[fmma/llama.cpp](https://github.com/fmma/llama.cpp/tree/opends-loader),
+adds `--load-mode opends`, which reads every tensor of a GGUF file that
+way, over PCIe P2P DMA with no kernel in the data path. One drive is
+enough to beat dio, the fastest loader llama.cpp ships.
+
+![dio and opends loading the same model](docs/llama-load.gif)
+
+Qwen3-14B, 11.5 GiB of weights, one Samsung 990 PRO:
+
+| `--load-mode` | Whole process | Model load   |
+|---------------|---------------|--------------|
+| opends        | 3.1 s         | 2.0 s        |
+| dio           | 3.3 to 3.6 s  | 2.2 to 2.5 s |
+| none          | 3.9 to 4.0 s  | 2.8 s        |
+| mmap          | 6.3 s         | 5.1 s        |
+
+dio, llama.cpp's direct I/O loader, is the fastest of the existing ones,
+and it runs the drive at its rate, about 6.9 GB/s, as opends does. What
+opends saves is the host round trip: dio's pinned staging buffers, their
+setup and their teardown.
+
+### Try it
+
+With OpenDS installed as in the quick start, build the `opends-loader`
+branch of the fork, bring the stack up over the drive that holds the
+model, and load. `$OPENDS` is this repository, `$BDF` the drive and `$MNT`
+its mount point:
+
+```sh
+git clone -b opends-loader https://github.com/fmma/llama.cpp
+cd llama.cpp
+cmake -B build -DGGML_CUDA=ON -DLLAMA_OPENDS=ON
+cmake --build build --target llama-completion
+
+$OPENDS/tasks/steps/homi_stack_up.sh $BDF $MNT
+export OPENDS_AISIO_DEVICE_HEAP_MB=64
+echo "What is the capital of France? /no_think" |
+    build/bin/llama-completion -m $MNT/models/Qwen3-14B-Q6_K.gguf -st \
+        --load-mode opends
+```
+
+For the baselines, stop the stack, give the drive back to the kernel
+(`stop_homi_stack.sh`, `rebind_nvme.sh`) and run the same command with
+`--load-mode dio`, `none` or `mmap`.
+
+_Measured 2026-11-02: OpenDS `5d37dff`, llama.cpp `opends-loader` at
+`86d65e6`, kernel `6.8.12-dmabuf`, RTX 2000 Ada, Qwen3-14B-Q6_K, five runs
+per mode with the page cache dropped, GPU persistence mode on and the token
+embedding in VRAM (`-ot token_embd.weight=CUDA0`). The recording is one run
+of each mode with the command above, recorded one after the other since
+the drive cannot be on both drivers at once, laid side by side with the
+two Enters on the same frame. The environment of both holds
+`OPENDS_AISIO_DEVICE_HEAP_MB=64`, which keeps the backend's GPU heap out
+of the way of llama.cpp's memory fit on a 16 GB card._
