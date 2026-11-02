@@ -7,9 +7,8 @@
  * resolves a file's extents from the index xal-server publishes over shared
  * memory. These tests therefore run while the homi/qublk/xal-server stack
  * is up and the test filesystem is mounted (over /dev/ublkbN). The harness
- * (tasks/test.yaml) brings the stack up, exports OPENDS_HOMI_DEV /
- * OPENDS_XAL_SHM / OPENDS_HOMI_MNT, and passes the path of a real file on
- * the mount.
+ * (tasks/test.yaml) brings the stack up, exports OPENDS_XAL_SHM /
+ * OPENDS_HOMI_MNT, and passes the path of a real file on the mount.
  *
  * Each test opens that file, registers it (which resolves its extents from
  * the shared index), and runs the backend-agnostic test logic.
@@ -71,8 +70,7 @@ aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 	opends_error_t err = opends_driver_open();
 	if (err.err != OPENDS_SUCCESS) {
 		fprintf(stderr,
-		        "driver_open: %s (is the homi stack running and "
-		        "OPENDS_HOMI_DEV set?)\n",
+		        "driver_open: %s (is the homi stack running?)\n",
 		        opends_op_status_error(err.err));
 		cuCtxDestroy(out->cuctx);
 		return -1;
