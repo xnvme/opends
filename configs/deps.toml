@@ -10,4 +10,4 @@ ref = "v0.3.4"
 
 [fil.repository]
 remote = "https://github.com/xnvme/fil"
-ref = "91cfb0147906e6f87716e6e847fa6894de84ecd0"
+ref = "v0.5.0"
