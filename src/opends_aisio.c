@@ -1669,8 +1669,8 @@ opends_driver_get_properties(opends_drv_props_t *props)
 		return opends_err(OPENDS_INVALID_VALUE);
 
 	memset(props, 0, sizeof(*props));
-	props->major_version = 0;
-	props->minor_version = 1;
+	props->major_version = OPENDS_VERSION_MAJOR;
+	props->minor_version = OPENDS_VERSION_MINOR;
 	props->max_direct_io_size = drv->mdts_nbytes;
 	return opends_ok();
 }
@@ -1686,11 +1686,11 @@ opends_error_t
 opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 {
 	if (major)
-		*major = 0;
+		*major = OPENDS_VERSION_MAJOR;
 	if (minor)
-		*minor = 1;
+		*minor = OPENDS_VERSION_MINOR;
 	if (patch)
-		*patch = 0;
+		*patch = OPENDS_VERSION_PATCH;
 	return opends_ok();
 }
 

@@ -70,11 +70,11 @@ opends_error_t
 opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 {
 	if (major)
-		*major = 0;
+		*major = OPENDS_VERSION_MAJOR;
 	if (minor)
-		*minor = 1;
+		*minor = OPENDS_VERSION_MINOR;
 	if (patch)
-		*patch = 0;
+		*patch = OPENDS_VERSION_PATCH;
 	return opends_ok();
 }
 

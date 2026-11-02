@@ -97,9 +97,11 @@ test_driver_properties(void)
 	unsigned major, minor, patch;
 	if (check(opends_get_version(&major, &minor, &patch), "get_version"))
 		return 1;
-	if (major != 0 || minor != 1 || patch != 0) {
-		fprintf(stderr, "version: %u.%u.%u, expected 0.1.0\n", major,
-		        minor, patch);
+	if (major != OPENDS_VERSION_MAJOR || minor != OPENDS_VERSION_MINOR ||
+	    patch != OPENDS_VERSION_PATCH) {
+		fprintf(stderr, "version: %u.%u.%u, expected %u.%u.%u\n", major,
+		        minor, patch, OPENDS_VERSION_MAJOR,
+		        OPENDS_VERSION_MINOR, OPENDS_VERSION_PATCH);
 		return 1;
 	}
 
