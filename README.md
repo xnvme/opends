@@ -6,9 +6,7 @@ with the code.
 
 `snapshots/<date>-<sha>-<job>-<run>/` holds one bench job of one workflow
 run: `results.json` with the run's provenance, every record and the raw
-filperf logs, and `report.md`, the rendered report. The snapshots from before
-2026-11 were published by hand and hold `history.jsonl`, `sweep.csv` and
-`report.png` instead.
+filperf logs, and `report.md`, the rendered report.
 
 ## Snapshots
 
@@ -39,11 +37,3 @@ filperf logs, and `report.md`, the rendered report. The snapshots from before
 | [`20261021-177c568-bench-sweep-39611857477`](snapshots/20261021-177c568-bench-sweep-39611857477/report.md) | bench-sweep | [39611857477](https://github.com/xnvme/opends/actions/runs/39611857477) |
 | [`20261021-177c568-bench-39611857477`](snapshots/20261021-177c568-bench-39611857477/report.md) | bench | [39611857477](https://github.com/xnvme/opends/actions/runs/39611857477) |
 | [`20261020-18f3a14-bench-39450811676`](snapshots/20261020-18f3a14-bench-39450811676/report.md) | bench | [39450811676](https://github.com/xnvme/opends/actions/runs/39450811676) |
-| [`20260827-dcdd300`](snapshots/20260827-dcdd300/report.md) |  |  |
-| [`20260707-e19b884`](snapshots/20260707-e19b884/report.md) |  |  |
-| [`20260703-35d2765`](snapshots/20260703-35d2765/report.md) |  |  |
-| [`20260703-1cc09ec`](snapshots/20260703-1cc09ec/report.md) |  |  |
-
-## Custom experiments
-
-- [`cufile-buf-register`](custom-experiments/cufile-buf-register/report.md) — cuFile buffer registration vs no-registration across datasets.
