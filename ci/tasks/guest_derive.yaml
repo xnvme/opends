@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-3-Clause
+doc: |
+  Derive the guest image
+  ======================
+
+  Builds the Debian 13 guest for the hardware jobs from the pins in configs/guest-lock.toml and exports it as the image the ci guest boots. Runs in the xnvme-devenv host container; scripts/guest_image.py starts it there.
+
+steps:
+  - name: guest_kill
+    uses: qemu.guest_kill
+    with:
+      guest_name: derive
+
+  - name: stage_base
+    uses: system_imaging.diskimage_from_oras
+    with:
+      pattern: debian-13-x86_64
+
+  - name: guest_initialize
+    uses: qemu.guest_initialize
+    with:
+      guest_name: derive
+      system_image_name: "{{ config.qemu.guests.derive.system_image_name }}"
+
+  - name: guest_grow
+    uses: guest_grow
+    with:
+      guest_name: derive
+
+  - name: guest_start
+    uses: qemu.guest_start
+    with:
+      guest_name: derive
+
+  - name: root_unlock
+    uses: xnvme_devenv.root_unlock
+
+  - name: fetch_debs
+    uses: xnvme_devenv.fetch_debs
+    with:
+      side: guest
+      dest: "{{ config.guest.debs }}"
+
+  - name: guest_derive
+    uses: guest_derive
+    with:
+      guest_name: derive
+
+  - name: guest_export
+    uses: guest_export
+    with:
+      guest_name: derive
