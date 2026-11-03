@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Every input of the guest image, pinned. To change the image, move a pin and derive again. The kernel is Debian's current one at derive time.
+
+# nosi's Debian 13 headless image, by digest, the one xnvme's CI boots
+[system-imaging.images.debian-13-x86_64]
+oras.url = "oras://ghcr.io/safl/nosi/debian-13-headless@sha256:01f4aef4f8232b0f775635e699c344c9a555704b91d24567530584d85df68fb3"
+
+# From NVIDIA's Debian 13 repository: the open modules, the CUDA userspace, nvcc with cudart, cuFile and nvidia-fs.
+# The nvidia-open and cuda-toolkit meta packages would add several GB that nothing here uses.
+[guest.nvidia]
+repo = "https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64"
+# NVIDIA's apt pin for this driver. Without it apt takes the newest driver for the dependencies of the packages below, which need their own version.
+pinning = "nvidia-driver-pinning-615.71.10=615.71.10-1"
+packages = [
+  "nvidia-kernel-open-dkms=615.71.10-1",
+  "nvidia-kernel-support=615.71.10-1",
+  "nvidia-driver-cuda=615.71.10-1",
+  "nvidia-persistenced=615.71.10-1",
+  "cuda-nvcc-13-4=13.4.92-1",
+  "libcufile-dev-13-4=1.19.1.55-1",
+  "nvidia-fs-dkms=2.29.4-1",
+]
+cuda = "13.4"
+
+# The repository's signing key, as the package NVIDIA ships it in
+[[lock.deb]]
+side = "guest"
+url = "https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb"
+sha256 = "d0d4ef986a44400f9db33c600ef33a985175e7cc63d805a10e1839c7a1e78f5f"
+
+# upcie's dma-buf modules, from the release the pinned xnvme builds against
+[[lock.deb]]
+side = "guest"
+url = "https://github.com/safl/upcie/releases/download/v0.10.4/upcie-experimental-dkms_0.10.4_all.deb"
+sha256 = "273f51554e63f85c60985a34f025b179f41c01d1b9c301a3c74fb8a7673bddc2"

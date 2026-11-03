@@ -115,3 +115,48 @@ One-time setup on the hardware machine, as an unprivileged user:
    `.env`. Everyone who uses the machine acquires that place first;
    the job queues for it with a reservation and gives it back with
    `release-from`.
+
+## The guest image
+
+The hardware jobs can also run inside a guest on the machine, with the
+NVMe device and the GPU passed through to it with vfio-pci, so that every
+job starts on a pristine machine and leaves nothing on the host. The
+guest is nosi's Debian 13, the image xnvme's CI boots, with NVIDIA's
+driver and CUDA, nvidia-fs, upcie's dma-buf modules, the packages the
+dependency builds need and the settings the suite expects added on top.
+It is built with xnvme-devenv's tooling, in its host container, the
+way xnvme-devenv derives its own guests.
+
+Everything that goes into the image is pinned in `ci/configs/guest-lock.toml`:
+the base by digest, the NVIDIA packages by version and the upcie
+release by checksum. The kernel is Debian's current one at build time;
+the image records it, with the other versions, in `/etc/opends-guest`.
+Moving a pin and building again is how anything in the image changes;
+nothing in it is edited in place. The image holds the NVIDIA driver and
+CUDA, so it stays on the machine and is not published.
+
+Build it on the machine, as the runner user, with docker installed and
+`/dev/kvm` present:
+
+```sh
+ci/scripts/guest_image.py
+```
+
+That runs `ci/tasks/guest_derive.yaml` in the container: stage the base,
+make a scratch guest from it with its disk grown to 64 GB, boot it,
+install the build packages and the kernel, reboot into that kernel, drop
+the base's older kernels, install the pinned NVIDIA packages and the
+upcie modules so their DKMS builds target it, check that every DKMS
+module built and load the ones that do not need the hardware, and
+export the disk as `opends-guest-x86_64.qcow2` in the image cache,
+`~/.cache/xnvme-devenv` by default. The build takes about ten
+minutes once the base is cached; the first one also fetches the base.
+The `ci` guest in `ci/configs/guest.toml` is sized for the suite and boots
+that image through the usual initialise step, a fresh overlay per boot.
+
+One module is known not to load in the image: nvidia-fs builds without
+the open driver's symbol versions and the kernel refuses it, so it is
+left out of the modules the image loads at boot and cuFile runs in its
+compatibility mode in the guest until that is solved. The jobs
+themselves still run on the host; booting the guest from them, with the
+passthrough rig, is the next step.
