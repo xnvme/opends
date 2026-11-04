@@ -22,14 +22,12 @@
 
 #include <cuda.h>
 
-#include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -41,9 +39,6 @@
 #define REFUSED (-(ssize_t)OPENDS_INVALID_VALUE)
 #define BAD_MODE (-(ssize_t)OPENDS_INVALID_FILE_OPEN_FLAG)
 
-/* An index name with a malformed state region. Attaching to it fails at once;
- * a missing index would be waited for, for a minute. */
-#define BAD_INDEX "/opends_raw_block_bad_index"
 #define ENV_RAW_BLOCK "OPENDS_AISIO_RAW_BLOCK"
 
 /* Returns the number of bytes that differ from the pattern at off. */
@@ -234,49 +229,37 @@ batch_two_pages(opends_handle_t fh, void *gpu, uint64_t dev_off,
 	return ok;
 }
 
-/* Open the driver with no index published. Without OPENDS_AISIO_RAW_BLOCK
- * that fails. With it the driver opens, and a regular file (this binary) is
- * refused for the lack of an index. That failure is final: with the malformed
- * index gone, a second registration that tried again would wait a minute.
+/* Open the driver with no mount named. Without OPENDS_AISIO_RAW_BLOCK that
+ * fails. With it the driver opens, and a regular file (this binary) is
+ * refused for the lack of a file system to map it on, each time it is tried.
  * Returns 0 with the driver open in raw block mode. */
 static int
-open_without_index(const char *file_path)
+open_without_mount(const char *file_path)
 {
 	opends_op_error_t err, err2;
 	int fd, fd2;
 
-	int sfd = shm_open(BAD_INDEX "_state", O_CREAT | O_RDWR, 0600);
-	if (sfd < 0 || write(sfd, "x", 1) != 1) {
-		fprintf(stderr, "shm_open(%s): %s\n", BAD_INDEX "_state",
-		        strerror(errno));
-		return -1;
-	}
-	close(sfd);
-	setenv("OPENDS_XAL_SHM", BAD_INDEX, 1);
+	unsetenv("OPENDS_HOMI_MNT");
 
 	unsetenv(ENV_RAW_BLOCK);
 	err = opends_driver_open().err;
 	check(err == OPENDS_FS_SETUP_ERROR,
-	      "raw mode off: the driver needs an index to open");
+	      "raw mode off: the driver needs the mount to open");
 	if (err == OPENDS_SUCCESS)
 		opends_driver_close();
 
 	setenv(ENV_RAW_BLOCK, "1", 1);
 	if (opends_driver_open().err != OPENDS_SUCCESS) {
-		fprintf(stderr, "driver_open without an index failed\n");
-		shm_unlink(BAD_INDEX "_state");
+		fprintf(stderr, "driver_open without a mount failed\n");
 		return -1;
 	}
 	opends_handle_t fh =
 	        register_path(file_path, O_RDONLY | O_DIRECT, &fd, &err);
 	release(fh, fd);
-	shm_unlink(BAD_INDEX "_state");
-	time_t t0 = time(NULL);
 	fh = register_path(file_path, O_RDONLY | O_DIRECT, &fd2, &err2);
 	release(fh, fd2);
-	check(err == OPENDS_FS_SETUP_ERROR && err2 == OPENDS_FS_SETUP_ERROR &&
-	              time(NULL) - t0 <= 5,
-	      "no index: regular file refused, the second time at once");
+	check(err == OPENDS_FS_SETUP_ERROR && err2 == OPENDS_FS_SETUP_ERROR,
+	      "no mount: regular file refused, both times");
 	return 0;
 }
 
@@ -521,7 +504,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "cuCtxCreate failed\n");
 		return 1;
 	}
-	if (open_without_index(argv[0]) < 0)
+	if (open_without_mount(argv[0]) < 0)
 		return 1;
 	opends_handle_t fh = register_path("/dev/null", O_RDWR, &fd, &err);
 	check(fd >= 0 && err == OPENDS_INVALID_VALUE,

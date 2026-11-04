@@ -84,7 +84,8 @@ struct registered_file {
 	bool readable;
 	bool writable;
 	bool raw;
-	unsigned long open_seq; /* the driver open that registered it */
+	unsigned long open_seq;  /* the driver open that registered it */
+	struct xal_inode *lease; /* the file as attached to xal; NULL if raw */
 };
 
 struct opends_stream {
@@ -178,6 +179,8 @@ struct file_op {
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
 	void *bounce_buf;
+	/* counted as a reader of the file's extents until released */
+	bool held;
 	struct file_op_write wr;
 	union {
 		struct file_op_stream stream;
@@ -228,8 +231,9 @@ struct driver {
 	char dev_uri[XNVME_IDENT_URI_LEN];
 	struct aisio_config cfg; /* from the environment at open */
 	unsigned long open_seq;  /* which open of the driver this is */
-	struct xal *xal; /* the index xal-server publishes (index_attach) */
-	int attach_rc;   /* why the attach failed; it is tried only once */
+	/* opened on the mount in the read-lease mode (xal_attach) */
+	struct xal *xal;
+	int attach_rc; /* why the attach failed; it is tried only once */
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;

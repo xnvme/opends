@@ -7,6 +7,7 @@
 
 #include <cuda.h>
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -80,8 +81,12 @@ main(int argc, char **argv)
 	}
 
 	/* A read goes to the device without passing the kernel, so the driver
-	 * has to honour the access mode of the fd itself. */
-	int wo_fd = open(argv[1], O_WRONLY | O_DIRECT);
+	 * has to honour the access mode of the fd itself. The fd is of a file
+	 * of its own, since a file is registered once. */
+	char wo_path[PATH_MAX];
+	snprintf(wo_path, sizeof(wo_path), "%s.wo", argv[1]);
+	int wo_fd =
+	        open(wo_path, O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT, 0644);
 	opends_handle_t wo_fh = NULL;
 	void *wo_buf = cuda_alloc_acquire(PAGE);
 	if (wo_fd < 0 || !wo_buf ||
@@ -97,8 +102,10 @@ main(int argc, char **argv)
 		opends_handle_deregister(wo_fh);
 	if (wo_buf)
 		cuda_alloc_release(wo_buf);
-	if (wo_fd >= 0)
+	if (wo_fd >= 0) {
 		close(wo_fd);
+		unlink(wo_path);
+	}
 
 	/* homi's character device is a raw handle in raw block mode, and no
 	 * handle at all without it: it is not opened with O_DIRECT. */

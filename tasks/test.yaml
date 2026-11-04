@@ -110,8 +110,8 @@ steps:
 
   - name: test_sync_read_raw_mode_aisio
     run: |
-      # Files in raw block mode: the driver attaches to the index at the
-      # first registration, and homi's character device registers.
+      # Files in raw block mode: the driver opens xal at the first
+      # registration, and homi's character device registers.
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
