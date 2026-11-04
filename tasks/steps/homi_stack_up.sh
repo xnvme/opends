@@ -20,6 +20,10 @@ HERE=$(dirname "$0")
 HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
+# xal-server watch mode: 0 indexes once at start (see the README on writes), 1 pins the extents with reflink clones and re-indexes on every change
+XAL_WATCHMODE=${XAL_WATCHMODE:-0}
+# optional subtree of MOUNT to index instead of the whole filesystem
+XAL_SUBTREE=${XAL_SUBTREE:-}
 
 die() {
 	echo "error: $1" >&2
@@ -27,11 +31,19 @@ die() {
 	exit 1
 }
 
+SUBTREE=""
+if [ -n "$XAL_SUBTREE" ]; then
+	case "$XAL_SUBTREE" in
+		"$MOUNT"/*) SUBTREE=", subtree = \"$XAL_SUBTREE\"" ;;
+		*) die "XAL_SUBTREE ($XAL_SUBTREE) is not under $MOUNT" /dev/null ;;
+	esac
+fi
+
 mkdir -p /run/homi
 
 # Clear any stale stack from a crashed or aborted prior run before bringing up
 # a fresh one.
-"$HERE/stop_homi_stack.sh"
+"$HERE/clear_homi_stack.sh"
 
 # Hand the controller to userspace (unmounts the kernel mount, unbinds nvme,
 # leaves the controller in a clean power-on state).
@@ -76,16 +88,14 @@ echo "$UBLK" > /run/homi/ublk_dev
 mkdir -p "$MOUNT"
 mount "$UBLK" "$MOUNT"
 
-# watchmode 0 = none: the index is a snapshot from this start and nothing
-# re-indexes while the stack is up. See the README on writes.
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [
-  { uri = "$UBLK", shm_name = "$XAL_SHM", mountpoint = "$MOUNT" },
+  { uri = "$UBLK", shm_name = "$XAL_SHM", mountpoint = "$MOUNT"$SUBTREE },
 ]
 
 [xal]
-watchmode = 0
+watchmode = $XAL_WATCHMODE
 EOF
 
 echo "starting xal-server"
