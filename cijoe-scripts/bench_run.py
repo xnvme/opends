@@ -146,9 +146,11 @@ def main(args, cijoe):
     mnt = args.mnt or cijoe.getconf("test.mount_point")
     if args.backend == "opends":
         # The index name and homi id are what homi_stack_up.sh starts the
-        # stack with. filperf hands both to the OpenDS driver, which joins
-        # the homi group and resolves extents from the xal-server index.
+        # stack with. filperf lists the dataset through the index and hands
+        # the homi id to the OpenDS driver, which joins the homi group and
+        # maps the files under a lease on the mount.
         extra = ["--xal-shm /xal_dev0 --homi-id 1"]
+        env += f"OPENDS_HOMI_MNT='{mnt}' "
         if io_threads:
             env += f"OPENDS_AISIO_IO_THREADS='{io_threads}' "
         if queue_depth:
