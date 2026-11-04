@@ -251,6 +251,9 @@ meson install -C build
 projects can find OpenDS via `pkg-config --cflags --libs opends` or meson's
 `dependency('opends')`.
 
+Python bindings live in `python/` and load the library from `build/` without
+installation; see `python/README.md`.
+
 ## Benchmarking with filperf
 
 Throughput benchmarks use `filperf` from [fil](https://github.com/xnvme/fil)
