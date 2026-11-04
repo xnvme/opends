@@ -76,8 +76,9 @@ echo "$UBLK" > /run/homi/ublk_dev
 mkdir -p "$MOUNT"
 mount "$UBLK" "$MOUNT"
 
-# watchmode 0 = none: the index is a snapshot from this start and nothing
-# re-indexes while the stack is up. See the README on writes.
+# watchmode 3 = read lease: the region has no names and no extents, and the
+# server opens nothing. The driver attaches each registered file by its
+# descriptor and takes the extents under a lease of its own.
 cat > "$CONF" <<EOF
 log_level = 2
 devices = [
@@ -85,7 +86,7 @@ devices = [
 ]
 
 [xal]
-watchmode = 0
+watchmode = 3
 EOF
 
 echo "starting xal-server"
