@@ -20,7 +20,7 @@ HERE=$(dirname "$0")
 HOMI_ID=1
 XAL_SHM=/xal_dev0
 CONF=/run/homi/xal-server.conf
-# xal-server watch mode: 0 indexes once at start (see the README on writes), 1 pins the extents with reflink clones and re-indexes on every change
+# xal-server watch mode: 0 indexes once at start (see the README on writes), 1 pins the extents with reflink clones and re-indexes on every change. In mode 1 a read that arrives during a re-index fails after 5 s.
 XAL_WATCHMODE=${XAL_WATCHMODE:-0}
 # optional subtree of MOUNT to index instead of the whole filesystem
 XAL_SUBTREE=${XAL_SUBTREE:-}
