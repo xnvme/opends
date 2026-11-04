@@ -21,29 +21,37 @@ fi
 # Re-enumerate the function before unbinding: a PCI remove + rescan forces the
 # kernel nvme probe (reset, wait for CSTS.RDY, identify), leaving the
 # controller in a verified-live state before handing it to userspace.
-echo "re-enumerating $BDF"
-echo 1 > "/sys/bus/pci/devices/$BDF/remove"
-echo 1 > /sys/bus/pci/rescan
+# OPENDS_NVME_VERIFY=0 skips the re-enumeration and probe verification, for
+# hosts where the kernel driver must not probe the device (e.g. a duplicate
+# subsystem NQN, or interrupts the driver cannot use). The FLR below still
+# returns the controller to a clean power-on state.
+if [ "${OPENDS_NVME_VERIFY:-1}" != "0" ]; then
+	echo "re-enumerating $BDF"
+	echo 1 > "/sys/bus/pci/devices/$BDF/remove"
+	echo 1 > /sys/bus/pci/rescan
 
-NS=""
-for _ in $(seq 1 50); do
-	if [ -d "/sys/bus/pci/devices/$BDF/nvme" ]; then
-		if NS=$("$HERE/resolve_nvme_ns.sh" "$BDF" 2>/dev/null) &&
-		   [ -b "$NS" ]; then
-			break
-		fi
-	fi
 	NS=""
-	sleep 0.2
-done
-if [ -z "$NS" ]; then
-	echo "error: $BDF did not come back as a live nvme namespace after rescan" >&2
-	exit 1
+	for _ in $(seq 1 50); do
+		if [ -d "/sys/bus/pci/devices/$BDF/nvme" ]; then
+			if NS=$("$HERE/resolve_nvme_ns.sh" "$BDF" 2>/dev/null) &&
+			   [ -b "$NS" ]; then
+				break
+			fi
+		fi
+		NS=""
+		sleep 0.2
+	done
+	if [ -z "$NS" ]; then
+		echo "error: $BDF did not come back as a live nvme namespace after rescan" >&2
+		exit 1
+	fi
+	echo "$BDF live as $NS"
 fi
-echo "$BDF live as $NS"
 
-echo "unbinding $BDF from nvme"
-echo "$BDF" > /sys/bus/pci/drivers/nvme/unbind
+if [ -e "/sys/bus/pci/devices/$BDF/driver" ]; then
+	echo "unbinding $BDF"
+	echo "$BDF" > "/sys/bus/pci/devices/$BDF/driver/unbind"
+fi
 
 if [ -e "/sys/bus/pci/devices/$BDF/driver" ]; then
 	DRIVER=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")")
