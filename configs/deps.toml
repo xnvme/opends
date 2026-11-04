@@ -5,8 +5,8 @@ remote = "https://github.com/xnvme/xnvme"
 ref = "for-aisio-02112026"
 
 [xal.repository]
-remote = "https://github.com/xnvme/xal"
-ref = "v0.3.4"
+remote = "https://github.com/Daejun7Park/xal"
+ref = "8613e69ed9b70cbfbede91a9b26ce82728432cf7"
 
 [fil.repository]
 remote = "https://github.com/xnvme/fil"
