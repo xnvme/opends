@@ -3,14 +3,15 @@
  * test_write_homi.h - Shared write-test logic for the aisio backend on a live
  * HOMI/qublk stack.
  *
- * Writes go through the kernel-mounted filesystem (pwrite), so these tests run
- * against a real, writable file on the mount. The flow exercises an allocating
- * write into a freshly created (empty) file, aligned and unaligned overwrites
- * that must leave the surrounding bytes intact, and an unaligned write across
- * the end of the file. Each write is checked by the file size and a kernel
- * read of the enclosing blocks through the same O_DIRECT descriptor; a read
- * through OpenDS would go through the extent index, which does not follow
- * writes (see the README). The submit_write callback selects sync vs async.
+ * These tests run against a real, writable file on the mount. The flow
+ * exercises an allocating write into a freshly created (empty) file, which goes
+ * through the kernel-mounted filesystem, aligned in-place overwrites, which go
+ * by DMA, and unaligned overwrites that must leave the surrounding bytes
+ * intact, including one across the end of the file. Each write is checked by
+ * the file size and a kernel read of the enclosing blocks through the same
+ * O_DIRECT descriptor; a read through OpenDS would go through the extent index,
+ * which does not follow the kernel-path writes (see the README). The
+ * submit_write callback selects sync vs async.
  */
 #ifndef TEST_WRITE_HOMI_H_
 #define TEST_WRITE_HOMI_H_
