@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ENV_XAL_SHM "OPENDS_XAL_SHM"
+#define ENV_MOUNT "OPENDS_HOMI_MNT"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
@@ -23,7 +23,6 @@
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
 #define ENV_WRITE_BUF_MB "OPENDS_AISIO_WRITE_BUF_MB"
 #define ENV_WRITE_BUFS "OPENDS_AISIO_WRITE_BUFS"
-#define DEFAULT_XAL_SHM "/xal_dev0"
 #define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
@@ -76,16 +75,17 @@ aisio_config_read(struct aisio_config *cfg)
 	}
 	cfg->homi_id = (uint32_t)n;
 
-	const char *shm = getenv(ENV_XAL_SHM);
-	if (!shm || !shm[0]) {
-		shm = DEFAULT_XAL_SHM;
-	}
-	if (strlen(shm) >= sizeof(cfg->xal_shm)) {
-		fprintf(stderr, "aisio: %s is longer than %zu\n", ENV_XAL_SHM,
-		        sizeof(cfg->xal_shm) - 1);
+	const char *mount = getenv(ENV_MOUNT);
+	if (!mount || !mount[0]) {
+		fprintf(stderr, "aisio: %s is not set\n", ENV_MOUNT);
 		return -EINVAL;
 	}
-	strcpy(cfg->xal_shm, shm);
+	if (strlen(mount) >= sizeof(cfg->mount)) {
+		fprintf(stderr, "aisio: %s is longer than %zu\n", ENV_MOUNT,
+		        sizeof(cfg->mount) - 1);
+		return -EINVAL;
+	}
+	strcpy(cfg->mount, mount);
 
 	if (env_int(ENV_IO_THREADS, DEFAULT_IO_THREADS, 1, MAX_IO_THREADS, &n) <
 	    0) {

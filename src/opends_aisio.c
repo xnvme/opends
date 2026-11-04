@@ -6,9 +6,9 @@
  * backend (PCIe P2P DMA). The HOMI server (xnvme's "homi serve") is the
  * primary of an xNVMe multi-process group and holds the controller up. This
  * driver joins the same group as a secondary and allocates its own I/O
- * queues. A registered file's extents come from a xal index that xal-server
- * publishes over POSIX shared memory. The index is in byte units, and this
- * driver converts to LBAs with its own device geometry.
+ * queues. A registered file's extents come from xal, which maps the file
+ * under a lease held on the registered descriptor. They are in byte units,
+ * and this driver converts to LBAs with its own device geometry.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -366,119 +366,55 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 	s->bounce_desc_dev = 0;
 }
 
-#define ESTALE_RETRIES 100 /* times ESTALE_BACKOFF_US: five seconds */
-#define ESTALE_BACKOFF_US 50000
-
-/* True while the seqlock snapshot taken at `seq` is still valid: the server
- * is not rewriting the shared pools, they did not move since `seq` was read,
- * and the filesystem is not dirty (changed but not yet re-indexed). */
-static bool
-snapshot_held(struct xal *xal, int seq)
-{
-	int cur;
-	bool dirty;
-
-	atomic_thread_fence(memory_order_acquire);
-	cur = xal_get_seq_lock(xal);
-	dirty = xal_is_dirty(xal);
-	return !(seq & 1) && cur == seq && !dirty;
-}
-
-/* Copy the extents for `path` out of the shared index. The server rewrites
- * the shared pools in place, concurrent with this read, so validate the
- * snapshot before trusting anything read from them. -ESTALE means retry. */
+/* The extents of a registered file, from the lease taken at registration.
+ * xal counts the caller as a reader until the matching release, which is
+ * what keeps a writer's open() or truncate() waiting until the DMA is done.
+ * An extent without an address cannot be read raw. The region carries no
+ * LBA size, so convert with our own geometry. */
 static int
-extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
-                 uint32_t *out_n)
+lease_extents(struct driver *d, struct registered_file *h,
+              struct ds_extent **out, uint32_t *out_n)
 {
-	struct xal *xal = d->xal;
-	struct xal_extents *xe = NULL;
-	struct ds_extent *ex = NULL;
-	uint32_t n = 0, base;
-	bool held;
-	int seq, rc;
+	struct xal_extents *xe;
+	struct ds_extent *ex;
+	int rc;
 
-	seq = xal_get_seq_lock(xal);
-	held = snapshot_held(xal, seq);
-	if (!held)
-		return -ESTALE;
-
-	rc = xal_get_extents(xal, path, &xe);
+	rc = xal_extents_acquire(d->xal, h->lease, &xe);
 	if (rc < 0)
-		goto out;
+		return rc;
 
-	/* xe points into the shared inode pool, so count/extent_idx may be
-	 * torn. Capture them, then validate before using them as allocation
-	 * size and pool indices. */
-	n = xe->count;
-	base = xe->extent_idx;
-	held = snapshot_held(xal, seq);
-	if (!held)
-		return -ESTALE;
-
-	ex = calloc(n ? n : 1, sizeof(*ex));
-	if (!ex)
-		return -ENOMEM;
-
-	for (uint32_t i = 0; i < n; i++) {
-		struct xal_extent *e = xal_extent_at(xal, base + i);
+	ex = calloc(xe->count ? xe->count : 1, sizeof(*ex));
+	if (!ex) {
+		rc = -ENOMEM;
+		goto err;
+	}
+	for (uint32_t i = 0; i < xe->count; i++) {
+		struct xal_extent *e =
+		        xal_extent_at(d->xal, xe->extent_idx + i);
 		struct xal_extent_converted b = {0};
 
-		rc = xal_extent_in_bytes(xal, e, &b);
+		if (!e || (e->flag & XAL_EXTENT_NOADDR)) {
+			rc = -ENOENT;
+			goto err;
+		}
+		rc = xal_extent_in_bytes(d->xal, e, &b);
 		if (rc < 0)
-			goto out;
-		/* xal-server never opens the device, so its index carries no
-		 * LBA size; convert with our own geometry. */
+			goto err;
 		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
 			rc = -EIO;
-			goto out;
+			goto err;
 		}
 		ex[i].file_offset = b.start_offset;
 		ex[i].slba = b.start_block >> d->lba_shift;
 		ex[i].length = b.size;
 	}
-
-out:
-	/* A torn read during a rewrite can surface as a spurious error, and a
-	 * clean result may hold torn extents; only trust either if the
-	 * snapshot held. */
-	held = snapshot_held(xal, seq);
-	if (!held) {
-		free(ex);
-		return -ESTALE;
-	}
-	if (rc < 0) {
-		free(ex);
-		return rc;
-	}
 	*out = ex;
-	*out_n = n;
+	*out_n = xe->count;
 	return 0;
-}
 
-static int
-resolve_extents(struct driver *d, int fd, struct ds_extent **out,
-                uint32_t *out_n)
-{
-	char fdpath[64], path[PATH_MAX];
-	ssize_t plen;
-	int rc;
-
-	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
-	plen = readlink(fdpath, path, sizeof(path) - 1);
-	if (plen < 0)
-		return -errno;
-	path[plen] = '\0';
-
-	/* The index is dirty while xal-server rebuilds it, and for good once
-	 * its server exits. Retry a few seconds, then fail. */
-	rc = -ESTALE;
-	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = extents_snapshot(d, path, out, out_n);
-		if (rc != -ESTALE)
-			break;
-		usleep(ESTALE_BACKOFF_US);
-	}
+err:
+	free(ex);
+	xal_extents_release(d->xal, h->lease);
 	return rc;
 }
 
@@ -914,11 +850,12 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 	struct ds_extent *extents;
 	uint32_t extent_count;
-	int frc = resolve_extents(d, op->h->fd, &extents, &extent_count);
+	int frc = lease_extents(d, op->h, &extents, &extent_count);
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
 	}
+	op->held = true;
 
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
@@ -1006,9 +943,26 @@ run_bounce_copies(struct file_op *op)
 	return 0;
 }
 
+/* Count the op out as a reader once its DMA is done. xal says -ESTALE when a
+ * writer got past the lease meanwhile; the data may then not be the file's. */
+static void
+release_extents(struct file_op *op)
+{
+	int rc;
+
+	if (!op->held)
+		return;
+	rc = xal_extents_release(drv->xal, op->h->lease);
+	op->held = false;
+	if (rc < 0 && !op->err)
+		op->err = OPENDS_FS_SETUP_ERROR;
+}
+
 static void
 complete_read_op(struct file_op *op)
 {
+	release_extents(op);
+
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 
 	if (op->mode == FILE_OP_STREAM) {
@@ -1047,6 +1001,7 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->bytes_acc = 0;
 	op->err = 0;
 	op->n_bounces = 0;
+	op->held = false;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_read_op(w, op);
 	return false;
@@ -1371,26 +1326,22 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 #define ATTACH_RETRIES 1200
 #define ATTACH_BACKOFF_US 50000
 
-/*
- * Attach to the index xal-server publishes. -ENOENT (not yet published),
- * -EAGAIN (still being set up) and -ESTALE (first index not finished) all
- * mean "not yet" for a server starting alongside us, so retry on them.
- */
+/* Open xal on the mount in the read-lease mode: the driver maps a registered
+ * file itself, under a lease on its descriptor, and reads no index. */
 static int
-xal_attach(struct driver *d)
+xal_open_lease(struct driver *d)
 {
-	const char *shm = d->cfg.xal_shm;
+	struct xal_opts opts = {0};
+	int rc;
 
-	int rc = -ENOENT;
-	for (int i = 0; i < ATTACH_RETRIES; i++) {
-		rc = xal_from_shm(shm, &d->xal);
-		if (rc != -ENOENT && rc != -EAGAIN && rc != -ESTALE)
-			break;
-		usleep(ATTACH_BACKOFF_US);
+	opts.watch_mode = XAL_WATCHMODE_READ_LEASE;
+	opts.mountpoint = d->cfg.mount;
+	rc = xal_open_from_uri(d->cfg.mount, &d->xal, &opts);
+	if (rc < 0) {
+		fprintf(stderr,
+		        "aisio: xal_open_from_uri(%s) failed; err(%d)\n",
+		        d->cfg.mount, rc);
 	}
-	if (rc < 0)
-		fprintf(stderr, "aisio: xal_from_shm(%s) failed; err(%d)\n",
-		        shm, rc);
 	return rc;
 }
 
@@ -1452,7 +1403,7 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->alloc_lock, NULL);
 	pthread_mutex_init(&d->write_buf_lock, NULL);
 
-	int rc = xal_attach(d);
+	int rc = xal_open_lease(d);
 	if (rc < 0) {
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
@@ -1586,6 +1537,26 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	h->fd = fd;
 	h->oflags = oflags;
 
+	/* A read lease for a read-only descriptor, a write lease otherwise.
+	 * -EAGAIN: the file is open elsewhere. -EXDEV: it is not on the mount.
+	 * -EBUSY: its open file is registered already. */
+	int rc = xal_extents_attach_fd(drv->xal, NULL, fd, &h->lease);
+	if (rc < 0) {
+		fprintf(stderr,
+		        "aisio: xal_extents_attach_fd(fd=%d) failed; "
+		        "err(%d)%s\n",
+		        fd, rc,
+		        rc == -EAGAIN ? " (the file is open elsewhere)" : "");
+		free(h);
+		switch (rc) {
+		case -EXDEV: return opends_err(OPENDS_DEVICE_NOT_FOUND);
+		case -EBUSY:
+			return opends_err(OPENDS_HANDLE_ALREADY_REGISTERED);
+		case -EACCES: return opends_err(OPENDS_PERMISSION_DENIED);
+		default: return opends_err(OPENDS_FS_SETUP_ERROR);
+		}
+	}
+
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
 	return opends_ok();
@@ -1594,9 +1565,13 @@ opends_handle_register(opends_handle_t *fh, int fd)
 void
 opends_handle_deregister(opends_handle_t fh)
 {
-	if (!fh)
+	struct registered_file *h = fh;
+
+	if (!h)
 		return;
-	free(fh);
+	if (drv && h->lease)
+		xal_extents_detach_fd(drv->xal, h->lease);
+	free(h);
 	__atomic_fetch_sub(&use_count, 1, __ATOMIC_RELAXED);
 }
 
