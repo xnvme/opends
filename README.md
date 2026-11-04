@@ -140,7 +140,10 @@ blocks that were allocated at index time usually reads back correctly, but
 XFS does not promise it, and OpenDS does not check it.
 
 To read written data through OpenDS, restart xal-server after the writes so it
-indexes again. This restriction is temporary: a re-index on request is being
+indexes again. A process that opened the driver before the restart stays on the
+old index: its next read fails with `OPENDS_FS_SETUP_ERROR` after five seconds,
+and it must call `opends_driver_close()` and `opends_driver_open()` to attach to
+the new index. This restriction is temporary: a re-index on request is being
 pursued in xal-server, and the restriction goes when it lands.
 
 ## Performance
