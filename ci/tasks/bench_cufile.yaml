@@ -24,14 +24,6 @@ doc: |
   parsing by scripts/bench/report.py.
 
 steps:
-  - name: check_stack_down
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
-
-  - name: cpu_governor
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/cpu_governor.sh'
-
   - name: load_nvidia_fs
     run: |
       '{{ config.test.repo_path }}/ci/tasks/steps/load_nvidia_fs.sh'
@@ -122,7 +114,3 @@ steps:
       batch-size: 26
       mode: stream
       mnt: "{{ config.test.mount_point }}"
-
-  - name: cpu_governor_restore
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/cpu_governor.sh' restore

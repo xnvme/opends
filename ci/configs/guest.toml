@@ -59,6 +59,16 @@ disk.path = "{{ local.env.HOME }}/system_imaging/disk/debian-trixie-amd64.qcow2"
 system_label = "x86_64"
 disk.path = "{{ local.env.HOME }}/system_imaging/disk/opends-guest-x86_64.qcow2"
 
+# The machine's NVMe device and GPU, passed through by xnvme-devenv's rig scripts, each on a root port of its own: 0000:01:00.0 and 0000:02:00.0 in the guest.
+# The machine's config, layered on this one, gives each its 'host', the address on the machine.
+[rig.devices.nvme0]
+provider = "vfio-pci"
+labels = ["nvm"]
+
+[rig.devices.gpu0]
+provider = "vfio-pci"
+labels = ["gpu"]
+
 [guest]
 disk_size = "64G"
 # Where fetch_debs puts the lock's debs before they go into the guest

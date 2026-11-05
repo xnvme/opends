@@ -19,14 +19,6 @@ doc: |
   Prerequisites and artifacts: as in bench_cufile.yaml.
 
 steps:
-  - name: check_stack_down
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
-
-  - name: cpu_governor
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/cpu_governor.sh'
-
   - name: meta
     uses: bench_meta
 
@@ -142,7 +134,3 @@ steps:
   - name: homi_stack_down
     run: |
       '{{ config.test.repo_path }}/ci/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}'
-
-  - name: cpu_governor_restore
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/cpu_governor.sh' restore
