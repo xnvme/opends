@@ -30,32 +30,39 @@ hardware machine. It is opt-in per PR.
 A maintainer puts the `test-full` label on the PR. The label starts a
 `test-full / nvme-cuda` check. The check waits for the hosted `lint` and
 `test-ref` jobs. When they pass, the job runs on the hardware
-machine's persistent runner. The job first queues for the machine's
-labgrid place as `gh-run-<run id>-<job>`, printing who holds it, and
-waits up to a day; each job's timeout is its run budget plus that day.
-It then checks that the stack is down: no HOMI process running,
-nothing mounted over ublk, and the NVMe controller on the kernel
-driver.
-Otherwise the job fails before it installs anything, names what is in
-the way, and leaves the machine alone. The place is given back when
-the job ends, cancelled or not. Someone who needs the machine while a
-job waits or runs cancels the run and re-runs it afterwards. The check
-is required, so a labeled PR cannot merge before the suite passes. A
-new push or a label change cancels the superseded run, queued or
-mid-suite, and starts a fresh one.
+machine's persistent runner, in xnvme-devenv's host container, and the
+suite runs in a guest the job boots there: the guest image described
+below, on a disk made afresh for the job, with the machine's NVMe
+device and GPU passed through with vfio-pci. Every job so starts on a
+pristine machine, and what it installs or leaves running goes with the
+guest, which is killed when the job ends, cancelled or not. Only the
+filesystem on the NVMe device outlives a job.
 
-The job runs the PR's own workflow and scripts as root on the machine.
-The label is the only gate, and it stays on the PR, so later pushes by
-the author run on the hardware without another look. The machine is
-therefore sacrificial: it holds no credentials and nothing trusts it.
-GitHub's setting for workflows from fork pull requests, which can
-require approval for outside collaborators, covers these jobs like the
-hosted ones.
+The machine serves one job at a time, and may serve people too. The
+workflow does not arbitrate that; the runner does, with a script it
+runs before each job and one after it, as the setup below says. A job
+that has to wait for the machine waits there, up to a day; each job's
+timeout is its run budget plus that day. The check is required, so a
+labeled PR cannot merge before the suite passes. A new push or a label
+change cancels the superseded run, queued or mid-suite, and starts a
+fresh one.
 
-The job checks out the PR on the machine. It drives the hardware
-through cijoe over a local SSH loop (`root@localhost`). This is the
-same rsync/build/run_tests flow as manual development (the quick
-start in the README). The full log lands on the workflow run.
+The job runs the PR's own workflow and scripts as root in a privileged
+container, which is root on the machine in all but name. The label is
+the only gate, and it stays on the PR, so later pushes by the author
+run on the hardware without another look. The machine is therefore
+sacrificial: it holds no credentials and nothing trusts it. GitHub's
+setting for workflows from fork pull requests, which can require
+approval for outside collaborators, covers these jobs like the hosted
+ones.
+
+The job checks out the PR in the container. `ci/scripts/guest.py up` boots
+the guest and authorizes a key made for the run in it;
+`ci/configs/guest-transport.toml` and `ci/configs/guest-test.toml` become the
+job's `transport.toml` and `test.toml`, so cijoe drives the guest over
+SSH on the port QEMU forwards. From there it is the same
+rsync/build/run_tests flow as manual development (the quick start in
+the README). The full log lands on the workflow run.
 
 The bench labels work the same way, except that a bench job waits for
 `test-full` and is skipped when that one fails; without the `test-full`
@@ -66,10 +73,11 @@ artifact on the run. A bench job that ran its legs also uploads
 `results-<job>`: `results.json` with the run's provenance, every
 record, the raw filperf logs and the report, and `report.md` beside it,
 so a collector fetches one artifact per job. The reference datasets
-must already be present on the machine, and nothing else should be:
-filperf indexes the whole filesystem, so the suite removes its files at
-the end of a run, and a file left by other work changes the bench or
-crashes it.
+must already be present on the machine's NVMe device, and nothing else
+should be: filperf indexes the whole filesystem, so the suite removes
+its files at the end of a run, and a file left by other work changes
+the bench or crashes it. A guest cannot set the CPU's clocks, so the
+machine keeps them at the bench's setting.
 
 ### Repository setup
 
@@ -84,42 +92,51 @@ One-time GitHub configuration on the repository the workflow runs in:
 
 ### Runner machine
 
-One-time setup on the hardware machine, as an unprivileged user:
+One-time setup on the hardware machine:
 
-1. Provision the machine as the quick start in the README says.
-   Populate the reference datasets for bench.
-2. Install the GitHub Actions runner under `~/actions-runner`.
+1. Boot with the IOMMU on in a mode that gives devices their groups
+   (`iommu=pt` does), check that `/dev/kvm` is there, and install
+   docker with the runner's user in its group.
+2. Bind the NVMe device and the GPU to vfio-pci at boot, with the other
+   functions in their IOMMU groups, so that the host never drives
+   them. The job binds them when they are not, but that fails while a
+   service of the host holds the GPU.
+3. Give their addresses on the host in `/etc/opends-ci/rig.toml`, the
+   layer over the rig in `ci/configs/guest.toml`:
+
+   ```toml
+   [rig.devices.nvme0]
+   host = "0000:01:00.0"
+
+   [rig.devices.gpu0]
+   host = "0000:2b:00.0"
+   ```
+
+4. Make `/var/cache/opends-ci`, the image cache, and build the guest
+   image into it, as the section below says.
+5. Set the clocks the bench wants at boot: the schedutil governor and
+   boost off. A guest cannot set them.
+6. Provision the NVMe device as the quick start in the README says
+   for a target, with an XFS filesystem and the reference datasets for
+   bench, before it goes to vfio-pci or from a guest.
+7. Install the GitHub Actions runner under `~/actions-runner`.
    Register it with an extra `nvme-cuda` label. Install it as a
    service (`sudo ./svc.sh install <user> && sudo ./svc.sh start`) and
    leave it running: GitHub deletes the registration of a runner that
-   has not connected for 14 days. The stack check, not a stopped
-   service, is what keeps a labeled run off a machine in use.
-3. Create the local SSH loop: Make a passphrase-less key pair for the
-   runner user and authorize it for `root@localhost`.
-4. Copy `ci/configs/{test,transport}.toml.example` to
-   `~/.config/opends-ci/{test,transport}.toml` and fill them in. Set
-   `localhost` as the hostname. Use a `repo_path`, a `build_dir`, a
-   `deps.src_root`, a `deps.build_root` and a `deps.install_prefix`
-   dedicated to CI: a job deletes and clones the dependency checkouts
-   afresh, and installs nothing into /usr/local; homi's install still
-   writes its unit to /usr/lib/systemd and its default config to
-   /etc/homi. The workflow copies the files into the checkout.
-5. Install cijoe and the python dependencies of `ci/scripts/` for the
-   runner user. `config.sh` records the PATH of the shell that runs it
-   in the runner's `.path`, so configure from a shell that finds them.
-6. Check that rsync on the machine is 3.2.3 or newer: `ci/scripts/rsync.py`
-   passes `--mkpath`.
-7. Install [labgrid](https://labgrid.readthedocs.io/), run
-   `labgrid-coordinator` as a service bound to localhost, and create a
-   place for the machine. Put `LG_PLACE=<place>` in the runner's
-   `.env`. Everyone who uses the machine acquires that place first;
-   the job queues for it with a reservation and gives it back with
-   `release-from`.
+   has not connected for 14 days.
+8. Where people use the machine too, let the runner take the lock they
+   use: name a script that waits for it and takes it as
+   `ACTIONS_RUNNER_HOOK_JOB_STARTED` in the runner's `.env`, and one
+   that gives it back as `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`. The
+   runner runs the first before a job's steps and the second after
+   them, and a job waits for as long as the first takes. The project's
+   machine uses a [labgrid](https://labgrid.readthedocs.io/) place for
+   this, held as `gh-run-<run id>-<job>`.
 
 ## The guest image
 
-The hardware jobs can also run inside a guest on the machine, with the
-NVMe device and the GPU passed through to it with vfio-pci, so that every
+The hardware jobs run inside a guest on the machine, with the NVMe
+device and the GPU passed through to it with vfio-pci, so that every
 job starts on a pristine machine and leaves nothing on the host. The
 guest is nosi's Debian 13, the image xnvme's CI boots, with NVIDIA's
 driver and CUDA, nvidia-fs, upcie's dma-buf modules, the packages the
@@ -139,7 +156,7 @@ Build it on the machine, as the runner user, with docker installed and
 `/dev/kvm` present:
 
 ```sh
-ci/scripts/guest_image.py
+ci/scripts/guest_image.py --cache /var/cache/opends-ci
 ```
 
 That runs `ci/tasks/guest_derive.yaml` in the container: stage the base,
@@ -153,10 +170,9 @@ export the disk as `opends-guest-x86_64.qcow2` in the image cache,
 minutes once the base is cached; the first one also fetches the base.
 The `ci` guest in `ci/configs/guest.toml` is sized for the suite and boots
 that image through the usual initialise step, a fresh overlay per boot.
+The hardware jobs boot it with the devices, through `ci/scripts/guest.py`.
 
 One module is known not to load in the image: nvidia-fs builds without
 the open driver's symbol versions and the kernel refuses it, so it is
 left out of the modules the image loads at boot and cuFile runs in its
-compatibility mode in the guest until that is solved. The jobs
-themselves still run on the host; booting the guest from them, with the
-passthrough rig, is the next step.
+compatibility mode in the guest until that is solved.

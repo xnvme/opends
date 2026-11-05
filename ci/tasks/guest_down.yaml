@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-3-Clause
+doc: |
+  Stop the guest a hardware job ran in
+  ====================================
+
+  Kills the ci guest. Its disk is made afresh at the next boot, so nothing of the job stays.
+
+steps:
+  - name: guest_kill
+    uses: xnvme_devenv.rig_guest_kill
+    with:
+      guest_name: ci

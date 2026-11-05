@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# The suite's paths in the guest. A hardware job copies this to configs/test.toml. nvme_bdf is the device's address in the guest, not on the host.
+[test]
+repo_path = "/root/src/OpenDS"
+build_dir = "/root/build/opends-build"
+nvme_bdf = "0000:01:00.0"
+mount_point = "/mnt/datasets"
+
+[deps]
+src_root = "/root/src"
+build_root = "/root/build"
+install_prefix = "/usr/local"

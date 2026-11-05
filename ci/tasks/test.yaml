@@ -33,10 +33,6 @@ doc: |
         tasks/test.yaml
 
 steps:
-  - name: check_stack_down
-    run: |
-      '{{ config.test.repo_path }}/ci/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
-
   - name: bind_nvme
     run: |
       '{{ config.test.repo_path }}/ci/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'

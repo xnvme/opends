@@ -11,8 +11,7 @@ values they name, each knob they leave out at its aisio default.
 
 Either way the HOMI/qublk stack comes up once, each config runs the bench steps
 into opends/t<t>_q<q>[_aligned][_spin<v>][_busy]/ with the aisio knobs passed
-through the environment, and the stack is torn down. Both suites set the CPU
-governor for the run and restore it in teardown. Restrict with --suite,
+through the environment, and the stack is torn down. Restrict with --suite,
 --mode, --dataset.
 
 An assume_aligned_only leg rejects any read with a sub-LBA tail, so datasets
@@ -57,7 +56,7 @@ GRID_AXES = {"io_threads": [1, 2, 4, 8],
 KNOB_DEFAULTS = {"io_threads": 2, "queue_depth": 8,
                  "assume_aligned_only": 0, "idle_spin": 200}
 
-CUFILE_SETUP = ["check_stack_down", "cpu_governor", "load_nvidia_fs", "meta", "bind_nvme", "mount"]
+CUFILE_SETUP = ["load_nvidia_fs", "meta", "bind_nvme", "mount"]
 
 def _bench_steps(backend, modes, datasets):
     avail = BACKEND_MODES.get(backend, MODES)
@@ -102,11 +101,7 @@ def _run_cufile(args, modes, datasets):
         steps = CUFILE_SETUP + bench
     print(f"\n=== cufile suite: "
           f"{', '.join(steps) if steps else 'all steps'} ===", flush=True)
-    try:
-        run_cijoe(SUITES["cufile"], *steps, out=f"{args.out}/cufile")
-    finally:
-        run_cijoe(SUITES["cufile"], "cpu_governor_restore",
-                  out=f"{args.out}/cufile/_teardown")
+    run_cijoe(SUITES["cufile"], *steps, out=f"{args.out}/cufile")
 
 
 def _axis_configs(axes, modes, datasets):
@@ -194,8 +189,7 @@ def _run_opends(args, modes, datasets, configs):
         print(f"--dataset/--mode keeps {len(plan)} of {len(configs)} configs",
               flush=True)
     if not args.skip_setup:
-        run_cijoe(suite, "check_stack_down", "cpu_governor", "homi_stack_up",
-                  out=f"{out}/_setup")
+        run_cijoe(suite, "homi_stack_up", out=f"{out}/_setup")
     try:
         for i, (p, steps) in enumerate(plan, 1):
             t, q = p["io_threads"], p["queue_depth"]
@@ -216,8 +210,7 @@ def _run_opends(args, modes, datasets, configs):
                 failed.append(leg)
     finally:
         if not args.keep_stack:
-            run_cijoe(suite, "homi_stack_down", "cpu_governor_restore",
-                      out=f"{out}/_teardown")
+            run_cijoe(suite, "homi_stack_down", out=f"{out}/_teardown")
     return failed
 
 
