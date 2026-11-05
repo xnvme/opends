@@ -168,6 +168,20 @@ struct file_op_write {
 	opends_accel_devptr_t turn_dptr;
 };
 
+/* Where an op lands on the drive, resolved once before it is admitted. */
+struct io_plan {
+	struct opends_extent *extents;
+	uint32_t extent_count;
+	struct opends_extent raw; /* the one extent of a raw handle */
+	uint64_t req_start;
+	uint64_t req_end;
+	uint8_t *dst_base;
+	bool kernel;        /* whole LBAs land off a dword: a kernel read */
+	uint32_t spans;     /* extents it sends commands for */
+	uint64_t first_lba; /* first LBA of those */
+	uint64_t end_lba;   /* one past the last LBA of those */
+};
+
 struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
@@ -186,6 +200,10 @@ struct file_op {
 	/* counted as a reader of the file's extents until released */
 	bool held;
 	struct file_op_write wr;
+	uint64_t ticket; /* submission order */
+	bool planned;
+	bool admitted;
+	struct io_plan plan;
 	union {
 		struct file_op_stream stream;
 		struct file_op_async async;
@@ -268,11 +286,18 @@ struct driver {
 
 	struct io_worker *workers;
 	uint32_t rr_next;
+	uint64_t next_ticket; /* under submit_lock */
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
 	pthread_mutex_t attach_lock;
 	bool stop;
+
+	/* Read admission, see admit_read(). Under admit_lock. */
+	pthread_mutex_t admit_lock;
+	uint32_t active_reads;   /* admitted and not yet complete */
+	uint64_t next_lba;       /* where the last admitted read ends */
+	uint64_t waiting_ticket; /* oldest read refused, NO_WAITER if none */
 };
 
 /* Shared between the backend's source files, hidden from the library's
