@@ -13,6 +13,7 @@ filperf logs, and `report.md`, the rendered report.
 | snapshot | job | run |
 | --- | --- | --- |
 | [`20261105-cb3abe8-bench-sweep-42003488510`](snapshots/20261105-cb3abe8-bench-sweep-42003488510/report.md) | bench-sweep | [42003488510](https://github.com/xnvme/opends/actions/runs/42003488510) |
+| [`20261105-5a4e07c-bench-sweep-42020872998`](snapshots/20261105-5a4e07c-bench-sweep-42020872998/report.md) | bench-sweep | [42020872998](https://github.com/xnvme/opends/actions/runs/42020872998) |
 | [`20261104-bab2c88-bench-41820575714`](snapshots/20261104-bab2c88-bench-41820575714/report.md) | bench | [41820575714](https://github.com/xnvme/opends/actions/runs/41820575714) |
 | [`20261104-7fd1c52-bench-sweep-41853661651`](snapshots/20261104-7fd1c52-bench-sweep-41853661651/report.md) | bench-sweep | [41853661651](https://github.com/xnvme/opends/actions/runs/41853661651) |
 | [`20261104-7fd1c52-bench-41853661651`](snapshots/20261104-7fd1c52-bench-41853661651/report.md) | bench | [41853661651](https://github.com/xnvme/opends/actions/runs/41853661651) |
