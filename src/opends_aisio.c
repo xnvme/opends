@@ -26,6 +26,8 @@
 
 #include "ds_aisio.h"
 
+#define NO_WAITER UINT64_MAX
+
 static struct driver *drv;
 static long use_count;
 
@@ -835,11 +837,17 @@ zero_fill(struct file_op *op, uint8_t *dst, size_t nbytes)
 	return 0;
 }
 
+/* Resolve where a read lands on the drive. Sets op->err on failure. */
 static void
-start_read_op(struct io_worker *w, struct file_op *op)
+plan_read_op(struct io_worker *w, struct file_op *op)
 {
 	struct driver *d = w->drv;
+	struct read_plan *p = &op->plan;
+	uint32_t lba_mask = d->lba_size - 1;
+	size_t size;
+	int err;
 
+	memset(p, 0, sizeof(*p));
 	if (d->lba_size == 0) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return;
@@ -849,60 +857,136 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		return;
 	}
 
-	size_t size;
-	uint64_t req_start;
-	uint8_t *dst_base;
 	if (op->mode == FILE_OP_STREAM) {
 		size = *op->u.stream.size_p;
-		req_start = (uint64_t)*op->u.stream.file_offset_p;
-		dst_base = (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
+		p->req_start = (uint64_t)*op->u.stream.file_offset_p;
+		p->dst_base =
+		        (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
 	} else {
 		size = op->u.async.size;
-		req_start = (uint64_t)op->u.async.file_offset;
-		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
+		p->req_start = (uint64_t)op->u.async.file_offset;
+		p->dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	}
-	if (!ds_aisio_range_registered(w->drv, dst_base, size)) {
+	if (!ds_aisio_range_registered(d, p->dst_base, size)) {
 		op->err = OPENDS_MEMORY_NOT_REGISTERED;
 		return;
 	}
-	if (size > UINT64_MAX - req_start) {
+	if (size > UINT64_MAX - p->req_start) {
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
-	if (needs_kernel_read(d, dst_base, size, req_start)) {
+	p->req_end = p->req_start + size;
+	if (needs_kernel_read(d, p->dst_base, size, p->req_start)) {
 		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM) {
 			op->err = OPENDS_INVALID_VALUE;
 			return;
 		}
-		if (w->kread.broken) {
-			op->err = OPENDS_DEVICE_DRIVER_ERROR;
-			return;
-		}
-		if (w->kread.op) {
-			/* the buffer is in use: stay pending */
-			__atomic_store_n(&op->state, FILE_OP_PENDING,
-			                 __ATOMIC_RELEASE);
-			return;
-		}
-		kernel_read_start(w, op, dst_base, size, req_start);
+		/* read by the kernel: no commands, so not admitted */
+		p->kernel = true;
 		return;
 	}
-	uint64_t req_end = req_start + size;
 
-	struct ds_extent *extents;
-	uint32_t extent_count;
-	int frc = lease_extents(d, op->h, &extents, &extent_count);
-	if (frc == -EAGAIN) {
-		/* the old map is being recalled: stay pending */
-		__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
+	err = lease_extents(d, op->h, &p->extents, &p->extent_count);
+	if (err == -EAGAIN) {
+		/* the old map is being recalled: plan again on a later pass */
+		op->planned = false;
 		return;
 	}
-	if (frc < 0) {
+	if (err < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
 	}
 	op->held = true;
 
+	for (uint32_t i = 0; i < p->extent_count; i++) {
+		const struct ds_extent *e = &p->extents[i];
+		uint64_t ext_start = e->file_offset;
+		uint64_t span_start = max_u64(p->req_start, ext_start);
+		uint64_t span_end =
+		        XNVME_MIN_U64(p->req_end, ext_start + e->length);
+
+		if (ext_start >= p->req_end) {
+			break;
+		}
+		if (span_start >= span_end) {
+			continue;
+		}
+		if (!p->spans) {
+			p->first_lba = e->slba + ((span_start - ext_start) >>
+			                          d->lba_shift);
+		}
+		p->end_lba = e->slba + ((span_end - ext_start + lba_mask) >>
+		                        d->lba_shift);
+		p->spans++;
+	}
+}
+
+/* Whether the drive should take this read now.
+ *
+ * A read of several commands that starts away from where the last one ended
+ * is slow while other commands are in flight, so it waits for the drive to
+ * drain. A read that continues the last one, or fits in one command, does not
+ * wait. The oldest refused read goes first and holds back younger ones, so a
+ * flow of small reads cannot starve a waiting one.
+ *
+ * At queue depth 1 no read waits: a read alone then has one command in flight,
+ * which is slower than the reads of several I/O threads side by side. */
+static bool
+admit_read(struct driver *d, struct file_op *op)
+{
+	const struct read_plan *p = &op->plan;
+	bool one_cmd =
+	        p->spans == 1 && p->req_end - p->req_start <= d->mdts_nbytes;
+	bool admit;
+
+	if (d->cfg.queue_depth == 1) {
+		return true;
+	}
+
+	pthread_mutex_lock(&d->admit_lock);
+	if (d->active_reads == 0) {
+		admit = op->ticket <= d->waiting_ticket;
+	} else {
+		admit = (one_cmd || p->first_lba == d->next_lba) &&
+		        op->ticket < d->waiting_ticket;
+	}
+	if (admit) {
+		op->admitted = true;
+		d->active_reads++;
+		d->next_lba = p->end_lba;
+		if (d->waiting_ticket == op->ticket) {
+			d->waiting_ticket = NO_WAITER;
+		}
+	} else if (op->ticket < d->waiting_ticket) {
+		d->waiting_ticket = op->ticket;
+	}
+	pthread_mutex_unlock(&d->admit_lock);
+
+	return admit;
+}
+
+static void
+retire_read(struct driver *d, struct file_op *op)
+{
+	if (!op->admitted) {
+		return;
+	}
+	op->admitted = false;
+	pthread_mutex_lock(&d->admit_lock);
+	d->active_reads--;
+	pthread_mutex_unlock(&d->admit_lock);
+}
+
+static void
+submit_read_op(struct io_worker *w, struct file_op *op)
+{
+	struct driver *d = w->drv;
+	struct read_plan *p = &op->plan;
+	uint64_t req_start = p->req_start;
+	uint64_t req_end = p->req_end;
+	uint8_t *dst_base = p->dst_base;
+	struct ds_extent *extents = p->extents;
+	uint32_t extent_count = p->extent_count;
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
 
@@ -968,6 +1052,7 @@ start_read_op(struct io_worker *w, struct file_op *op)
 	}
 out:
 	free(extents);
+	p->extents = NULL;
 }
 
 static void
@@ -1017,6 +1102,8 @@ complete_read_op(struct file_op *op)
 
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 
+	retire_read(drv, op);
+
 	if (op->mode == FILE_OP_STREAM) {
 		struct opends_stream *s = op->u.stream.opends_stream;
 		uint32_t tail_bytes = (op->err || !op->n_bounces)
@@ -1041,21 +1128,49 @@ complete_read_op(struct file_op *op)
 /*  Writes                                                            */
 /* ------------------------------------------------------------------ */
 
-/* Start a PENDING op. Returns true when it has to stay pending. */
+/* Start a PENDING op. Returns true when it has to stay pending: a write
+ * that waits for a buffer, or a read that waits to be admitted. */
 static bool
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
 	if (op->is_write) {
 		return ds_dispatch_write(w, op);
 	}
-	op->chunks_remaining = 0;
-	op->bounces_outstanding = 0;
-	op->bytes_acc = 0;
-	op->err = 0;
-	op->n_bounces = 0;
-	op->held = false;
+	if (!op->planned) {
+		op->chunks_remaining = 0;
+		op->bounces_outstanding = 0;
+		op->bytes_acc = 0;
+		op->err = 0;
+		op->n_bounces = 0;
+		op->held = false;
+		op->planned = true;
+		plan_read_op(w, op);
+		if (!op->planned) {
+			return true;
+		}
+	}
+	if (!op->err && op->plan.kernel) {
+		if (w->kread.broken) {
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		} else if (w->kread.op) {
+			/* the buffer is in use: stay pending */
+			return true;
+		}
+	}
+	if (!op->err && op->plan.spans && !admit_read(w->drv, op)) {
+		return true;
+	}
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
-	start_read_op(w, op);
+	if (op->err) {
+		return false;
+	}
+	if (op->plan.kernel) {
+		kernel_read_start(w, op, op->plan.dst_base,
+		                  op->plan.req_end - op->plan.req_start,
+		                  op->plan.req_start);
+	} else {
+		submit_read_op(w, op);
+	}
 	return false;
 }
 
@@ -1074,12 +1189,13 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 }
 
 /* Service a PENDING stream op: dispatch it once its stream has reached it,
- * otherwise leave it for a later pass. Returns true while still gated. A
- * read, and a write that stages nothing, publish 2*seq on the gate on
- * arrival; a staged write has reached the stream when its first round has
- * landed. The gate is a free-running counter (an arrival publish and this
- * thread's release each tick it), so compare with serial/cyclic arithmetic
- * to match the device-side GEQ wait, keeping the sequence wrap-safe. */
+ * otherwise leave it for a later pass. Returns true while it is still gated
+ * or has to stay pending. A read, and a write that stages nothing, publish
+ * 2*seq on the gate on arrival; a staged write has reached the stream when
+ * its first round has landed. The gate is a free-running counter (an arrival
+ * publish and this thread's release each tick it), so compare with
+ * serial/cyclic arithmetic to match the device-side GEQ wait, keeping the
+ * sequence wrap-safe. */
 static bool
 poll_stream_pending(struct io_worker *w, struct file_op *op)
 {
@@ -1454,6 +1570,8 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 	pthread_mutex_init(&d->write_buf_lock, NULL);
+	pthread_mutex_init(&d->admit_lock, NULL);
+	d->waiting_ticket = NO_WAITER;
 
 	int rc = xal_open_lease(d);
 	if (rc < 0) {
@@ -1461,6 +1579,7 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
+		pthread_mutex_destroy(&d->admit_lock);
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1474,6 +1593,7 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
+		pthread_mutex_destroy(&d->admit_lock);
 		free(d);
 		drv = NULL;
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
@@ -1487,6 +1607,7 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
+		pthread_mutex_destroy(&d->admit_lock);
 		free(d);
 		drv = NULL;
 		return opends_err_dev(OPENDS_DEVICE_DRIVER_ERROR, arc);
@@ -1520,6 +1641,7 @@ opends_driver_close(void)
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
 	pthread_mutex_destroy(&drv->reg_lock);
+	pthread_mutex_destroy(&drv->admit_lock);
 	free(drv);
 	drv = NULL;
 	return opends_ok();
@@ -1788,6 +1910,9 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.async.file_offset = file_offset;
 	op->u.async.buf_offset = buf_offset;
 	op->u.async.future = future;
+	op->ticket = d->next_ticket++;
+	op->planned = false;
+	op->admitted = false;
 	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
 	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
 	pthread_mutex_unlock(&d->submit_lock);
@@ -1950,6 +2075,9 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 			ds_write_geometry(d, &op->wr);
 		}
 	}
+	op->ticket = d->next_ticket++;
+	op->planned = false;
+	op->admitted = false;
 
 	/* Order the I/O thread against the user's stream through a per-stream
 	 * gate word (strictly monotonic, two phases per op): the submitter
