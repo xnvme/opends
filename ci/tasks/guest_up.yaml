@@ -3,7 +3,7 @@ doc: |
   Boot the guest a hardware job runs in
   =====================================
 
-  Makes the ci guest afresh from its image and starts it with the machine's NVMe device and GPU passed through, then authorizes the key in OPENDS_GUEST_PUBKEY for root. scripts/guest.py runs it.
+  Makes the ci guest afresh from its image, or the one OPENDS_GUEST_IMAGE names, and starts it with the machine's NVMe device and GPU passed through, then authorizes the key in OPENDS_GUEST_PUBKEY for root. scripts/guest.py runs it.
 
 steps:
   - name: guest_kill
@@ -15,7 +15,7 @@ steps:
     uses: qemu.guest_initialize
     with:
       guest_name: ci
-      system_image_name: "{{ config.qemu.guests.ci.system_image_name }}"
+      system_image_name: "{{ local.env.OPENDS_GUEST_IMAGE | default(config.qemu.guests.ci.system_image_name) }}"
 
   - name: guest_start
     uses: xnvme_devenv.rig_guest_start

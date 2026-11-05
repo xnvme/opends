@@ -38,8 +38,10 @@ def main(args, cijoe):
         log.error("the guest did not power off")
         return errno.ETIMEDOUT
 
+    # Under another name until it is whole, as a job boots what it finds
     image.parent.mkdir(parents=True, exist_ok=True)
     err, _ = cijoe.run_local(
-        f"qemu-img convert -O qcow2 {guest.boot_img} {image} && qemu-img info {image}"
+        f"qemu-img convert -O qcow2 {guest.boot_img} {image}.tmp"
+        f" && mv {image}.tmp {image} && qemu-img info {image}"
     )
     return err

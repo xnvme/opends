@@ -62,7 +62,9 @@ the guest and authorizes a key made for the run in it;
 job's `transport.toml` and `test.toml`, so cijoe drives the guest over
 SSH on the port QEMU forwards. From there it is the same
 rsync/build/run_tests flow as manual development (the quick start in
-the README). The full log lands on the workflow run.
+the README), except that the guest boots with xnvme and xal installed
+and the job builds only OpenDS and fil. The full log lands on the
+workflow run.
 
 The bench labels work the same way, except that a bench job waits for
 `test-full` and is skipped when that one fails; without the `test-full`
@@ -112,8 +114,8 @@ One-time setup on the hardware machine:
    host = "0000:2b:00.0"
    ```
 
-4. Make `/var/cache/opends-ci`, the image cache, and build the guest
-   image into it, as the section below says.
+4. Make `/var/cache/opends-ci`, the image cache. The first job builds
+   the images into it, as the section below says.
 5. Set the clocks the bench wants at boot: the schedutil governor and
    boost off. A guest cannot set them.
 6. Provision the NVMe device as the quick start in the README says
@@ -152,7 +154,8 @@ Moving a pin and building again is how anything in the image changes;
 nothing in it is edited in place. The image holds the NVIDIA driver and
 CUDA, so it stays on the machine and is not published.
 
-Build it on the machine, as the runner user, with docker installed and
+A job builds it when the cache holds none for its checkout. To build it
+by hand, on the machine, as the runner user, with docker installed and
 `/dev/kvm` present:
 
 ```sh
@@ -165,12 +168,26 @@ install the build packages and the kernel, reboot into that kernel, drop
 the base's older kernels, install the pinned NVIDIA packages and the
 upcie modules so their DKMS builds target it, check that every DKMS
 module built and load the ones that do not need the hardware, and
-export the disk as `opends-guest-x86_64.qcow2` in the image cache,
+export the disk as `opends-guest-<key>.qcow2` in the image cache,
 `~/.cache/xnvme-devenv` by default. The build takes about ten
 minutes once the base is cached; the first one also fetches the base.
 The `ci` guest in `ci/configs/guest.toml` is sized for the suite and boots
 that image through the usual initialise step, a fresh overlay per boot.
 The hardware jobs boot it with the devices, through `ci/scripts/guest.py`.
+
+The cache holds two kinds of image, each named after a key of what it
+is made from, so that a job finds the one for its checkout, builds it
+when there is none, and leaves the ones other checkouts use alone. The
+key of the guest image covers the lock, the derive recipe and the
+derive guest. On it sits the image a job boots,
+`opends-deps-<key>-<key>.qcow2`: the guest image with xnvme and xal
+built and installed, an overlay that `ci/scripts/guest.py` makes by
+booting the guest image, running the two setup tasks in it and keeping
+its disk. Its key covers the commits that the refs in
+`ci/configs/deps.toml` point at when the job starts, so a branch that
+moved gets a new image, and how the two are built.
+`ci/scripts/guest.py keys` prints both names. The two guest images and the
+four images with dependencies used last are kept, the rest removed.
 
 One module is known not to load in the image: nvidia-fs builds without
 the open driver's symbol versions and the kernel refuses it, so it is
