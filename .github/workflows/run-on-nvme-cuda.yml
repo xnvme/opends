@@ -56,8 +56,7 @@ jobs:
         id: guest
         run: ci/scripts/guest.py up
       - run: ci/scripts/rsync.py
-      - run: ci/scripts/setup_deps.py
-      - run: ci/scripts/build.py
+      - run: ci/scripts/setup_deps.py opends fil
       # A backend that is not built turns its tests into stubs that pass
       - name: Check that the cuFile and aisio backends were built
         run: ssh localhost ls /root/build/opends-build/libopends_cufile.so /root/build/opends-build/libopends_aisio.so

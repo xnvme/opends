@@ -54,10 +54,15 @@ system_args.tcp_forward = {host = 4200, guest = 22}
 system_label = "x86_64"
 disk.path = "{{ local.env.HOME }}/system_imaging/disk/debian-trixie-amd64.qcow2"
 
-# The image guest_derive.yaml exports
+# The image guest_derive.yaml exports. scripts/guest.py names the file after a key of its inputs.
 [system-imaging.images.opends-guest-x86_64]
 system_label = "x86_64"
-disk.path = "{{ local.env.HOME }}/system_imaging/disk/opends-guest-x86_64.qcow2"
+disk.path = "{{ local.env.HOME }}/system_imaging/disk/{{ local.env.OPENDS_GUEST_BASE | default('opends-guest-x86_64') }}.qcow2"
+
+# The same with xnvme and xal installed, an overlay made by tasks/guest_save.yaml. A job boots this one.
+[system-imaging.images.opends-deps-x86_64]
+system_label = "x86_64"
+disk.path = "{{ local.env.HOME }}/system_imaging/disk/{{ local.env.OPENDS_GUEST_DEPS | default('opends-deps-x86_64') }}.qcow2"
 
 # The machine's NVMe device and GPU, passed through by xnvme-devenv's rig scripts, each on a root port of its own: 0000:01:00.0 and 0000:02:00.0 in the guest.
 # The machine's config, layered on this one, gives each its 'host', the address on the machine.

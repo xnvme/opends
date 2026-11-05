@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-3-Clause
+doc: |
+  Keep the guest's disk as the image with the dependencies
+  ========================================================
+
+  Powers off the ci guest and keeps its disk as an image on the one it booted. scripts/guest.py runs it after it built xnvme and xal in a guest booted from the guest image.
+
+steps:
+  - name: guest_save
+    uses: guest_save
+    with:
+      guest_name: ci

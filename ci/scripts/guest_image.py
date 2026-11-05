@@ -9,7 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from _helpers import REPO, guest_image_stem
+
 IMAGE = "ghcr.io/xnvme/xnvme-devenv/host:v0.15.0"
 
 parser = argparse.ArgumentParser(
@@ -32,6 +33,7 @@ cijoe = ("export PATH=$HOME/.local/bin:$PATH && "
          "-c configs/guest.toml -c configs/guest-lock.toml tasks/guest_derive.yaml")
 cmd = [
     args.engine, "run", "--rm", "--device", "/dev/kvm",
+    "-e", f"OPENDS_GUEST_BASE={guest_image_stem()}",
     "-v", f"{REPO}:/tmp/opends:ro",
     "-v", f"{args.cache}:/root/system_imaging",
     "-v", f"{args.home / 'guests'}:/root/guests",
