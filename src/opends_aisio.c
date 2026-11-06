@@ -527,7 +527,7 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 	s->bounce_desc_dev = 0;
 }
 
-#define ESTALE_RETRIES 6000
+#define ESTALE_RETRIES 100 /* times ESTALE_BACKOFF_US: five seconds */
 #define ESTALE_BACKOFF_US 50000
 
 /* True while the seqlock snapshot taken at `seq` is still valid: the server
@@ -631,8 +631,8 @@ resolve_extents(struct driver *d, int fd, struct ds_extent **out,
 		return -errno;
 	path[plen] = '\0';
 
-	/* The index is dirty while xal-server rebuilds it. Retry until a
-	 * clean snapshot resolves. */
+	/* The index is dirty while xal-server rebuilds it, and for good once
+	 * its server exits. Retry a few seconds, then fail. */
 	rc = -ESTALE;
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
 		rc = extents_snapshot(d, path, out, out_n);
