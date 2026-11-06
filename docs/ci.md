@@ -61,8 +61,8 @@ the guest and authorizes a key made for the run in it;
 `ci/configs/guest-transport.toml` and `ci/configs/guest-test.toml` become the
 job's `transport.toml` and `test.toml`, so cijoe drives the guest over
 SSH on the port QEMU forwards. From there it is the same
-rsync/build/run_tests flow as manual development (the quick start in
-the README), except that the guest boots with xnvme and xal installed
+rsync/build/run_tests flow as manual development (Testing on hardware
+in the README), except that the guest boots with xnvme and xal installed
 and the job builds only OpenDS and fil. The full log lands on the
 workflow run.
 
@@ -118,7 +118,7 @@ One-time setup on the hardware machine:
    the images into it, as the section below says.
 5. Set the clocks the bench wants at boot: the schedutil governor and
    boost off. A guest cannot set them.
-6. Provision the NVMe device as the quick start in the README says
+6. Provision the NVMe device as Testing on hardware in the README says
    for a target, with an XFS filesystem and the reference datasets for
    bench, before it goes to vfio-pci or from a guest.
 7. Install the GitHub Actions runner under `~/actions-runner`.
