@@ -7,7 +7,7 @@
  * resolves a file's extents from the index xal-server publishes over shared
  * memory. These tests therefore run while the homi/qublk/xal-server stack
  * is up and the test filesystem is mounted (over /dev/ublkbN). The harness
- * (tasks/test.yaml) brings the stack up, exports OPENDS_XAL_SHM /
+ * (ci/tasks/test.yaml) brings the stack up, exports OPENDS_XAL_SHM /
  * OPENDS_HOMI_MNT, and passes the path of a real file on the mount.
  *
  * Each test opens that file, registers it (which resolves its extents from

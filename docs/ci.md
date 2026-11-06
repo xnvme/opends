@@ -1,11 +1,13 @@
 # Continuous integration
 
 One workflow, `.github/workflows/ci.yml`, whose hardware jobs share
-their steps through `run-on-nvme-cuda.yml`. The `lint` and `test-ref` jobs run
-on GitHub-hosted runners for every push to main and every pull request,
-and both are intended as required checks.
+their steps through `run-on-nvme-cuda.yml`. What the jobs run is in
+`ci/`: the cijoe tasks and configs, and the scripts that drive them.
+The `lint` and `test-ref` jobs run on GitHub-hosted runners for every
+push to main and every pull request, and both are intended as required
+checks.
 
-`lint` runs `scripts/lint_check.py` (clang-format 18, pinned by the
+`lint` runs `ci/scripts/lint_check.py` (clang-format 18, pinned by the
 ubuntu-24.04 image).
 
 `test-ref` builds without CUDA, so only the ref backend and its tests
@@ -58,7 +60,7 @@ start in the README). The full log lands on the workflow run.
 The bench labels work the same way, except that a bench job waits for
 `test-full` and is skipped when that one fails; without the `test-full`
 label it runs on its own. `bench` runs one leg at the default knobs,
-`bench-sweep` runs the standard sweep (`scripts/bench/sweep.toml`), and
+`bench-sweep` runs the standard sweep (`ci/scripts/bench/sweep.toml`), and
 `bench-full-sweep` runs the whole knob cross product. Every job uploads its cijoe output as a workflow
 artifact on the run. A bench job that ran its legs also uploads
 `results-<job>`: `results.json` with the run's provenance, every
@@ -94,7 +96,7 @@ One-time setup on the hardware machine, as an unprivileged user:
    service, is what keeps a labeled run off a machine in use.
 3. Create the local SSH loop: Make a passphrase-less key pair for the
    runner user and authorize it for `root@localhost`.
-4. Copy `configs/{test,transport}.toml.example` to
+4. Copy `ci/configs/{test,transport}.toml.example` to
    `~/.config/opends-ci/{test,transport}.toml` and fill them in. Set
    `localhost` as the hostname. Use a `repo_path`, a `build_dir`, a
    `deps.src_root`, a `deps.build_root` and a `deps.install_prefix`
@@ -102,10 +104,10 @@ One-time setup on the hardware machine, as an unprivileged user:
    afresh, and installs nothing into /usr/local; homi's install still
    writes its unit to /usr/lib/systemd and its default config to
    /etc/homi. The workflow copies the files into the checkout.
-5. Install cijoe and the python dependencies of `scripts/` for the
+5. Install cijoe and the python dependencies of `ci/scripts/` for the
    runner user. `config.sh` records the PATH of the shell that runs it
    in the runner's `.path`, so configure from a shell that finds them.
-6. Check that rsync on the machine is 3.2.3 or newer: `scripts/rsync.py`
+6. Check that rsync on the machine is 3.2.3 or newer: `ci/scripts/rsync.py`
    passes `--mkpath`.
 7. Install [labgrid](https://labgrid.readthedocs.io/), run
    `labgrid-coordinator` as a service bound to localhost, and create a

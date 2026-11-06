@@ -26,26 +26,26 @@ doc: |
 steps:
   - name: check_stack_down
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
 
   - name: cpu_governor
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh'
+      '{{ config.test.repo_path }}/ci/tasks/steps/cpu_governor.sh'
 
   - name: load_nvidia_fs
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/load_nvidia_fs.sh'
+      '{{ config.test.repo_path }}/ci/tasks/steps/load_nvidia_fs.sh'
 
   - name: meta
     uses: bench_meta
 
   - name: bind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
 
   - name: mount
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: cufile_filesize8gib
     uses: bench_run
@@ -125,4 +125,4 @@ steps:
 
   - name: cpu_governor_restore
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/cpu_governor.sh' restore
+      '{{ config.test.repo_path }}/ci/tasks/steps/cpu_governor.sh' restore

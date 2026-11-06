@@ -170,7 +170,7 @@ def main(args, cijoe):
         "--summary",
     ]
 
-    cmd = (f". '{repo}/tasks/steps/install_prefix.sh' '{prefix}'\n"
+    cmd = (f". '{repo}/ci/tasks/steps/install_prefix.sh' '{prefix}'\n"
            "echo 3 > /proc/sys/vm/drop_caches\n" + " \\\n  ".join(filperf))
     err, state = cijoe.run(cmd)
     # assume_aligned_only rejects any read with a sub-LBA tail, so a dataset

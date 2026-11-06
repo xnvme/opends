@@ -13,14 +13,13 @@ import sys
 import tomllib
 from pathlib import Path
 
-from _helpers import fail, ok
+from _helpers import REPO as root
+from _helpers import ROOT, fail, ok
 
-root = Path(__file__).resolve().parent.parent
-
-with open(root / "configs" / "transport.toml", "rb") as f:
+with open(ROOT / "configs" / "transport.toml", "rb") as f:
     transport = tomllib.load(f)
 
-with open(root / "configs" / "test.toml", "rb") as f:
+with open(ROOT / "configs" / "test.toml", "rb") as f:
     test = tomllib.load(f)
 
 ssh = transport["cijoe"]["transport"]["ssh"]
