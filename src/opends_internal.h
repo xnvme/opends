@@ -17,9 +17,11 @@ ssize_t opends_direct_pwrite(int fd, int oflags, const void *src, size_t size,
                              int (*copy)(void *dst, const void *src,
                                          size_t bytes));
 
-/* O_DIRECT pread of size bytes at off into dst through a bounce buffer.
- * Returns the bytes read (short at EOF) or a negative errno. */
-ssize_t opends_direct_pread(int fd, void *dst, size_t size, off_t off);
+/* O_DIRECT pread of size bytes at off into dst through a bounce buffer and
+ * copy(). Returns the bytes read (short at EOF) or a negative errno. */
+ssize_t opends_direct_pread(int fd, void *dst, size_t size, off_t off,
+                            int (*copy)(void *dst, const void *src,
+                                        size_t bytes));
 
 /* OPENDS_INVALID_VALUE unless every operation in iocbp[0..nr) has mode
  * OPENDS_BATCH and opcode OPENDS_READ or OPENDS_WRITE. */

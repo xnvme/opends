@@ -176,7 +176,8 @@ out:
 }
 
 ssize_t
-opends_direct_pread(int fd, void *dst, size_t size, off_t off)
+opends_direct_pread(int fd, void *dst, size_t size, off_t off,
+                    int (*copy)(void *dst, const void *src, size_t bytes))
 {
 	if (size == 0)
 		return 0;
@@ -211,7 +212,11 @@ opends_direct_pread(int fd, void *dst, size_t size, off_t off)
 		size_t n = got - head;
 		if (n > size)
 			n = size;
-		memcpy(dst, (uint8_t *)bounce + head, n);
+		err = copy(dst, (uint8_t *)bounce + head, n);
+		if (err != 0) {
+			ret = -EIO;
+			goto out;
+		}
 		ret = (ssize_t)n;
 	}
 out:

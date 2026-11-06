@@ -651,6 +651,36 @@ pwrite_op(struct registered_file *h, const void *src, size_t size,
 	                            ds_accel->copy);
 }
 
+/* Whole LBAs cannot be DMAed to a destination off a dword: upcie wants the
+ * data buffer dword aligned, and the PRP offset is dword granular. Every LBA
+ * boundary of a read lands at the same offset modulo 4, so one test covers
+ * them all. A read with no whole LBA is bounced whatever its destination. */
+static bool
+needs_kernel_read(const struct driver *d, const uint8_t *dst, size_t size,
+                  uint64_t req_start)
+{
+	uint64_t lba_mask = d->lba_size - 1;
+	uint64_t first_lba = (req_start + lba_mask) & ~lba_mask;
+	uintptr_t shift = (uintptr_t)dst - req_start;
+
+	if (size < d->lba_size || first_lba + d->lba_size > req_start + size)
+		return false;
+	return (shift & (NVME_PRP_OFFSET_ALIGN - 1)) != 0;
+}
+
+static void
+kernel_read(struct file_op *op, void *dst, size_t size, uint64_t req_start)
+{
+	ssize_t n = opends_direct_pread(op->h->fd, dst, size, (off_t)req_start,
+	                                ds_accel->copy);
+
+	if (n < 0)
+		op->err = (n == -(ssize_t)EINVAL) ? OPENDS_INVALID_VALUE
+		                                  : OPENDS_DEVICE_DRIVER_ERROR;
+	else
+		op->bytes_acc = (size_t)n;
+}
+
 static int
 open_device(struct driver *d)
 {
@@ -917,6 +947,14 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
+	if (needs_kernel_read(d, dst_base, size, req_start)) {
+		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM) {
+			op->err = OPENDS_INVALID_VALUE;
+			return;
+		}
+		kernel_read(op, dst_base, size, req_start);
+		return;
+	}
 	uint64_t req_end = req_start + size;
 
 	struct ds_extent *extents;
@@ -954,11 +992,6 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 			if (head_bytes > remaining)
 				head_bytes = remaining;
-			if (remaining - head_bytes >= d->lba_size &&
-			    (head_bytes & (NVME_PRP_OFFSET_ALIGN - 1))) {
-				op->err = OPENDS_INVALID_VALUE;
-				goto out;
-			}
 			if (submit_partial(w, op, abs_dst, cur_slba, head_off,
 			                   head_bytes) < 0)
 				goto out;
