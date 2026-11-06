@@ -116,7 +116,7 @@ def _xfs_info(cijoe, repo_path, nvme_bdf, mount_point):
         target = mount_point
     else:
         ns = _target_stdout(
-            cijoe, f"'{repo_path}/tasks/steps/resolve_nvme_ns.sh' '{nvme_bdf}'",
+            cijoe, f"'{repo_path}/ci/tasks/steps/resolve_nvme_ns.sh' '{nvme_bdf}'",
             quiet=True,
         )
         target = ns.splitlines()[-1] if ns else None

@@ -15,12 +15,12 @@ doc: |
 steps:
   - name: bind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
 
   - name: mount
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: gen_lmcache
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/gen_lmcache_dataset.sh' '{{ config.test.mount_point }}/lmcacheish' 1820 14680064
+      '{{ config.test.repo_path }}/ci/tasks/steps/gen_lmcache_dataset.sh' '{{ config.test.mount_point }}/lmcacheish' 1820 14680064

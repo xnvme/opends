@@ -33,17 +33,13 @@ doc: |
         tasks/test.yaml
 
 steps:
-  - name: check_stack_down
-    run: |
-      '{{ config.test.repo_path }}/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
-
   - name: bind_nvme
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
 
   - name: mount
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: prepare_test_dir
     run: |
@@ -86,12 +82,12 @@ steps:
 
   - name: homi_stack_up
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        '{{ config.test.repo_path }}/ci/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
 
   - name: test_sync_read_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
@@ -99,7 +95,7 @@ steps:
 
   - name: test_mt_read_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_mt_read_aisio' \
@@ -109,7 +105,7 @@ steps:
     run: |
       # Two workers so concurrent async ops exercise the per-op tail bounce
       # and serialized allocator paths.
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
@@ -120,7 +116,7 @@ steps:
     run: |
       # Two spinning workers, so the async submit path runs with no worker
       # ever napping. Each one holds a CPU until the driver closes.
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
@@ -132,7 +128,7 @@ steps:
     run: |
       # Two workers so the batched ops actually run concurrently on the
       # backend.
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
@@ -143,7 +139,7 @@ steps:
     run: |
       # Increase fd limit to support more than enough file descriptors needed for xnvme cuda memory mapping.
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         prlimit --nofile=1048576:1048576 -- \
@@ -152,7 +148,7 @@ steps:
 
   - name: test_coherency_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_coherency_aisio' \
@@ -160,7 +156,7 @@ steps:
 
   - name: test_stream_read_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_stream_read_aisio' \
@@ -168,7 +164,7 @@ steps:
 
   - name: test_stream_read_busy_spin_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IDLE_SPIN=busy \
@@ -177,7 +173,7 @@ steps:
 
   - name: test_sync_write_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_write_aisio' \
@@ -185,7 +181,7 @@ steps:
 
   - name: test_stream_write_aisio
     run: |
-      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+      . '{{ config.test.repo_path }}/ci/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_stream_write_aisio' \
@@ -197,4 +193,4 @@ steps:
 
   - name: homi_stack_down
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/ci/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'

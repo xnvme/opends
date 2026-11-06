@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install clang-format
         run: sudo apt-get update -q && sudo apt-get install -qy --no-install-recommends clang-format
-      - run: scripts/lint_check.py
+      - run: ci/scripts/lint_check.py
 
   test-ref:
     runs-on: ubuntu-24.04
@@ -48,7 +48,7 @@ jobs:
     uses: ./.github/workflows/run-on-nvme-cuda.yml
     with:
       name: test-full
-      run: scripts/run_tests.py
+      run: ci/scripts/run_tests.py
       teardown: tasks/test.yaml clean_test_dir homi_stack_down
       timeout-minutes: 1560
 
@@ -58,8 +58,8 @@ jobs:
     uses: ./.github/workflows/run-on-nvme-cuda.yml
     with:
       name: bench
-      run: scripts/bench/run.py --suite opends --io-threads 2
-      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      run: ci/scripts/bench/run.py --suite opends --io-threads 2
+      teardown: tasks/bench_opends.yaml homi_stack_down
       report: true
       timeout-minutes: 1500
 
@@ -69,8 +69,8 @@ jobs:
     uses: ./.github/workflows/run-on-nvme-cuda.yml
     with:
       name: bench-sweep
-      run: scripts/bench/run.py --suite opends
-      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      run: ci/scripts/bench/run.py --suite opends
+      teardown: tasks/bench_opends.yaml homi_stack_down
       report: true
       timeout-minutes: 2160
 
@@ -80,7 +80,7 @@ jobs:
     uses: ./.github/workflows/run-on-nvme-cuda.yml
     with:
       name: bench-full-sweep
-      run: scripts/bench/run.py --suite opends --full-sweep
-      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      run: ci/scripts/bench/run.py --suite opends --full-sweep
+      teardown: tasks/bench_opends.yaml homi_stack_down
       report: true
       timeout-minutes: 4320

@@ -45,7 +45,7 @@ def _steps_for(backends, tests):
     needs_prep = any(t != "smoke" for _, t in selected)
     needs_stack = any(b == "aisio" for b, _ in selected)
 
-    steps = ["check_stack_down", "bind_nvme", "mount", "prepare_test_dir"]
+    steps = ["bind_nvme", "mount", "prepare_test_dir"]
     if needs_prep:
         steps.append("test_sync_read_prep")
     if any(t == "coherency" for _, t in selected):

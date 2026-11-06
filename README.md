@@ -4,27 +4,33 @@ Open source accelerator direct storage. Vendor-neutral API modeled on
 NVIDIA's cuFile (GDS), powered by AiSIO for high-throughput PCIe P2P DMA from
 NVMe straight into GPU memory.
 
-## Quick start
+## Build and install
 
-1. Provision a target machine by following the
-   [AiSIO](https://github.com/xnvme/aisio) guide.
+Requires [Meson](https://mesonbuild.com) and a C11 compiler:
 
-2. Create the configs and fill in the target details:
+```sh
+meson setup build
+meson compile -C build
+meson install -C build
+```
 
-   ```sh
-   cp configs/transport.toml.example configs/transport.toml  # hostname, ssh key
-   cp configs/test.toml.example configs/test.toml            # NVMe BDF, mount point
-   ```
+`meson install` installs headers, libraries, and a pkg-config file so other
+projects can find OpenDS via `pkg-config --cflags --libs opends` or meson's
+`dependency('opends')`.
 
-3. Sync the tree, install the pinned dependencies (xNVMe, xal, fil, first
-   run only), build, and run the test suites:
+A backend is built when what it needs is found, and the summary that
+`meson setup` prints says which ones are:
 
-   ```sh
-   python scripts/rsync.py
-   python scripts/setup_deps.py
-   python scripts/build.py
-   python scripts/run_tests.py
-   ```
+| Backend   | Needs                                                               |
+|-----------|---------------------------------------------------------------------|
+| Reference | Nothing more.                                                       |
+| cuFile    | The CUDA toolkit and the cuFile (GDS) library.                      |
+| AiSIO     | The CUDA toolkit, [xNVMe](https://github.com/xnvme/xnvme) and [xal](https://github.com/xnvme/xal), at the refs pinned in `ci/configs/deps.toml`. |
+
+To run, the AiSIO backend needs a machine provisioned as the
+[AiSIO](https://github.com/xnvme/aisio) guide says. [Testing on
+hardware](#testing-on-hardware) builds and installs the pinned dependencies
+on such a machine.
 
 ## Basic example
 
@@ -228,36 +234,48 @@ if (n < 0) {
 }
 ```
 
-## Building and installing locally
+## Testing on hardware
 
-Requires [Meson](https://mesonbuild.com) and a C11 compiler. The cuFile backend
-additionally requires the CUDA toolkit and cuFile library.
+What tests and benchmarks OpenDS on a machine with an NVMe device and a GPU
+is in `ci/`: the cijoe tasks and configs, and the scripts that run them
+against a target over SSH. CI runs the same flow, see
+[docs/ci.md](docs/ci.md).
 
-```sh
-meson setup build
-meson compile -C build
-meson install -C build
-```
+1. Provision a target machine by following the
+   [AiSIO](https://github.com/xnvme/aisio) guide.
 
-`meson install` installs headers, libraries, and a pkg-config file so other
-projects can find OpenDS via `pkg-config --cflags --libs opends` or meson's
-`dependency('opends')`.
+2. Create the configs and fill in the target details:
+
+   ```sh
+   cp ci/configs/transport.toml.example ci/configs/transport.toml  # hostname, ssh key
+   cp ci/configs/test.toml.example ci/configs/test.toml            # NVMe BDF, mount point
+   ```
+
+3. Sync the tree, install the pinned dependencies (xNVMe, xal, fil, first
+   run only), build, and run the test suites:
+
+   ```sh
+   python ci/scripts/rsync.py
+   python ci/scripts/setup_deps.py
+   python ci/scripts/build.py
+   python ci/scripts/run_tests.py
+   ```
 
 ## Benchmarking with filperf
 
 Throughput benchmarks use `filperf` from [fil](https://github.com/xnvme/fil)
 against four reference datasets. The AiSIO guide's `setup_dataset.yaml`
 writes `filesize8gib`, `tiktokish` and `imagenetish` during provisioning.
-`scripts/bench/setup_dataset.py` writes `lmcacheish` once.
+`ci/scripts/bench/setup_dataset.py` writes `lmcacheish` once.
 
-With the quick start done and the datasets in place:
+With the test flow above done and the datasets in place:
 
 ```sh
-python scripts/bench/run.py          # --full-sweep measures the whole grid
-python scripts/bench/report.py
+python ci/scripts/bench/run.py          # --full-sweep measures the whole grid
+python ci/scripts/bench/report.py
 ```
 
-`run.py` measures the configs in `scripts/bench/sweep.toml`. `report.py`
+`run.py` measures the configs in `ci/scripts/bench/sweep.toml`. `report.py`
 turns the records into `report.md`, `sweep.csv` and `report.png`. Each
 script's `--help` covers its own flags.
 
@@ -292,7 +310,7 @@ setup and their teardown.
 
 ### Try it
 
-With OpenDS installed as in the quick start, build the `opends-loader`
+With OpenDS installed as in [Testing on hardware](#testing-on-hardware), build the `opends-loader`
 branch of the fork, bring the stack up over the drive that holds the
 model, and load. `$OPENDS` is this repository, `$BDF` the drive and `$MNT`
 its mount point:
@@ -303,7 +321,7 @@ cd llama.cpp
 cmake -B build -DGGML_CUDA=ON -DLLAMA_OPENDS=ON
 cmake --build build --target llama-completion
 
-$OPENDS/tasks/steps/homi_stack_up.sh $BDF $MNT
+$OPENDS/ci/tasks/steps/homi_stack_up.sh $BDF $MNT
 export OPENDS_AISIO_DEVICE_HEAP_MB=64
 echo "What is the capital of France? /no_think" |
     build/bin/llama-completion -m $MNT/models/Qwen3-14B-Q6_K.gguf -st \
