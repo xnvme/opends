@@ -4,7 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ROOT is ci/, where cijoe runs and its configs, tasks and output live
 ROOT = Path(__file__).resolve().parent.parent
+REPO = ROOT.parent
 CONFIGS = ["-c", "configs/transport.toml", "-c", "configs/deps.toml",
            "-c", "configs/test.toml"]
 
