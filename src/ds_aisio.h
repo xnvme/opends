@@ -77,6 +77,8 @@ struct registered_file {
 	bool readable;
 	bool writable;
 	bool raw;
+	uint64_t inode_ref;
+	char path[PATH_MAX];
 };
 
 struct opends_stream {
@@ -159,6 +161,7 @@ struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
 	enum file_op_state state;
+	int extents_seq;
 	struct registered_file *h;
 	void *buf_base;
 	int chunks_remaining;
@@ -180,6 +183,12 @@ struct io_cursor {
 	uint64_t cur_slba;
 	uint8_t *abs_buf;
 	size_t remaining;
+};
+
+struct extent_buf {
+	struct ds_extent *v;
+	uint32_t n;
+	uint32_t cap;
 };
 
 struct driver;
@@ -204,6 +213,7 @@ struct io_worker {
 	struct driver *drv;
 	struct xnvme_queue *queue;
 	struct kernel_read kread;
+	struct extent_buf extents;
 	void *edge_buf; /* one block, for the edges of a staged write */
 	struct ds_stage_copy *descs; /* one for each op slot */
 	ds_accel_devptr_t descs_dptr;

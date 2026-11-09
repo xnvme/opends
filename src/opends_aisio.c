@@ -388,97 +388,150 @@ snapshot_held(struct xal *xal, int seq)
 	return !(seq & 1) && cur == seq && !dirty;
 }
 
-/* Copy the extents for `path` out of the shared index. The server rewrites
- * the shared pools in place, concurrent with this read, so validate the
- * snapshot before trusting anything read from them. -ESTALE means retry. */
 static int
-extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
-                 uint32_t *out_n)
+extent_buf_push(struct extent_buf *eb, const struct ds_extent *e)
+{
+	if (eb->n == eb->cap) {
+		uint32_t cap = eb->cap ? eb->cap * 2 : 16;
+		struct ds_extent *v = realloc(eb->v, cap * sizeof(*v));
+
+		if (!v)
+			return -ENOMEM;
+		eb->v = v;
+		eb->cap = cap;
+	}
+	eb->v[eb->n++] = *e;
+	return 0;
+}
+
+/* Unvalidated: the pool may be mid-rewrite. */
+static int
+read_extent(struct driver *d, uint32_t idx, struct ds_extent *out)
+{
+	struct xal_extent *e = xal_extent_at(d->xal, idx);
+	struct xal_extent_converted b = {0};
+
+	if (!e || xal_extent_in_bytes(d->xal, e, &b) < 0)
+		return -ESTALE;
+	/* xal-server never opens the device, so its index carries no LBA
+	 * size; convert with our own geometry. */
+	if (b.start_block & (uint64_t)(d->lba_size - 1))
+		return -EIO;
+	out->file_offset = b.start_offset;
+	out->slba = b.start_block >> d->lba_shift;
+	out->length = b.size;
+	return 0;
+}
+
+static int
+lookup_inode_cached(struct driver *d, struct registered_file *h, int seq,
+                    struct xal_inode **out)
+{
+	uint64_t ref = __atomic_load_n(&h->inode_ref, __ATOMIC_ACQUIRE);
+	struct xal_inode *inode;
+	int rc;
+
+	if (ref && (uint32_t)(ref >> 32) == (uint32_t)seq) {
+		inode = xal_inode_at(d->xal, (uint32_t)ref - 1);
+		if (!inode)
+			return -ESTALE;
+		*out = inode;
+		return 0;
+	}
+
+	rc = xal_get_inode(d->xal, h->path, &inode);
+	if (rc == 0 && !xal_inode_is_file(inode))
+		rc = -EINVAL;
+	/* A torn lookup can fail or find the wrong inode */
+	if (!snapshot_held(d->xal, seq))
+		return -ESTALE;
+	if (rc < 0)
+		return rc;
+
+	ref = ((uint64_t)(uint32_t)seq << 32) |
+	      ((uint64_t)xal_inode_idx(d->xal, inode) + 1);
+	__atomic_store_n(&h->inode_ref, ref, __ATOMIC_RELEASE);
+	*out = inode;
+	return 0;
+}
+
+/* Copy the extents overlapping [req_start, req_end) out of the shared
+ * pool. -ESTALE: the index moved; retry. */
+static int
+resolve_extents_once(struct driver *d, struct registered_file *h,
+                     uint64_t req_start, uint64_t req_end,
+                     struct extent_buf *eb, int *seq_out)
 {
 	struct xal *xal = d->xal;
-	struct xal_extents *xe = NULL;
-	struct ds_extent *ex = NULL;
-	uint32_t n = 0, base;
-	bool held;
+	struct xal_inode *inode;
+	struct ds_extent e;
+	uint32_t base, n, lo, hi;
 	int seq, rc;
 
+	eb->n = 0;
 	seq = xal_get_seq_lock(xal);
-	held = snapshot_held(xal, seq);
-	if (!held)
+	if (!snapshot_held(xal, seq))
 		return -ESTALE;
 
-	rc = xal_get_extents(xal, path, &xe);
+	rc = lookup_inode_cached(d, h, seq, &inode);
 	if (rc < 0)
-		goto out;
+		return rc;
 
-	/* xe points into the shared inode pool, so count/extent_idx may be
-	 * torn. Capture them, then validate before using them as allocation
-	 * size and pool indices. */
-	n = xe->count;
-	base = xe->extent_idx;
-	held = snapshot_held(xal, seq);
-	if (!held)
+	/* count and extent_idx may be torn */
+	base = inode->content.extents.extent_idx;
+	n = inode->content.extents.count;
+	if (!snapshot_held(xal, seq))
 		return -ESTALE;
 
-	ex = calloc(n ? n : 1, sizeof(*ex));
-	if (!ex)
-		return -ENOMEM;
+	/* the first extent ending past req_start */
+	lo = 0;
+	hi = n;
+	while (lo < hi) {
+		uint32_t mid = lo + (hi - lo) / 2;
 
-	for (uint32_t i = 0; i < n; i++) {
-		struct xal_extent *e = xal_extent_at(xal, base + i);
-		struct xal_extent_converted b = {0};
-
-		rc = xal_extent_in_bytes(xal, e, &b);
+		rc = read_extent(d, base + mid, &e);
 		if (rc < 0)
 			goto out;
-		/* xal-server never opens the device, so its index carries no
-		 * LBA size; convert with our own geometry. */
-		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
-			rc = -EIO;
-			goto out;
-		}
-		ex[i].file_offset = b.start_offset;
-		ex[i].slba = b.start_block >> d->lba_shift;
-		ex[i].length = b.size;
+		if (e.file_offset + e.length <= req_start)
+			lo = mid + 1;
+		else
+			hi = mid;
 	}
+	for (uint32_t i = lo; i < n; i++) {
+		rc = read_extent(d, base + i, &e);
+		if (rc < 0)
+			goto out;
+		if (e.file_offset >= req_end)
+			break;
+		rc = extent_buf_push(eb, &e);
+		if (rc < 0)
+			goto out;
+	}
+	rc = 0;
 
 out:
 	/* A torn read during a rewrite can surface as a spurious error, and a
 	 * clean result may hold torn extents; only trust either if the
 	 * snapshot held. */
-	held = snapshot_held(xal, seq);
-	if (!held) {
-		free(ex);
+	if (!snapshot_held(xal, seq))
 		return -ESTALE;
-	}
-	if (rc < 0) {
-		free(ex);
+	if (rc < 0)
 		return rc;
-	}
-	*out = ex;
-	*out_n = n;
+	*seq_out = seq;
 	return 0;
 }
 
 static int
-resolve_extents(struct driver *d, int fd, struct ds_extent **out,
-                uint32_t *out_n)
+resolve_extents(struct driver *d, struct registered_file *h, uint64_t req_start,
+                uint64_t req_end, struct extent_buf *eb, int *seq_out)
 {
-	char fdpath[64], path[PATH_MAX];
-	ssize_t plen;
-	int rc;
-
-	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
-	plen = readlink(fdpath, path, sizeof(path) - 1);
-	if (plen < 0)
-		return -errno;
-	path[plen] = '\0';
+	int rc = -ESTALE;
 
 	/* The index is dirty while xal-server rebuilds it, and for good once
 	 * its server exits. Retry a few seconds, then fail. */
-	rc = -ESTALE;
 	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = extents_snapshot(d, path, out, out_n);
+		rc = resolve_extents_once(d, h, req_start, req_end, eb,
+		                          seq_out);
 		if (rc != -ESTALE)
 			break;
 		usleep(ESTALE_BACKOFF_US);
@@ -947,16 +1000,19 @@ start_io_op(struct io_worker *w, struct file_op *op)
 
 	/* A raw handle is one extent spanning the namespace. */
 	struct ds_extent raw_ext = {0, 0, d->ns_nbytes};
-	struct ds_extent *extents = &raw_ext;
+	const struct ds_extent *extents = &raw_ext;
 	uint32_t extent_count = 1;
-	if (!op->h->raw && !__atomic_load_n(&d->xal, __ATOMIC_ACQUIRE)) {
-		op->err = OPENDS_FS_SETUP_ERROR;
-		return;
-	}
-	if (!op->h->raw &&
-	    resolve_extents(d, op->h->fd, &extents, &extent_count) < 0) {
-		op->err = OPENDS_FS_SETUP_ERROR;
-		return;
+	if (!op->h->raw) {
+		struct extent_buf *eb = &w->extents;
+
+		if (!__atomic_load_n(&d->xal, __ATOMIC_ACQUIRE) ||
+		    resolve_extents(d, op->h, req_start, req_end, eb,
+		                    &op->extents_seq) < 0) {
+			op->err = OPENDS_FS_SETUP_ERROR;
+			return;
+		}
+		extents = eb->v;
+		extent_count = eb->n;
 	}
 
 	uint32_t lba_shift = d->lba_shift;
@@ -988,7 +1044,7 @@ start_io_op(struct io_worker *w, struct file_op *op)
 				head_bytes = remaining;
 			if (submit_partial(w, op, abs_dst, cur_slba, head_off,
 			                   head_bytes) < 0)
-				goto out;
+				return;
 			cur_slba++;
 			abs_dst += head_bytes;
 			remaining -= head_bytes;
@@ -1004,7 +1060,7 @@ start_io_op(struct io_worker *w, struct file_op *op)
 			        .remaining = remaining,
 			};
 			if (submit_middle(d, &c, op, middle_lbas) < 0)
-				goto out;
+				return;
 			cur_slba = c.cur_slba;
 			abs_dst = c.abs_buf;
 			remaining = c.remaining;
@@ -1013,12 +1069,9 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		if (tail_bytes) {
 			if (submit_partial(w, op, abs_dst, cur_slba, 0,
 			                   tail_bytes) < 0)
-				goto out;
+				return;
 		}
 	}
-out:
-	if (extents != &raw_ext)
-		free(extents);
 }
 
 static void
@@ -1360,6 +1413,8 @@ workers_teardown(struct driver *d)
 			w->queue = NULL;
 		}
 		kernel_read_teardown(w);
+		free(w->extents.v);
+		w->extents = (struct extent_buf){0};
 		free(w->edge_buf);
 		w->edge_buf = NULL;
 		if (w->descs) {
@@ -1704,6 +1759,18 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	h->readable = (oflags & O_ACCMODE) != O_WRONLY;
 	h->writable = (oflags & O_ACCMODE) != O_RDONLY;
 	h->raw = raw;
+
+	/* Resolve once; the index does not follow renames either */
+	if (!raw) {
+		char fdpath[64];
+		snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
+		ssize_t plen = readlink(fdpath, h->path, sizeof(h->path));
+		if (plen < 0 || (size_t)plen >= sizeof(h->path)) {
+			free(h);
+			return opends_err(OPENDS_INVALID_VALUE);
+		}
+		h->path[plen] = '\0';
+	}
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
