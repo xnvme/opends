@@ -24,12 +24,23 @@ CONF=/run/homi/xal-server.conf
 XAL_WATCHMODE=${XAL_WATCHMODE:-0}
 # optional subtree of MOUNT to index instead of the whole filesystem
 XAL_SUBTREE=${XAL_SUBTREE:-}
+# each qublk queue's thread busy-polls a CPU of its own
+NCPUS=$(nproc)
+QUBLK_NQUEUES_MAX=$((NCPUS / 2 > 0 ? NCPUS / 2 : 1))
+QUBLK_NQUEUES=${QUBLK_NQUEUES:-$((QUBLK_NQUEUES_MAX < 4 ? QUBLK_NQUEUES_MAX : 4))}
 
 die() {
 	echo "error: $1" >&2
 	cat "$2" >&2 || true
 	exit 1
 }
+
+case "$QUBLK_NQUEUES" in
+	'' | *[!0-9]*) die "QUBLK_NQUEUES ($QUBLK_NQUEUES) is not a number" /dev/null ;;
+esac
+if [ "$QUBLK_NQUEUES" -lt 1 ] || [ "$QUBLK_NQUEUES" -gt "$NCPUS" ]; then
+	die "QUBLK_NQUEUES ($QUBLK_NQUEUES) must be 1..$NCPUS, one CPU per queue" /dev/null
+fi
 
 SUBTREE=""
 if [ -n "$XAL_SUBTREE" ]; then
@@ -71,8 +82,8 @@ if ! homi status --homi-id "$HOMI_ID" > /dev/null 2>&1; then
 	die "homi did not become ready" /run/homi/homi.log
 fi
 
-echo "starting qublk"
-setsid qublk serve "$BDF" --be upcie --homi-id "$HOMI_ID" --nqueues 1 \
+echo "starting qublk with $QUBLK_NQUEUES queues ($NCPUS CPUs)"
+setsid qublk serve "$BDF" --be upcie --homi-id "$HOMI_ID" --nqueues "$QUBLK_NQUEUES" \
 	< /dev/null > /run/homi/qublk.log 2>&1 &
 UBLK=""
 for _ in $(seq 1 60); do
