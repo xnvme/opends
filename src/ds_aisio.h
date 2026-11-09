@@ -74,6 +74,12 @@ struct map_run {
 };
 #define MAX_MAP_RUNS MAX_BUF_ENTRIES
 
+/* A copy of driver.bufs for the workers */
+struct buf_view {
+	int count;
+	struct buf_entry bufs[MAX_BUF_ENTRIES];
+};
+
 struct registered_file {
 	int fd;
 	int oflags;
@@ -225,6 +231,7 @@ struct io_worker {
 	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
 	uint32_t queue_head __attribute__((aligned(64)));
 	uint32_t queue_tail __attribute__((aligned(64)));
+	uint64_t epoch __attribute__((aligned(64)));
 	pthread_t thread;
 };
 
@@ -241,6 +248,8 @@ struct driver {
 	uint64_t ns_nbytes;
 	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
 	int buf_count;
+	struct buf_view buf_views[2];
+	struct buf_view *buf_view; ///< The one of buf_views workers read
 	size_t chunk_nbytes; ///< Allocation granularity registrations round to
 	struct map_run runs[MAX_MAP_RUNS]; ///< Disjoint, sorted by base
 	int run_count;
@@ -325,6 +334,7 @@ mark_done(struct file_op *op)
 }
 
 /* opends_aisio.c */
+/* I/O threads only */
 DS_HIDDEN bool ds_aisio_range_registered(struct driver *d, const void *ptr,
                                          size_t size);
 DS_HIDDEN void ds_aisio_future_complete(opends_async_future_t *fut,

@@ -63,13 +63,13 @@ cpu_relax(void)
 /* ------------------------------------------------------------------ */
 
 static int
-buf_lower_bound(const struct driver *d, const void *base)
+buf_lower_bound(const struct buf_entry *bufs, int count, const void *base)
 {
-	int lo = 0, hi = d->buf_count;
+	int lo = 0, hi = count;
 
 	while (lo < hi) {
 		int mid = lo + (hi - lo) / 2;
-		if ((uintptr_t)d->bufs[mid].base < (uintptr_t)base)
+		if ((uintptr_t)bufs[mid].base < (uintptr_t)base)
 			lo = mid + 1;
 		else
 			hi = mid;
@@ -80,7 +80,7 @@ buf_lower_bound(const struct driver *d, const void *base)
 static struct buf_entry *
 buf_find(struct driver *d, const void *base)
 {
-	int i = buf_lower_bound(d, base);
+	int i = buf_lower_bound(d->bufs, d->buf_count, base);
 
 	if (i < d->buf_count && d->bufs[i].base == base)
 		return &d->bufs[i];
@@ -89,14 +89,15 @@ buf_find(struct driver *d, const void *base)
 
 /* The entry whose range holds [ptr, ptr + size), or NULL. */
 static const struct buf_entry *
-buf_covering(const struct driver *d, const void *ptr, size_t size)
+buf_covering(const struct buf_entry *bufs, int count, const void *ptr,
+             size_t size)
 {
-	int i = buf_lower_bound(d, ptr);
+	int i = buf_lower_bound(bufs, count, ptr);
 
-	if (i < d->buf_count && d->bufs[i].base == ptr)
+	if (i < count && bufs[i].base == ptr)
 		i++;
 	while (i-- > 0) {
-		const struct buf_entry *e = &d->bufs[i];
+		const struct buf_entry *e = &bufs[i];
 		uintptr_t off = (uintptr_t)ptr - (uintptr_t)e->base;
 
 		if (off <= e->length && size <= e->length - off)
@@ -108,7 +109,7 @@ buf_covering(const struct driver *d, const void *ptr, size_t size)
 static struct buf_entry *
 buf_insert(struct driver *d, const void *base, size_t length, bool owned)
 {
-	int i = buf_lower_bound(d, base);
+	int i = buf_lower_bound(d->bufs, d->buf_count, base);
 	struct buf_entry *e;
 
 	if (d->buf_count >= MAX_BUF_ENTRIES)
@@ -134,16 +135,45 @@ buf_remove(struct driver *d, struct buf_entry *e)
 }
 
 /* A chunk mapping also covers neighbouring allocations, which xnvme then
- * cannot refuse, so every op is checked against the table it came from. */
+ * cannot refuse, so every op is checked against the table it came from.
+ * Workers only: other threads read d->bufs under reg_lock. */
 bool
 ds_aisio_range_registered(struct driver *d, const void *ptr, size_t size)
 {
-	bool ok;
+	const struct buf_view *v =
+	        __atomic_load_n(&d->buf_view, __ATOMIC_SEQ_CST);
 
-	pthread_mutex_lock(&d->reg_lock);
-	ok = buf_covering(d, ptr, size) != NULL;
-	pthread_mutex_unlock(&d->reg_lock);
-	return ok;
+	return buf_covering(v->bufs, v->count, ptr, size) != NULL;
+}
+
+/* Returns once no worker can still use a buf_view loaded before the call */
+static void
+workers_wait_iteration(struct driver *d)
+{
+	if (!d->workers_ready)
+		return;
+	for (int i = 0; i < d->cfg.n_io_threads; i++) {
+		struct io_worker *w = &d->workers[i];
+		uint64_t seen = __atomic_load_n(&w->epoch, __ATOMIC_SEQ_CST);
+
+		while (__atomic_load_n(&w->epoch, __ATOMIC_ACQUIRE) == seen)
+			sched_yield();
+	}
+}
+
+/* Copy d->bufs into the view workers do not read, and switch them to it.
+ * reg_lock held. Removed buffers may be freed once this returns. */
+static void
+bufs_publish(struct driver *d)
+{
+	struct buf_view *next = d->buf_view == &d->buf_views[0]
+	                                ? &d->buf_views[1]
+	                                : &d->buf_views[0];
+
+	next->count = d->buf_count;
+	memcpy(next->bufs, d->bufs, (size_t)d->buf_count * sizeof(d->bufs[0]));
+	__atomic_store_n(&d->buf_view, next, __ATOMIC_SEQ_CST);
+	workers_wait_iteration(d);
 }
 
 /* First run ending after addr; runs are disjoint and sorted. */
@@ -1235,8 +1265,12 @@ io_thread_main(void *arg)
 
 	ds_accel->ctx_set(d->accel_ctx);
 
-	for (;;) {
+	for (uint64_t epoch = 1;; epoch++) {
 		bool busy = false;
+
+		/* Seq-cst: the store must not pass this iteration's snapshot
+		 * loads, or bufs_publish could reuse a view in use */
+		__atomic_store_n(&w->epoch, epoch, __ATOMIC_SEQ_CST);
 
 		uint32_t head =
 		        __atomic_load_n(&w->queue_head, __ATOMIC_ACQUIRE);
@@ -1579,8 +1613,8 @@ xal_attach(struct driver *d)
 /* Attach to the extent index, once. In raw block mode that is at the first
  * registration of a regular file, since a raw handle needs no index; otherwise
  * at driver open. It has its own lock because xal_attach can wait a minute for
- * xal-server, and every op takes reg_lock. A failed attach is final until the
- * driver is reopened. */
+ * xal-server, and registrations take reg_lock. A failed attach is final until
+ * the driver is reopened. */
 static int
 index_attach(struct driver *d)
 {
@@ -1638,6 +1672,7 @@ opends_driver_open(void)
 	struct driver *d = calloc(1, sizeof(*d));
 	if (!d)
 		return opends_err(OPENDS_INTERNAL_ERROR);
+	d->buf_view = &d->buf_views[0];
 
 	if (aisio_config_read(&d->cfg) < 0) {
 		free(d);
@@ -1877,6 +1912,7 @@ opends_alloc(size_t size)
 		return NULL;
 	}
 	buf_insert(drv, buf, size, true);
+	bufs_publish(drv);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return buf;
 }
@@ -1890,8 +1926,9 @@ opends_free(void *buf)
 	pthread_mutex_lock(&drv->reg_lock);
 	struct buf_entry *e = buf_find(drv, buf);
 	if (e && e->owned) {
-		buf_free_locked(drv, buf);
 		buf_remove(drv, e);
+		bufs_publish(drv);
+		buf_free_locked(drv, buf);
 	}
 	pthread_mutex_unlock(&drv->reg_lock);
 }
@@ -1930,6 +1967,7 @@ opends_buf_register(const void *buf_base, size_t size, int flags)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 	}
 	buf_insert(drv, buf_base, size, false);
+	bufs_publish(drv);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
 }
@@ -1958,6 +1996,7 @@ opends_buf_deregister(const void *buf_base)
 	}
 	buf_chunks(drv, e->base, e->length, &lo, &hi);
 	buf_remove(drv, e);
+	bufs_publish(drv);
 	runs_release(drv, lo, hi);
 	pthread_mutex_unlock(&drv->reg_lock);
 	return opends_ok();
@@ -2130,8 +2169,12 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 		wsize = *size_p;
 		wfoff = *file_offset_p;
 		wboff = *buf_offset_p;
-		if (wsize && !ds_aisio_range_registered(
-		                     d, (uint8_t *)buf_base + wboff, wsize)) {
+		pthread_mutex_lock(&d->reg_lock);
+		bool registered = buf_covering(d->bufs, d->buf_count,
+		                               (uint8_t *)buf_base + wboff,
+		                               wsize) != NULL;
+		pthread_mutex_unlock(&d->reg_lock);
+		if (wsize && !registered) {
 			werr = OPENDS_MEMORY_NOT_REGISTERED;
 		} else if (wsize) {
 			buf_rc = ds_write_buf_take_or_grow(d, &buf);
