@@ -6,6 +6,17 @@ laid out by concern (`opends.driver`, `opends.buffer`, `opends.file`,
 `opends.stream`, `opends.batch`, and `opends.cdll` for the raw prototypes);
 `import opends` gives the convenience surface used below.
 
+## Install
+
+```sh
+# needs the C library installed, or OPENDS_LIBRARY pointing at a build
+pip install ./python    # from the repository root
+```
+
+The distribution is named `opends-python` and the import name is `opends`.
+The name `opends` on PyPI belongs to another project, so `pip install opends`
+does not install these bindings.
+
 ## Usage
 
 ```python
