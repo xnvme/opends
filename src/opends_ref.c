@@ -206,7 +206,8 @@ ref_async_submit(bool is_write, opends_handle_t fh, void *buf_base, size_t size,
 	else if (aligned)
 		result = pread(h->fd, p, size, file_offset);
 	else
-		result = opends_direct_pread(h->fd, p, size, file_offset);
+		result = opends_direct_pread(h->fd, p, size, file_offset,
+		                             host_copy);
 	if (result < 0)
 		result = -(ssize_t)OPENDS_INTERNAL_ERROR;
 

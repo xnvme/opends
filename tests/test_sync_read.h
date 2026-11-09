@@ -35,9 +35,6 @@ struct test_env {
 	void *(*buf_acquire)(size_t size);
 	void (*buf_release)(void *buf);
 	const char *mode_label;
-	/* Backend refuses a read that starts off a dword once whole LBAs
-	 * follow (aisio). 0 means such reads succeed and verify data. */
-	int rejects_nondword_head;
 };
 
 /*
@@ -601,53 +598,46 @@ test_read_unaligned_head_buf_offset(struct test_env *env)
 }
 
 /*
- * Pin the rejection boundary. A read that starts off a dword and covers
- * whole LBAs past the first cannot express its start as a PRP offset,
- * so a backend that DMAs those LBAs directly refuses it with
- * OPENDS_INVALID_VALUE. A backend that bounces every block accepts the
- * same reads, so it verifies data instead. Both sizes reach whole LBAs
- * whether the device reports 512 or 4096.
+ * Whole LBAs bound for a destination off a dword. A backend that DMAs
+ * whole LBAs directly cannot land them there, since the PRP offset is
+ * dword granular, so it has to bounce them. The destination moves off
+ * the dword through the file offset, through the buffer offset, or
+ * through both; in the last case the two cancel out. Every size reaches
+ * whole LBAs whether the device reports 512 or 4096.
  */
 static int
-test_read_nondword_head(struct test_env *env)
+test_read_nondword_dst(struct test_env *env)
 {
 	static const struct {
 		off_t offset;
 		size_t size;
+		off_t boff;
 	} cases[] = {
-	        {1, 12288},
-	        {4095, 8192},
+	        {1, 12288, 0}, {4095, 8192, 0}, {0, 12288, 1},
+	        {3, 8192, 1},  {1, 12288, 1},
 	};
+	const off_t max_boff = 1;
 
 	size_t max_size = 0;
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		if (cases[i].size > max_size)
 			max_size = cases[i].size;
 	}
+	size_t alloc = max_size + (size_t)max_boff;
 
-	void *buf = env->buf_acquire(max_size);
+	void *buf = env->buf_acquire(alloc);
 	if (!buf)
 		return 1;
 
 	int rc = 0;
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		char label[64];
-		snprintf(label, sizeof(label), "nondword[off=%ld,sz=%zu]",
-		         (long)cases[i].offset, cases[i].size);
-		if (!env->rejects_nondword_head) {
-			rc = verify_read(env, buf, max_size, cases[i].size,
-			                 cases[i].offset, 0, label);
-		} else {
-			ssize_t n =
-			        opends_sync_read(env->fh, buf, cases[i].size,
-			                         cases[i].offset, 0);
-			if (n != -(ssize_t)OPENDS_INVALID_VALUE) {
-				fprintf(stderr, "  %s: got %zd, expected %zd\n",
-				        label, n,
-				        -(ssize_t)OPENDS_INVALID_VALUE);
-				rc = 1;
-			}
-		}
+		snprintf(label, sizeof(label),
+		         "nondword[off=%ld,sz=%zu,boff=%ld]",
+		         (long)cases[i].offset, cases[i].size,
+		         (long)cases[i].boff);
+		rc = verify_read(env, buf, alloc, cases[i].size,
+		                 cases[i].offset, cases[i].boff, label);
 		if (rc)
 			break;
 	}
@@ -721,7 +711,7 @@ static const struct test_entry sync_read_tests[] = {
 	{"offset_size_sweep",   test_read_offset_size_sweep},
 	{"unaligned_head",      test_read_unaligned_head},
 	{"unaligned_head_boff", test_read_unaligned_head_buf_offset},
-	{"nondword_head",       test_read_nondword_head},
+	{"nondword_dst",        test_read_nondword_dst},
 };
 /* clang-format on */
 

@@ -77,9 +77,27 @@ cuda_host_free(void *host)
 }
 
 static int
+cuda_host_pin(void *host, size_t bytes)
+{
+	return (int)cuMemHostRegister(host, bytes, 0);
+}
+
+static void
+cuda_host_unpin(void *host)
+{
+	cuMemHostUnregister(host);
+}
+
+static int
 cuda_copy(void *dst, const void *src, size_t bytes)
 {
 	return (int)cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, bytes);
+}
+
+static int
+cuda_copy_to_dev_async(void *dst, const void *src, size_t bytes)
+{
+	return (int)cuMemcpyHtoDAsync((CUdeviceptr)dst, src, bytes, NULL);
 }
 
 static int
@@ -111,7 +129,10 @@ static const struct ds_accel_ops cuda_ops = {
         .alloc_granularity = cuda_alloc_granularity,
         .host_alloc_mapped = cuda_host_alloc_mapped,
         .host_free = cuda_host_free,
+        .host_pin = cuda_host_pin,
+        .host_unpin = cuda_host_unpin,
         .copy = cuda_copy,
+        .copy_to_dev_async = cuda_copy_to_dev_async,
         .stream_write_value32 = cuda_stream_write_value32,
         .stream_wait_value32_geq = cuda_stream_wait_value32_geq,
         .launch_host_func = cuda_launch_host_func,
