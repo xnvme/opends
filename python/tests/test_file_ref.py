@@ -20,7 +20,7 @@ def _payload(n):
 
 
 def test_version(driver):
-    assert opends.get_version() == (0, 2, 0)
+    assert opends.get_version() == (0, 3, 0)
 
 
 def test_roundtrip(driver):
