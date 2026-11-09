@@ -12,7 +12,7 @@ import threading
 
 from . import cdll as _c
 
-class OpenDSError(Exception):
+class OpenDSError(RuntimeError):
     def __init__(self, code, dev_err=0):
         try:
             code = _c.ErrorCode(code)

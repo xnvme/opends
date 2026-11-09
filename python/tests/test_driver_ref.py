@@ -83,6 +83,7 @@ def test_error_carries_code(driver, tmp_path):
         opends.OpenDSFile(str(path), "r", use_direct_io=False)
     assert info.value.code is opends.ErrorCode.DIO_NOT_SET
     assert "5020" in str(info.value)
+    assert isinstance(info.value, RuntimeError)
     assert opends.use_count() == before
 
 
