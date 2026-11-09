@@ -141,6 +141,7 @@ ds_write_init(struct file_op_write *wr, const uint8_t *src, size_t size,
 	wr->granted = 0;
 	wr->copies = 0;
 	wr->enqueued = 0;
+	wr->parked = false;
 }
 
 /* Rounds that have landed: for the resident kernel, the least of its
@@ -203,18 +204,20 @@ stage_round_cb(void *arg)
 {
 	struct file_op *op = arg;
 	struct file_op_write *wr = &op->wr;
-	struct opends_stream *s = op->u.stream.opends_stream;
-	uint32_t seq = op->u.stream.seq;
+	/* the slot can be reused once the last round lands */
+	uint32_t rounds = wr->rounds;
+	uint32_t *turn = wr->turn;
+	uint32_t *gate = op->gate;
+	uint32_t release = gate_release_value(op->pos);
 	uint32_t k = __atomic_add_fetch(wr->landed, 1, __ATOMIC_ACQ_REL);
 
-	if (k < wr->rounds) {
-		while ((int32_t)(__atomic_load_n(wr->turn, __ATOMIC_ACQUIRE) -
-		                 k) < 0)
+	if (k < rounds) {
+		while ((int32_t)(__atomic_load_n(turn, __ATOMIC_ACQUIRE) - k) <
+		       0)
 			;
 		return;
 	}
-	while ((int32_t)(__atomic_load_n(s->gate, __ATOMIC_ACQUIRE) -
-	                 (2 * seq + 1)) < 0)
+	while (!gate_reached(gate, release))
 		;
 }
 
@@ -233,26 +236,25 @@ static void
 claim_turn_cb(void *arg)
 {
 	struct file_op *op = arg;
-	struct opends_stream *s = op->u.stream.opends_stream;
 
-	__atomic_store_n(s->gate, 2 * op->u.stream.seq, __ATOMIC_RELEASE);
+	__atomic_store_n(op->gate, gate_arrival_value(op->pos),
+	                 __ATOMIC_RELEASE);
 	while ((int32_t)(__atomic_load_n(op->wr.turn, __ATOMIC_ACQUIRE) - 1) <
 	       0)
 		;
 }
 
 /* Aligned-only mode, deferred stream write: hold the stream at the gate
- * after the kernel. */
+ * after the kernel. The I/O thread may complete the op first, so the slot
+ * is handed back here. */
 static void
 park_release_cb(void *arg)
 {
 	struct file_op *op = arg;
-	struct opends_stream *s = op->u.stream.opends_stream;
-	uint32_t seq = op->u.stream.seq;
 
-	while ((int32_t)(__atomic_load_n(s->gate, __ATOMIC_ACQUIRE) -
-	                 (2 * seq + 1)) < 0)
+	while (!gate_reached(op->gate, gate_release_value(op->pos)))
 		;
+	mark_done(op);
 }
 
 /* Let a stream op copy round k. The resident kernel reads the round from
@@ -281,20 +283,23 @@ write_grant(struct driver *d, struct file_op *op, uint32_t k)
 
 /* The commands of a deferred stream write: the arrival on the gate, a hold
  * until the thread has read the parameters and filled the first round, the
- * resident kernel, and the gate. */
+ * resident kernel, and the gate. *arrived says whether the arrival is
+ * queued, whatever the result. */
 int
 ds_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
-                                 ds_accel_stream_t cus)
+                                 ds_accel_stream_t cus, bool *arrived)
 {
 	struct file_op_write *wr = &op->wr;
-	struct opends_stream *s = op->u.stream.opends_stream;
-	uint32_t seq = op->u.stream.seq;
 	int rc;
 
+	*arrived = false;
 	if (d->cfg.assume_aligned_only) {
 		rc = ds_accel->launch_host_func(cus, claim_turn_cb, op);
+		*arrived = rc == 0;
 	} else {
-		rc = ds_accel->stream_write_value32(cus, s->gate_dptr, 2 * seq);
+		rc = ds_accel->stream_write_value32(
+		        cus, op->gate_dptr, gate_arrival_value(op->pos));
+		*arrived = rc == 0;
 		if (rc == 0) {
 			rc = ds_accel->stream_wait_value32_geq(
 			        cus, wr->turn_dptr, 1);
@@ -312,10 +317,12 @@ ds_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
 	wr->copies = 1;
 	wr->enqueued = 1;
 	if (d->cfg.assume_aligned_only) {
-		return ds_accel->launch_host_func(cus, park_release_cb, op);
+		rc = ds_accel->launch_host_func(cus, park_release_cb, op);
+		wr->parked = rc == 0;
+		return rc;
 	}
-	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
-	                                         2 * seq + 1);
+	return ds_accel->stream_wait_value32_geq(cus, op->gate_dptr,
+	                                         gate_release_value(op->pos));
 }
 
 /* Queue round k of a stream write on the user's stream: the thread's turn
@@ -362,7 +369,6 @@ ds_stream_write_enqueue(struct driver *d, struct file_op *op,
                         ds_accel_stream_t cus)
 {
 	struct file_op_write *wr = &op->wr;
-	struct opends_stream *s = op->u.stream.opends_stream;
 	int rc;
 
 	for (uint32_t k = 0; k < wr->rounds; k++) {
@@ -375,8 +381,8 @@ ds_stream_write_enqueue(struct driver *d, struct file_op *op,
 		/* the last round's callback holds the stream at the gate */
 		return 0;
 	}
-	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
-	                                         2 * op->u.stream.seq + 1);
+	return ds_accel->stream_wait_value32_geq(cus, op->gate_dptr,
+	                                         gate_release_value(op->pos));
 }
 
 /* Queue round k of an async write on the default stream. The copy can wait
@@ -514,12 +520,16 @@ write_complete(struct driver *d, struct file_op *op)
 	}
 	*wr->turn = 0;
 	if (op->mode == FILE_OP_STREAM) {
+		bool parked = wr->parked;
+
 		*op->u.stream.bytes_read_p = n;
-		release_gate(op->u.stream.opends_stream, op->u.stream.seq);
+		release_gate(op);
+		if (parked)
+			return;
 	} else {
 		ds_aisio_future_complete(op->u.async.future, n);
 	}
-	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
+	mark_done(op);
 }
 
 /* Service a write in flight: pwrite each round that has landed, let the
@@ -624,14 +634,12 @@ ds_dispatch_write(struct io_worker *w, struct file_op *op)
 
 /* Returns 0 on success; on failure, the dev_err to report (vendor code or
  * -1). */
-/* The turn and landed words of worker idx's op slots, behind the stream
- * gates and the kernel read words, and the stage descriptors. */
+/* The turn and landed words of worker idx's op slots (see op_word()), and
+ * the stage descriptors. */
 int
 ds_write_words_setup(struct driver *d, struct io_worker *w, int idx)
 {
-	uint32_t *words = (uint32_t *)d->stream_words_host;
-	size_t base = MAX_STREAMS + (size_t)d->cfg.n_io_threads +
-	              (size_t)idx * FILE_OP_QUEUE_SIZE * (1 + DS_STAGE_BLOCKS);
+	uint32_t *words = (uint32_t *)d->op_words_host;
 	size_t descs_bytes = FILE_OP_QUEUE_SIZE * sizeof(struct ds_stage_copy);
 	void *host = NULL;
 	int rc;
@@ -645,13 +653,12 @@ ds_write_words_setup(struct driver *d, struct io_worker *w, int idx)
 
 	for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
 		struct file_op_write *wr = &w->file_op_queue[s].wr;
-		size_t i = base + (size_t)s * (1 + DS_STAGE_BLOCKS);
+		size_t i = op_word(d->cfg.n_io_threads, idx, s) + 1;
 
 		wr->turn = &words[i];
 		wr->landed = &words[i + 1];
-		wr->turn_dptr = d->stream_words_dptr + i * sizeof(uint32_t);
-		wr->landed_dptr =
-		        d->stream_words_dptr + (i + 1) * sizeof(uint32_t);
+		wr->turn_dptr = d->op_words_dptr + i * sizeof(uint32_t);
+		wr->landed_dptr = d->op_words_dptr + (i + 1) * sizeof(uint32_t);
 		wr->desc = &w->descs[s];
 		wr->desc_dptr = w->descs_dptr +
 		                (size_t)s * sizeof(struct ds_stage_copy);

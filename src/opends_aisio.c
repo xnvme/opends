@@ -342,7 +342,7 @@ stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 		return rc;
 	memset(desc_host, 0, sizeof(struct ds_bounce_copy));
 
-	/* One slot suffices: at most one bounce per op, and the per-stream gate
+	/* One slot suffices: at most one bounce per op, and the stream
 	 * serialises ops. */
 	void *buf = buf_alloc_locked(d, d->lba_size);
 	if (!buf) {
@@ -650,7 +650,7 @@ static int
 kernel_read_setup(struct driver *d, struct io_worker *w, int idx)
 {
 	struct kernel_read *k = &w->kread;
-	size_t word = MAX_STREAMS + (size_t)idx;
+	size_t word = (size_t)idx; /* see op_word() */
 	int err;
 
 	/* the same chunk size as on the direct path */
@@ -667,8 +667,8 @@ kernel_read_setup(struct driver *d, struct io_worker *w, int idx)
 		k->buf = NULL;
 		return -1;
 	}
-	k->word = (uint32_t *)d->stream_words_host + word;
-	k->word_dptr = d->stream_words_dptr + word * sizeof(uint32_t);
+	k->word = (uint32_t *)d->op_words_host + word;
+	k->word_dptr = d->op_words_dptr + word * sizeof(uint32_t);
 	return 0;
 }
 
@@ -1078,13 +1078,13 @@ static void
 park_gate_cb(void *arg)
 {
 	struct file_op *op = arg;
-	struct opends_stream *s = op->u.stream.opends_stream;
-	uint32_t seq = op->u.stream.seq;
+	/* the slot can be reused once released */
+	uint32_t *gate = op->gate;
+	uint32_t release = gate_release_value(op->pos);
 
-	__atomic_store_n(s->gate, 2 * seq, __ATOMIC_RELEASE);
+	__atomic_store_n(gate, gate_arrival_value(op->pos), __ATOMIC_RELEASE);
 
-	while ((int32_t)(__atomic_load_n(s->gate, __ATOMIC_ACQUIRE) -
-	                 (2 * seq + 1)) < 0)
+	while (!gate_reached(gate, release))
 		;
 }
 
@@ -1112,8 +1112,8 @@ complete_read_op(struct file_op *op)
 
 		*op->u.stream.bytes_read_p = n;
 		s->bounce_desc_host->n_bytes = tail_bytes;
-		release_gate(s, op->u.stream.seq);
-		__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
+		release_gate(op);
+		mark_done(op);
 		return;
 	}
 
@@ -1121,7 +1121,7 @@ complete_read_op(struct file_op *op)
 		n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
 	ds_aisio_future_complete(op->u.async.future, n);
-	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
+	mark_done(op);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1177,25 +1177,29 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 
 /* Service a PENDING stream op: dispatch it once its stream has reached it,
  * otherwise leave it for a later pass. Returns true while still gated. A
- * read, and a write that stages nothing, publish 2*seq on the gate on
- * arrival; a staged write has reached the stream when its first round has
- * landed. The gate is a free-running counter (an arrival publish and this
- * thread's release each tick it), so compare with serial/cyclic arithmetic
- * to match the device-side GEQ wait, keeping the sequence wrap-safe. */
+ * read, and a write that stages nothing, store gate_arrival_value() on the
+ * slot's gate on arrival; a staged write has reached the stream when its first
+ * round has landed. An op whose gate failed to queue only waits out its
+ * arrival, which would rewind the gate of the slot's next op. */
 static bool
 poll_stream_pending(struct io_worker *w, struct file_op *op)
 {
-	uint32_t gate;
-
 	if (write_is_staged(op->is_write, op->h) && op->wr.rounds) {
 		if (!op->err &&
 		    __atomic_load_n(op->wr.landed, __ATOMIC_ACQUIRE) < 1)
 			return true;
-	} else {
-		gate = __atomic_load_n(op->u.stream.opends_stream->gate,
-		                       __ATOMIC_ACQUIRE);
-		if ((int32_t)(gate - 2 * op->u.stream.seq) < 0)
-			return true;
+	} else if (!gate_reached(op->gate, gate_arrival_value(op->pos))) {
+		if (op->u.stream.gate_wait_failed &&
+		    __atomic_load_n(&w->drv->stop, __ATOMIC_ACQUIRE)) {
+			/* Do not hold up close */
+			mark_done(op);
+			return false;
+		}
+		return true;
+	}
+	if (op->u.stream.gate_wait_failed) {
+		mark_done(op);
+		return false;
 	}
 	return dispatch_pending(w, op);
 }
@@ -1234,17 +1238,20 @@ io_thread_main(void *arg)
 				}
 				break;
 			case FILE_OP_IN_FLIGHT: reap_in_flight(w, op); break;
-			default: break;
+			default: break; /* FREE: claimed, not yet published */
 			}
 		}
 
+		/* FREE before tail moves: claimers acquire tail */
 		while (w->queue_tail != head) {
 			struct file_op *op =
 			        &w->file_op_queue[w->queue_tail &
 			                          FILE_OP_QUEUE_MASK];
 			if (__atomic_load_n(&op->state, __ATOMIC_ACQUIRE) !=
-			    FILE_OP_FREE)
+			    FILE_OP_DONE)
 				break;
+			__atomic_store_n(&op->state, FILE_OP_FREE,
+			                 __ATOMIC_RELAXED);
 			__atomic_store_n(&w->queue_tail, w->queue_tail + 1,
 			                 __ATOMIC_RELEASE);
 		}
@@ -1309,22 +1316,21 @@ workers_setup(struct driver *d)
 	 * callback path uses the host view only. */
 	void *host = NULL;
 	ds_accel_devptr_t dptr = 0;
-	/* one more word for the kernel reads of each worker, then for each
-	 * op slot a write's turn and the landed word of every stage block */
-	size_t words_bytes = STREAM_WORDS_BYTES +
-	                     (size_t)d->cfg.n_io_threads * sizeof(uint32_t) +
-	                     (size_t)d->cfg.n_io_threads * FILE_OP_QUEUE_SIZE *
-	                             (1 + DS_STAGE_BLOCKS) * sizeof(uint32_t);
+	size_t words_bytes =
+	        op_words_count(d->cfg.n_io_threads) * sizeof(uint32_t);
 	rc = ds_accel->host_alloc_mapped(words_bytes, &host, &dptr);
 	if (rc != 0)
 		return rc;
 	memset(host, 0, words_bytes);
-	d->stream_words_host = host;
-	d->stream_words_dptr = dptr;
+	d->op_words_host = host;
+	d->op_words_dptr = dptr;
 
-	d->workers = calloc((size_t)d->cfg.n_io_threads, sizeof(*d->workers));
+	size_t workers_nbytes =
+	        (size_t)d->cfg.n_io_threads * sizeof(*d->workers);
+	d->workers = aligned_alloc(_Alignof(struct io_worker), workers_nbytes);
 	if (!d->workers)
 		goto fail_words;
+	memset(d->workers, 0, workers_nbytes);
 
 	d->stop = false;
 	int started = 0;
@@ -1332,6 +1338,13 @@ workers_setup(struct driver *d)
 	for (int i = 0; i < d->cfg.n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
 		w->drv = d;
+		for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
+			size_t word = op_word(d->cfg.n_io_threads, i, s);
+
+			w->file_op_queue[s].gate = (uint32_t *)host + word;
+			w->file_op_queue[s].gate_dptr =
+			        dptr + word * sizeof(uint32_t);
+		}
 		if (ds_write_words_setup(d, w, i) < 0)
 			goto fail;
 		if (posix_memalign(&w->edge_buf, OPENDS_DIRECT_ALIGN,
@@ -1388,8 +1401,8 @@ fail:
 	free(d->workers);
 	d->workers = NULL;
 fail_words:
-	ds_accel->host_free(d->stream_words_host);
-	d->stream_words_host = NULL;
+	ds_accel->host_free(d->op_words_host);
+	d->op_words_host = NULL;
 	return -1;
 }
 
@@ -1434,8 +1447,8 @@ workers_teardown(struct driver *d)
 	d->workers = NULL;
 	ds_write_buf_teardown(d);
 
-	ds_accel->host_free(d->stream_words_host);
-	d->stream_words_host = NULL;
+	ds_accel->host_free(d->op_words_host);
+	d->op_words_host = NULL;
 
 	d->workers_ready = false;
 }
@@ -1449,29 +1462,49 @@ opends_stream_get(struct driver *d, ds_accel_stream_t stream)
 	return &d->streams[idx];
 }
 
-static struct io_worker *
-route_op(struct driver *d)
-{
-	return &d->workers[d->rr_next++ % (uint32_t)d->cfg.n_io_threads];
-}
+static __thread uint32_t tls_next_worker;
+static __thread bool tls_next_worker_seeded;
 
+/* Spins while every ring is full */
 static struct file_op *
-claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
+claim_slot(struct driver *d)
 {
+	uint32_t n = (uint32_t)d->cfg.n_io_threads;
+
+	if (!tls_next_worker_seeded) {
+		tls_next_worker =
+		        __atomic_fetch_add(&d->rr_next, 1, __ATOMIC_RELAXED);
+		tls_next_worker_seeded = true;
+	}
+	uint32_t start = tls_next_worker++;
+
 	for (;;) {
-		struct io_worker *w = route_op(d);
-		uint32_t head = w->queue_head;
+		for (uint32_t k = 0; k < n; k++) {
+			struct io_worker *w = &d->workers[(start + k) % n];
+			uint32_t head = __atomic_load_n(&w->queue_head,
+			                                __ATOMIC_RELAXED);
 
-		if (head - __atomic_load_n(&w->queue_tail, __ATOMIC_ACQUIRE) <
-		    FILE_OP_QUEUE_SIZE) {
-			*wp = w;
-			*headp = head;
-			return &w->file_op_queue[head & FILE_OP_QUEUE_MASK];
+			for (;;) {
+				uint32_t tail = __atomic_load_n(
+				        &w->queue_tail, __ATOMIC_ACQUIRE);
+
+				if (head - tail >= FILE_OP_QUEUE_SIZE)
+					break;
+				if (__atomic_compare_exchange_n(
+				            &w->queue_head, &head, head + 1,
+				            true, __ATOMIC_RELAXED,
+				            __ATOMIC_RELAXED)) {
+					struct file_op *op =
+					        &w->file_op_queue
+					                 [head &
+					                  FILE_OP_QUEUE_MASK];
+
+					op->pos = head;
+					return op;
+				}
+			}
 		}
-
-		pthread_mutex_unlock(&d->submit_lock);
 		sched_yield();
-		pthread_mutex_lock(&d->submit_lock);
 	}
 }
 
@@ -1581,7 +1614,6 @@ opends_driver_open(void)
 		free(d);
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
-	pthread_mutex_init(&d->submit_lock, NULL);
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 	pthread_mutex_init(&d->write_buf_lock, NULL);
@@ -1594,7 +1626,6 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
-		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
@@ -1609,7 +1640,6 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
-		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
 		drv = NULL;
@@ -1624,7 +1654,6 @@ opends_driver_open(void)
 		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
-		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
 		free(d);
 		drv = NULL;
@@ -1658,7 +1687,6 @@ opends_driver_close(void)
 	pthread_mutex_destroy(&drv->attach_lock);
 	pthread_mutex_destroy(&drv->write_buf_lock);
 	pthread_mutex_destroy(&drv->alloc_lock);
-	pthread_mutex_destroy(&drv->submit_lock);
 	pthread_mutex_destroy(&drv->reg_lock);
 	free(drv);
 	drv = NULL;
@@ -1934,11 +1962,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 		}
 	}
 
-	struct io_worker *w;
-	uint32_t head;
-
-	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, &w, &head);
+	struct file_op *op = claim_slot(d);
 	op->mode = FILE_OP_ASYNC;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
@@ -1954,8 +1978,6 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.async.buf_offset = buf_offset;
 	op->u.async.future = future;
 	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
-	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
-	pthread_mutex_unlock(&d->submit_lock);
 
 	return opends_ok();
 }
@@ -2004,25 +2026,27 @@ classify_accel_failure(struct driver *d, int accel_rc)
 	return opends_err_dev(OPENDS_INTERNAL_ERROR, accel_rc);
 }
 
-/* The gate of a read, and of a write that stages nothing: the submitter
- * publishes 2*seq on arrival and parks the stream until the I/O thread's
- * release. */
+/* The gate of a read, and of a write that stages nothing. *arrived says whether
+ * the arrival is queued, whatever the result. */
 static int
-gate_enqueue(struct driver *d, struct file_op *op, ds_accel_stream_t cus)
+gate_enqueue(struct driver *d, struct file_op *op, ds_accel_stream_t cus,
+             bool *arrived)
 {
-	struct opends_stream *s = op->u.stream.opends_stream;
-	uint32_t seq = op->u.stream.seq;
 	int rc;
 
 	if (d->cfg.assume_aligned_only) {
-		return ds_accel->launch_host_func(cus, park_gate_cb, op);
+		rc = ds_accel->launch_host_func(cus, park_gate_cb, op);
+		*arrived = rc == 0;
+		return rc;
 	}
-	rc = ds_accel->stream_write_value32(cus, s->gate_dptr, 2 * seq);
+	rc = ds_accel->stream_write_value32(cus, op->gate_dptr,
+	                                    gate_arrival_value(op->pos));
+	*arrived = rc == 0;
 	if (rc != 0) {
 		return rc;
 	}
-	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
-	                                         2 * seq + 1);
+	return ds_accel->stream_wait_value32_geq(cus, op->gate_dptr,
+	                                         gate_release_value(op->pos));
 }
 
 static opends_error_t
@@ -2087,12 +2111,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (buf_rc != 0)
 		return opends_err_dev(OPENDS_INTERNAL_ERROR, buf_rc);
 
-	struct io_worker *w;
-	uint32_t head;
-
-	pthread_mutex_lock(&d->submit_lock);
-	struct file_op *op = claim_slot_locked(d, &w, &head);
-	uint32_t seq = ++opends_stream->next_seq;
+	struct file_op *op = claim_slot(d);
 	op->mode = FILE_OP_STREAM;
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
@@ -2103,7 +2122,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.stream.buf_offset_p = buf_offset_p;
 	op->u.stream.bytes_read_p = bytes_p;
 	op->u.stream.opends_stream = opends_stream;
-	op->u.stream.seq = seq;
+	op->u.stream.gate_wait_failed = false;
 	if (staged) {
 		ds_write_init(&op->wr, (const uint8_t *)buf_base + wboff, wsize,
 		              wfoff, wboff);
@@ -2114,15 +2133,13 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 		}
 	}
 
-	/* Order the I/O thread against the user's stream through a per-stream
-	 * gate word (strictly monotonic, two phases per op): the submitter
-	 * publishes 2*seq on arrival and parks, and the I/O thread's store of
-	 * 2*seq+1 releases it once the I/O is done (a read's DMA landed, or a
-	 * write's source was staged or, on a raw handle, written). A staged
-	 * write publishes nothing: its first landed round says the stream has
-	 * arrived, and it parks at the release. Do not roll back seq on
-	 * failure: a reused seq would let the I/O thread's gate check pass
-	 * before the stream is ready.
+	/* Order the I/O thread against the user's stream through the slot's
+	 * gate word: the stream stores gate_arrival_value(pos) on arrival and
+	 * parks, and the I/O thread's store of gate_release_value(pos) releases
+	 * it once the I/O is done (a read's DMA landed, or a write's source was
+	 * staged or, on a raw handle, written). A staged write stores nothing:
+	 * its first landed round says the stream has arrived, and it parks at
+	 * the release.
 	 *
 	 * launch_host_func is faster when no copy kernel is enqueued per op.
 	 * Otherwise stream_write/stream_wait is. The gate ops are commands the
@@ -2132,19 +2149,23 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * the GPU regardless, so once one is enqueued the callback wins
 	 * nothing. Hence the coupling to assume_aligned_only.
 	 *
-	 * The gate enqueues run under submit_lock so gate values reach the
-	 * stream in seq order; an enqueue that blocks (a full stream queue)
-	 * stalls all submission. */
+	 * An op whose arrival queued but not its wait is still published, to
+	 * wait the arrival out. */
 	int accel_rc;
+	bool arrived;
 	if (deferred) {
-		accel_rc = ds_stream_write_enqueue_deferred(d, op, cus);
+		accel_rc =
+		        ds_stream_write_enqueue_deferred(d, op, cus, &arrived);
 		if (accel_rc != 0 && !op->wr.copies) {
 			/* no kernel runs: nothing to drain */
 			ds_write_buf_put(d, buf);
-			pthread_mutex_unlock(&d->submit_lock);
-			return classify_accel_failure(d, accel_rc);
-		}
-		if (accel_rc != 0) {
+			op->wr.buf = NULL;
+			if (!arrived) {
+				mark_done(op);
+				return classify_accel_failure(d, accel_rc);
+			}
+			op->u.stream.gate_wait_failed = true;
+		} else if (accel_rc != 0) {
 			op->err = OPENDS_INTERNAL_ERROR;
 		}
 	} else if (staged && op->wr.rounds) {
@@ -2155,16 +2176,16 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 			op->err = OPENDS_INTERNAL_ERROR;
 		}
 	} else {
-		accel_rc = gate_enqueue(d, op, cus);
-		if (accel_rc != 0) {
-			pthread_mutex_unlock(&d->submit_lock);
+		accel_rc = gate_enqueue(d, op, cus, &arrived);
+		if (accel_rc != 0 && !arrived) {
+			mark_done(op);
 			return classify_accel_failure(d, accel_rc);
 		}
+		if (accel_rc != 0)
+			op->u.stream.gate_wait_failed = true;
 	}
 
 	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
-	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
-	pthread_mutex_unlock(&d->submit_lock);
 	if (accel_rc != 0)
 		return classify_accel_failure(d, accel_rc);
 
@@ -2233,12 +2254,6 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 
 	int n = drv->n_streams;
 	struct opends_stream *opends_stream = &drv->streams[n];
-	uint32_t *words = (uint32_t *)drv->stream_words_host;
-	opends_stream->gate = &words[n];
-	opends_stream->gate_dptr =
-	        drv->stream_words_dptr + (size_t)n * sizeof(uint32_t);
-	*opends_stream->gate = 0;
-	opends_stream->next_seq = 0;
 	opends_stream->fixed = (flags & fixed) == fixed;
 
 	int rc = stream_bounce_alloc(opends_stream, drv);

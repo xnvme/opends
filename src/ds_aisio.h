@@ -39,7 +39,6 @@
 #define NVME_PRP_OFFSET_ALIGN 4
 #define BOUNCE_SLOTS 2
 #define MAX_STREAMS 8192
-#define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
 #define FILE_OP_QUEUE_SIZE 1024
 /* Rounds of one stream write that are queued at the call. Each is a few
  * stream commands, a stream takes a bounded number, and the I/O thread
@@ -49,10 +48,13 @@
 #define STREAM_MAP_SIZE (2 * MAX_STREAMS)
 #define STREAM_MAP_MASK (STREAM_MAP_SIZE - 1)
 
+/* A claimed slot stays FREE until published; DONE turns FREE behind the
+ * tail. */
 enum file_op_state {
 	FILE_OP_FREE = 0,
 	FILE_OP_PENDING = 1,
 	FILE_OP_IN_FLIGHT = 2,
+	FILE_OP_DONE = 3,
 };
 
 struct buf_entry {
@@ -82,9 +84,6 @@ struct registered_file {
 };
 
 struct opends_stream {
-	uint32_t *gate;
-	ds_accel_devptr_t gate_dptr;
-	uint32_t next_seq;
 	void *bounce_buf;
 	struct ds_bounce_copy *bounce_desc_host;
 	ds_accel_devptr_t bounce_desc_dev;
@@ -102,7 +101,7 @@ struct file_op_stream {
 	off_t *buf_offset_p;
 	ssize_t *bytes_read_p;
 	struct opends_stream *opends_stream;
-	uint32_t seq;
+	bool gate_wait_failed;
 };
 
 struct file_op_async {
@@ -153,6 +152,7 @@ struct file_op_write {
 	uint32_t enqueued; /* rounds that will land */
 	uint32_t *landed;  /* DS_STAGE_BLOCKS words */
 	uint32_t *turn;
+	bool parked; /* park_release_cb hands the slot back */
 	ds_accel_devptr_t landed_dptr;
 	ds_accel_devptr_t turn_dptr;
 };
@@ -161,6 +161,9 @@ struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
 	enum file_op_state state;
+	uint32_t *gate;
+	ds_accel_devptr_t gate_dptr;
+	uint32_t pos;
 	int extents_seq;
 	struct registered_file *h;
 	void *buf_base;
@@ -218,8 +221,8 @@ struct io_worker {
 	struct ds_stage_copy *descs; /* one for each op slot */
 	ds_accel_devptr_t descs_dptr;
 	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
-	uint32_t queue_head;
-	uint32_t queue_tail;
+	uint32_t queue_head __attribute__((aligned(64)));
+	uint32_t queue_tail __attribute__((aligned(64)));
 	pthread_t thread;
 };
 
@@ -245,8 +248,8 @@ struct driver {
 
 	struct opends_stream streams[MAX_STREAMS];
 	int n_streams;
-	void *stream_words_host;
-	ds_accel_devptr_t stream_words_dptr;
+	void *op_words_host; ///< See op_word()
+	ds_accel_devptr_t op_words_dptr;
 
 	struct ds_stream_map_entry stream_map[STREAM_MAP_SIZE];
 
@@ -258,7 +261,6 @@ struct driver {
 
 	struct io_worker *workers;
 	uint32_t rr_next;
-	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
 	pthread_mutex_t attach_lock;
@@ -269,10 +271,55 @@ struct driver {
  * users. */
 #define DS_HIDDEN __attribute__((visibility("hidden")))
 
-static inline void
-release_gate(struct opends_stream *s, uint32_t seq)
+/* Mapped words: a kernel read word per worker, then per op slot a gate, a
+ * turn and DS_STAGE_BLOCKS landed words. */
+#define OP_SLOT_WORDS (2 + DS_STAGE_BLOCKS)
+
+static inline size_t
+op_words_count(int n_workers)
 {
-	__atomic_store_n(s->gate, 2 * seq + 1, __ATOMIC_RELEASE);
+	return (size_t)n_workers +
+	       (size_t)n_workers * FILE_OP_QUEUE_SIZE * OP_SLOT_WORDS;
+}
+
+static inline size_t
+op_word(int n_workers, int idx, uint32_t s)
+{
+	return (size_t)n_workers +
+	       ((size_t)idx * FILE_OP_QUEUE_SIZE + s) * OP_SLOT_WORDS;
+}
+
+/* Gate values grow with each reuse of the slot, so a stale store never
+ * satisfies a later use. */
+static inline uint32_t
+gate_arrival_value(uint32_t pos)
+{
+	return 2 * (pos + 1);
+}
+
+static inline uint32_t
+gate_release_value(uint32_t pos)
+{
+	return 2 * (pos + 1) + 1;
+}
+
+static inline bool
+gate_reached(const uint32_t *gate, uint32_t value)
+{
+	return (int32_t)(__atomic_load_n(gate, __ATOMIC_ACQUIRE) - value) >= 0;
+}
+
+static inline void
+release_gate(struct file_op *op)
+{
+	__atomic_store_n(op->gate, gate_release_value(op->pos),
+	                 __ATOMIC_RELEASE);
+}
+
+static inline void
+mark_done(struct file_op *op)
+{
+	__atomic_store_n(&op->state, FILE_OP_DONE, __ATOMIC_RELEASE);
 }
 
 /* opends_aisio.c */
@@ -297,7 +344,8 @@ DS_HIDDEN int ds_stream_write_enqueue(struct driver *d, struct file_op *op,
                                       ds_accel_stream_t cus);
 DS_HIDDEN int ds_stream_write_enqueue_deferred(struct driver *d,
                                                struct file_op *op,
-                                               ds_accel_stream_t cus);
+                                               ds_accel_stream_t cus,
+                                               bool *arrived);
 DS_HIDDEN bool ds_dispatch_write(struct io_worker *w, struct file_op *op);
 DS_HIDDEN void ds_write_poll(struct io_worker *w, struct file_op *op);
 
