@@ -115,6 +115,39 @@ run_pass(struct aisio_homi *a, unsigned cu_flags, unsigned flags,
 	return 0;
 }
 
+/* The write cases on the default stream, which registers as NULL and is
+ * stream 0: it waits for the legacy work of every blocking stream, and the
+ * copies of a write on it must sit ahead of its gate like any other. */
+static int
+run_null_pass(struct aisio_homi *a, unsigned flags, const char *label)
+{
+	struct write_homi_env env = {
+	        .fh = a->fh,
+	        .fd = a->fd,
+	        .stream = NULL,
+	        .submit_write = stream_submit_write,
+	        .mode_label = label,
+	};
+	int failed;
+	int err;
+
+	err = ftruncate(a->fd, 0);
+	if (err != 0) {
+		perror("  ftruncate");
+		return 1;
+	}
+	if (opends_stream_register(NULL, flags).err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  %s: stream register\n", label);
+		return 1;
+	}
+	failed = run_write_homi_tests(&env);
+	if (failed) {
+		return failed;
+	}
+	opends_stream_deregister(NULL);
+	return 0;
+}
+
 /* A write of several rounds through the buffer, with a head and a tail off a
  * block, into an empty file: the head reads back as zeros, the file ends
  * with the data. */
@@ -511,6 +544,12 @@ main(int argc, char **argv)
 	if (!failed) {
 		failed = run_pass(&a, CU_STREAM_DEFAULT, 0,
 		                  "stream/blocking/deferred");
+	}
+	if (!failed) {
+		failed = run_null_pass(&a, STREAM_FIXED, "stream/null");
+	}
+	if (!failed) {
+		failed = run_null_pass(&a, 0, "stream/null/deferred");
 	}
 	if (!failed) {
 		failed = stream_write_rounds(&a, STREAM_FIXED, "rounds");

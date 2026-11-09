@@ -243,13 +243,13 @@ ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
  * associated with a stream (e.g. a CUDA stream) and complete in stream
  * order. The size, offset, and byte count parameters are pointers so
  * the values can be read at stream execution time rather than
- * submission time. The flags of opends_stream_register are
- * cuFileStreamRegister's: each FIXED flag says that the value is set at
- * the call and may be read then. A stream write on a stream registered
- * with all three copies its source with the copy engine, using the values
- * of the call, and fails with OPENDS_INVALID_VALUE when it finds one
- * changed; without them a kernel on the stream reads the values when the
- * stream reaches the write.
+ * submission time. A NULL stream is the default stream. The flags of
+ * opends_stream_register are cuFileStreamRegister's: each FIXED flag says
+ * that the value is set at the call and may be read then. A stream write
+ * on a stream registered with all three copies its source with the copy
+ * engine, using the values of the call, and fails with OPENDS_INVALID_VALUE
+ * when it finds one changed; without them a kernel on the stream reads the
+ * values when the stream reaches the write.
  *
  * Backend limits (aisio): at most 8192 streams may be registered at
  * once; opends_stream_register returns OPENDS_INTERNAL_ERROR past that.

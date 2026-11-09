@@ -12,9 +12,9 @@
  * factor stays below 50% if capacity >= 2 * MAX_STREAMS.
  *
  * The value is a small int (typically an index into the driver's
- * streams[] array). NULL key means empty slot; the GPU runtime never
- * returns a NULL stream and the pseudo-streams (legacy = 0x1,
- * per-thread = 0x2) are nonzero, so NULL is safe as the empty sentinel.
+ * streams[] array). A slot is empty until `used` is set, so a zeroed
+ * table is empty and every stream is a valid key, NULL (the default
+ * stream) included.
  */
 
 #ifndef OPENDS_DS_STREAM_MAP_H
@@ -27,6 +27,7 @@
 struct ds_stream_map_entry {
 	ds_accel_stream_t key;
 	int idx;
+	int used;
 };
 
 static inline uint32_t
@@ -42,9 +43,9 @@ ds_stream_map_hash(ds_accel_stream_t s, uint32_t mask)
  * slots [hash(K1), K1's_slot], and those were all non-empty at K1's
  * registration (else K1 would have stopped sooner). The table is
  * grow-only, so a slot in that range cannot later become empty or
- * be the destination of another concurrent insert. The key is stored
- * with release and loaded with acquire, so an observed key publishes
- * its idx and everything the caller wrote before the put. */
+ * be the destination of another concurrent insert. `used` is stored
+ * with release and loaded with acquire, so an observed slot publishes
+ * its key, its idx and everything the caller wrote before the put. */
 static inline int
 ds_stream_map_get(const struct ds_stream_map_entry *e, uint32_t mask,
                   ds_accel_stream_t stream)
@@ -53,12 +54,12 @@ ds_stream_map_get(const struct ds_stream_map_entry *e, uint32_t mask,
 	uint32_t cap = mask + 1;
 	for (uint32_t p = 0; p < cap; p++) {
 		const struct ds_stream_map_entry *s = &e[(h + p) & mask];
-		ds_accel_stream_t k =
-		        __atomic_load_n(&s->key, __ATOMIC_ACQUIRE);
-		if (k == stream)
-			return s->idx;
-		if (k == NULL)
+		if (!__atomic_load_n(&s->used, __ATOMIC_ACQUIRE)) {
 			return -1;
+		}
+		if (s->key == stream) {
+			return s->idx;
+		}
 	}
 	return -1;
 }
@@ -75,9 +76,10 @@ ds_stream_map_put(struct ds_stream_map_entry *e, uint32_t mask,
 	uint32_t cap = mask + 1;
 	for (uint32_t p = 0; p < cap; p++) {
 		struct ds_stream_map_entry *s = &e[(h + p) & mask];
-		if (s->key == NULL) {
+		if (!s->used) {
+			s->key = stream;
 			s->idx = idx;
-			__atomic_store_n(&s->key, stream, __ATOMIC_RELEASE);
+			__atomic_store_n(&s->used, 1, __ATOMIC_RELEASE);
 			return 0;
 		}
 	}
