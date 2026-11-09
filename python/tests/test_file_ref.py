@@ -9,6 +9,8 @@ import ctypes
 import os
 import tempfile
 
+import pytest
+
 import opends
 
 
@@ -85,6 +87,52 @@ def test_raw_pointer_with_offset(driver):
         opends.deregister_buffer(base)
     finally:
         os.unlink(path)
+
+
+def test_registers_an_open_descriptor(driver, tmp_path):
+    n = 4096
+    payload = _payload(n)
+    path = tmp_path / "fd.bin"
+    path.write_bytes(payload)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+    dst = opends.alloc(n)
+    with opends.OpenDSFile(fd) as f:
+        assert f.fileno() == fd
+        assert f.read_sync(dst, size=n) == n
+    assert bytes(dst.as_ctypes()) == payload
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+def test_closefd_false_leaves_the_descriptor_open(driver, tmp_path):
+    path = tmp_path / "fd.bin"
+    path.write_bytes(_payload(4096))
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+    try:
+        with opends.OpenDSFile(fd, closefd=False) as f:
+            assert f.fileno() == fd
+        os.fstat(fd)
+        with pytest.raises(ValueError):
+            opends.OpenDSFile(str(path), closefd=False)
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("closefd", [True, False])
+def test_failed_registration_closes_only_an_owned_descriptor(
+    driver, tmp_path, closefd
+):
+    path = tmp_path / "fd.bin"
+    path.write_bytes(_payload(4096))
+    fd = os.open(path, os.O_RDONLY)  # no O_DIRECT: the backend refuses it
+    with pytest.raises(opends.OpenDSError) as info:
+        opends.OpenDSFile(fd, closefd=closefd)
+    assert info.value.code == opends.ErrorCode.DIO_NOT_SET
+    if closefd:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    else:
+        os.close(fd)
 
 
 if __name__ == "__main__":
