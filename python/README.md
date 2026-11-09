@@ -73,8 +73,8 @@ when the last is closed, which drops every registration, so close files and
 deregister buffers first. `get_properties()`, `use_count()` and
 `set_max_direct_io_size()` pass through to the C driver calls. Failures raise
 `OpenDSError`, whose `code` is an `opends.ErrorCode` member. A driver left
-open is closed at exit and on SIGTERM/SIGINT; a framework that installs its
-own SIGTERM handler calls `opends.cleanup()` from it.
+open is closed at exit, and `opends.cleanup()` closes it on request, for
+example from a signal handler.
 
 ```python
 with opends.Driver():
