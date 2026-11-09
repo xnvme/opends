@@ -5,7 +5,7 @@ import collections
 import ctypes
 
 from . import cdll as _c
-from .buffer import io_args, registry
+from .buffer import io_args
 from .driver import check, require_driver
 
 READ = _c.READ
@@ -84,8 +84,7 @@ class Batch:
         for p, op in zip(params, ops):
             if op.file.handle is None:
                 raise ValueError("file is closed")
-            ptr, nbytes, size = io_args(op.buf, op.size, op.dev_offset)
-            registry.ensure(ptr, nbytes)
+            ptr, size = io_args(op.buf, op.size, op.dev_offset)
             slot = self._next_slot
             self._next_slot += 1
             p.mode = _c.BATCH_MODE
