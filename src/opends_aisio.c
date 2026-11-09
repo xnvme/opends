@@ -1148,6 +1148,7 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->bytes_acc = 0;
 	op->err = 0;
 	op->n_bounces = 0;
+	op->extents_seq = -1;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_io_op(w, op);
 	return false;
@@ -1163,8 +1164,15 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 	if (w->kread.op == op) {
 		kernel_read_poll(w);
 	}
-	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
-		complete_read_op(op);
+	if (op->chunks_remaining || op->bounces_outstanding)
+		return;
+	/* the index moved under the read */
+	if (!op->err && op->extents_seq != -1 &&
+	    xal_get_seq_lock(w->drv->xal) != op->extents_seq) {
+		dispatch_pending(w, op);
+		return;
+	}
+	complete_read_op(op);
 }
 
 /* Service a PENDING stream op: dispatch it once its stream has reached it,
