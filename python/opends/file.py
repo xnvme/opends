@@ -5,7 +5,7 @@ import ctypes
 import os
 
 from . import cdll as _c
-from .buffer import io_args, registry
+from .buffer import io_args
 from .driver import check, io_result, is_open, preserve_cuda_context, require_driver
 from .stream import StreamOp, stream_handle
 
@@ -80,16 +80,14 @@ class OpenDSFile:
             raise
 
     def _submit(self, c_fn, buf, size, file_offset, dev_offset):
-        ptr, nbytes, size = io_args(buf, size, dev_offset)
+        ptr, size = io_args(buf, size, dev_offset)
         with preserve_cuda_context():
-            registry.ensure(ptr, nbytes)
             return io_result(c_fn(self._fh, ptr, size, file_offset, dev_offset))
 
     def _submit_async(self, c_fn, buf, size, file_offset, dev_offset):
-        ptr, nbytes, size = io_args(buf, size, dev_offset)
+        ptr, size = io_args(buf, size, dev_offset)
         c_future = _c.DsAsyncFuture()
         with preserve_cuda_context():
-            registry.ensure(ptr, nbytes)
             check(
                 c_fn(
                     self._fh,
@@ -103,10 +101,9 @@ class OpenDSFile:
         return Future(c_future, buf)
 
     def _submit_stream(self, c_fn, buf, size, file_offset, dev_offset, stream):
-        ptr, nbytes, size = io_args(buf, size, dev_offset)
+        ptr, size = io_args(buf, size, dev_offset)
         op = StreamOp(size, file_offset, dev_offset, buf)
         with preserve_cuda_context():
-            registry.ensure(ptr, nbytes)
             check(
                 c_fn(
                     self._fh,

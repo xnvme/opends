@@ -94,13 +94,6 @@ def io_result(ret):
 # already holds the lock, instead of deadlocking.
 _lock = threading.RLock()
 _driver_refs = 0
-# Run before the C driver closes, so state tied to it (the registration
-# cache in the buffer module) empties with it.
-_close_hooks = []
-
-
-def on_close(hook):
-    _close_hooks.append(hook)
 
 
 def _acquire():
@@ -119,8 +112,6 @@ def _release():
             return
         _driver_refs -= 1
         if _driver_refs == 0:
-            for hook in _close_hooks:
-                hook()
             check(_c.driver_close())
 
 
@@ -134,7 +125,7 @@ def is_open():
 
 
 # _cleaning guards against signal reentrancy: a second SIGTERM/SIGINT arriving
-# while cleanup is inside the slow buf_deregister re-enters it on the same
+# while cleanup is inside the slow driver_close re-enters it on the same
 # thread. A reentrant call is a no-op so the first completes; reset in finally
 # so a later driver lifecycle can clean up too.
 _cleaning = False
@@ -156,8 +147,6 @@ def cleanup():
     try:
         with _lock:
             if _driver_refs > 0:
-                for hook in _close_hooks:
-                    hook()
                 _c.driver_close()
                 _driver_refs = 0
     finally:

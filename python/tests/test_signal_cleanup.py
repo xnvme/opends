@@ -19,12 +19,12 @@ import time
 
 import opends
 
-# Child: open the driver (which installs the signal handler), register a
-# buffer, and wrap driver_close so a SIGTERM-driven close leaves proof on
+# Child: open the driver (which installs the signal handler) and wrap
+# driver_close so a SIGTERM-driven close leaves proof on
 # disk. Then wait for the parent's SIGTERM. If the handler is missing,
 # atexit does not run under SIGTERM and the sentinel is never written.
 _CHILD = r"""
-import ctypes, os, signal
+import os, signal
 import opends
 from opends import cdll
 
@@ -39,8 +39,6 @@ def _close(*a, **k):
 cdll.driver_close = _close
 
 driver = opends.Driver()
-buf = opends.alloc(4096)
-opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
 with open(ready, "w") as fh:
     fh.write("ready"); fh.flush(); os.fsync(fh.fileno())
@@ -103,26 +101,22 @@ def test_cleanup_symbol_is_public():
 
 def test_cleanup_reentrant_safe():
     # A second SIGTERM/SIGINT can re-enter cleanup on the same thread while it
-    # is inside the registry clear (buf_deregister can be slow). Without a
-    # guard the reentrant call closes the driver under the outer clear and the
-    # teardown can deadlock or double-close. Reproduce the re-entry by calling
-    # cleanup from within buf_deregister and assert the teardown still
-    # completes (does not hang).
-    import ctypes
+    # is inside driver_close, which can be slow. Without a guard the reentrant
+    # call closes the driver under the outer one and the teardown can deadlock
+    # or double-close. Reproduce the re-entry by calling cleanup from within
+    # driver_close and assert the teardown still completes (does not hang).
     import threading
 
     from opends import cdll, driver as d
 
     d._cleaning = False
     driver = opends.Driver()
-    buf = opends.alloc(4096)
-    opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
-    orig = cdll.buf_deregister
+    orig = cdll.driver_close
 
-    def reenter(ptr):
-        opends.cleanup()  # simulate a signal re-entering mid-clear
-        return orig(ptr)
+    def reenter():
+        opends.cleanup()  # simulate a signal re-entering mid-close
+        return orig()
 
     done = threading.Event()
 
@@ -130,7 +124,7 @@ def test_cleanup_reentrant_safe():
         opends.cleanup()
         done.set()
 
-    cdll.buf_deregister = reenter
+    cdll.driver_close = reenter
     try:
         threading.Thread(target=run_cleanup).start()
         assert done.wait(timeout=10), (
@@ -138,7 +132,7 @@ def test_cleanup_reentrant_safe():
             "so a second signal during teardown would leak the GPU buffer"
         )
     finally:
-        cdll.buf_deregister = orig
+        cdll.driver_close = orig
         d._cleaning = False
         driver.close()
 

@@ -1,72 +1,23 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Buffer registration and HostBuffer.
 
-Buffers are registered on first use. Only a bare pointer, which has no
-known extent, needs register_buffer up front.
+A buffer for I/O comes from alloc, or the caller registers it with
+register_buffer before the first I/O on it.
 """
 
 import ctypes
 import math
-import threading
 
 from . import cdll as _c
-from . import driver
-from .driver import OpenDSError, preserve_cuda_context, require_driver
-
-
-class Registry:
-    """Base pointer to registered size, for the open driver."""
-
-    def __init__(self):
-        self._regs = {}
-        # Reentrant: a GC finalizer (HostBuffer.free) can run inside ensure
-        # while this thread holds the lock, and must not self-deadlock.
-        self._lock = threading.RLock()
-
-    def ensure(self, ptr, size):
-        with self._lock:
-            if ptr in self._regs:
-                return
-            if size is None:
-                raise ValueError(
-                    "bare pointer 0x%x is not registered; call "
-                    "opends.register_buffer(ptr, size) on the base buffer "
-                    "before using it for I/O" % ptr
-                )
-            err = _c.buf_register(ptr, size, 0)
-            if err.err not in (
-                _c.ErrorCode.SUCCESS,
-                _c.ErrorCode.MEMORY_ALREADY_REGISTERED,
-            ):
-                raise OpenDSError(err.err, err.dev_err)
-            self._regs[ptr] = size
-
-    def drop(self, ptr):
-        with self._lock:
-            if self._regs.pop(ptr, None) is not None:
-                _c.buf_deregister(ptr)
-
-    def clear(self):
-        with self._lock:
-            for ptr in list(self._regs):
-                _c.buf_deregister(ptr)
-            self._regs.clear()
-
-
-registry = Registry()
-driver.on_close(registry.clear)
+from .driver import check, preserve_cuda_context, require_driver
 
 
 def register_buffer(buf, size=None):
-    """Register a buffer for DMA before I/O (cuFileBufRegister).
+    """Register an externally allocated buffer for I/O (cuFileBufRegister).
 
-    Structured buffers (HostBuffer, cupy/numpy/torch arrays) are
-    registered on first use, so this is only needed for the cuFile
-    pattern of registering one large base allocation and then indexing
-    into it with a bare device pointer and dev_offset. For a bare
-    pointer (ctypes.c_void_p or int) size is mandatory; for a structured
-    buffer it defaults to the buffer's own extent. The registration
-    lasts until deregister_buffer or the driver closes.
+    For a bare pointer (ctypes.c_void_p or int) size is mandatory; for a
+    structured buffer it defaults to the buffer's own extent. The
+    registration lasts until deregister_buffer or the driver closes.
     """
     ptr, nbytes = buffer_view(buf)
     if size is None:
@@ -75,13 +26,13 @@ def register_buffer(buf, size=None):
         size = nbytes
     require_driver()
     with preserve_cuda_context():
-        registry.ensure(ptr, int(size))
+        check(_c.buf_register(ptr, int(size), 0))
 
 
 def deregister_buffer(buf):
     ptr, _ = buffer_view(buf)
     with preserve_cuda_context():
-        registry.drop(ptr)
+        check(_c.buf_deregister(ptr))
 
 
 class HostBuffer:
@@ -117,7 +68,6 @@ class HostBuffer:
     def free(self):
         if self._ptr:
             with preserve_cuda_context():
-                registry.drop(self._ptr)
                 _c.free(self._ptr)
             self._ptr = 0
 
@@ -138,8 +88,7 @@ def buffer_view(buf):
 
     A bare device pointer (ctypes.c_void_p or int address, the cuFile
     calling convention) has no discoverable extent, so nbytes is None;
-    such a buffer must be registered up front and given an explicit size
-    at I/O time.
+    such a buffer is given an explicit size at I/O time.
     """
     if isinstance(buf, HostBuffer):
         return buf.ptr, buf.nbytes
@@ -164,7 +113,7 @@ def buffer_view(buf):
 
 
 def io_args(buf, size, dev_offset):
-    """Resolve (ptr, nbytes, size) for an I/O call on buf.
+    """Resolve (ptr, size) for an I/O call on buf.
 
     The transfer must lie inside a buffer with a known extent; a bare
     pointer has none, so only its size is checked for presence.
@@ -175,7 +124,7 @@ def io_args(buf, size, dev_offset):
     if nbytes is None:
         if size is None:
             raise ValueError("size is required for a bare pointer")
-        return ptr, nbytes, size
+        return ptr, size
     if dev_offset > nbytes:
         raise ValueError(
             "dev_offset %d is past the end of the %d-byte buffer" % (dev_offset, nbytes)
@@ -187,7 +136,7 @@ def io_args(buf, size, dev_offset):
             "%d bytes at dev_offset %d exceed the %d-byte buffer"
             % (size, dev_offset, nbytes)
         )
-    return ptr, nbytes, size
+    return ptr, size
 
 
 def alloc(size):

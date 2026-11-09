@@ -6,6 +6,7 @@ any host without a GPU. Prints "all ok" on success.
 """
 
 import ctypes
+import mmap
 import os
 import tempfile
 
@@ -74,14 +75,14 @@ def test_raw_pointer_with_offset(driver):
         with opends.OpenDSFile(path, "w") as f:
             f.write_sync(src, size=n)
 
-        dst = opends.alloc(n)
-        base = ctypes.c_void_p(dst.ptr)
+        dst = mmap.mmap(-1, n)
+        base = ctypes.c_void_p(ctypes.addressof(ctypes.c_char.from_buffer(dst)))
         opends.register_buffer(base, n)
         with opends.OpenDSFile(path, "r") as f:
             assert f.read_sync(base, size=half, file_offset=0, dev_offset=0) == half
             n = f.read_sync(base, size=half, file_offset=half, dev_offset=half)
             assert n == half
-        assert bytes(dst.as_ctypes()) == payload
+        assert dst[:] == payload
         opends.deregister_buffer(base)
     finally:
         os.unlink(path)
