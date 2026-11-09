@@ -11,7 +11,7 @@ import threading
 
 from . import cdll as _c
 from . import driver
-from .driver import OpenDSError, preserve_cuda_context, require_driver
+from .driver import OpenDSError, require_driver
 
 
 class Registry:
@@ -74,14 +74,12 @@ def register_buffer(buf, size=None):
             raise ValueError("size is required to register a bare pointer")
         size = nbytes
     require_driver()
-    with preserve_cuda_context():
-        registry.ensure(ptr, int(size))
+    registry.ensure(ptr, int(size))
 
 
 def deregister_buffer(buf):
     ptr, _ = buffer_view(buf)
-    with preserve_cuda_context():
-        registry.drop(ptr)
+    registry.drop(ptr)
 
 
 class HostBuffer:
@@ -93,8 +91,7 @@ class HostBuffer:
         self._ptr = 0
         self._size = int(size)
         require_driver()
-        with preserve_cuda_context():
-            ptr = _c.alloc(size)
+        ptr = _c.alloc(size)
         if not ptr:
             raise MemoryError("opends_alloc(%d) failed" % size)
         self._ptr = int(ptr)
@@ -116,9 +113,8 @@ class HostBuffer:
 
     def free(self):
         if self._ptr:
-            with preserve_cuda_context():
-                registry.drop(self._ptr)
-                _c.free(self._ptr)
+            registry.drop(self._ptr)
+            _c.free(self._ptr)
             self._ptr = 0
 
     def __del__(self):

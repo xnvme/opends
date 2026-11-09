@@ -4,7 +4,7 @@
 import ctypes
 
 from . import cdll as _c
-from .driver import check, io_result, preserve_cuda_context, require_driver
+from .driver import check, io_result, require_driver
 
 
 def stream_handle(stream):
@@ -25,13 +25,11 @@ def stream_handle(stream):
 def register_stream(stream, flags=0):
     """cuFileStreamRegister."""
     require_driver()
-    with preserve_cuda_context():
-        check(_c.stream_register(stream_handle(stream), flags))
+    check(_c.stream_register(stream_handle(stream), flags))
 
 
 def deregister_stream(stream):
-    with preserve_cuda_context():
-        check(_c.stream_deregister(stream_handle(stream)))
+    check(_c.stream_deregister(stream_handle(stream)))
 
 
 # Initial byte count of a StreamOp: never a byte count, never a negated code.
