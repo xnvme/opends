@@ -189,29 +189,36 @@ out:
 	return failed;
 }
 
-/* A NULL stream is not a stream of this backend. */
+/* The write cases on the default stream, which registers as NULL and is
+ * stream 0: it waits for the legacy work of every blocking stream, and the
+ * copies of a write on it must sit ahead of its gate like any other. */
 static int
-stream_write_null_refused(struct aisio_homi *a)
+run_null_pass(struct aisio_homi *a, unsigned flags, const char *label)
 {
-	void *gpu = opends_alloc(PAGE);
-	size_t sz = PAGE;
-	off_t fo = 0;
-	off_t bo = 0;
-	ssize_t bytes = 0;
-	opends_error_t oerr;
+	struct write_homi_env env = {
+	        .fh = a->fh,
+	        .fd = a->fd,
+	        .stream = NULL,
+	        .submit_write = stream_submit_write,
+	        .mode_label = label,
+	};
+	int failed;
+	int err;
 
-	if (!gpu) {
-		fprintf(stderr, "[null] allocation failed\n");
+	err = ftruncate(a->fd, 0);
+	if (err != 0) {
+		perror("  ftruncate");
 		return 1;
 	}
-	oerr = opends_stream_write(a->fh, gpu, &sz, &fo, &bo, &bytes, NULL);
-	opends_free(gpu);
-	if (oerr.err != OPENDS_INVALID_VALUE) {
-		fprintf(stderr, "[null] a NULL stream was not refused: %s\n",
-		        opends_op_status_error(oerr.err));
+	if (opends_stream_register(NULL, flags).err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  %s: stream register\n", label);
 		return 1;
 	}
-	fprintf(stderr, "[null] NULL stream refused ok\n");
+	failed = run_write_homi_tests(&env);
+	if (failed) {
+		return failed;
+	}
+	opends_stream_deregister(NULL);
 	return 0;
 }
 
@@ -816,7 +823,10 @@ main(int argc, char **argv)
 		                  "stream/blocking/deferred");
 	}
 	if (!failed) {
-		failed = stream_write_null_refused(&a);
+		failed = run_null_pass(&a, STREAM_FIXED, "stream/null");
+	}
+	if (!failed) {
+		failed = run_null_pass(&a, 0, "stream/null/deferred");
 	}
 	if (!failed) {
 		failed = stream_write_refused(path, CU_STREAM_NON_BLOCKING,
