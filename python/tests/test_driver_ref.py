@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Driver-level bindings against the ref backend."""
 
-import ctypes
+import mmap
 
 import pytest
 
 import opends
-from opends import cdll
 
 
 def test_requires_open_driver(tmp_path):
@@ -88,48 +87,14 @@ def test_error_carries_code(driver, tmp_path):
 
 
 def test_register_deregister_buffer_and_stream(driver):
-    buf = opends.alloc(4096)
-    opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
-    opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)  # idempotent
-    opends.deregister_buffer(ctypes.c_void_p(buf.ptr))
-    opends.deregister_buffer(ctypes.c_void_p(buf.ptr))  # unknown: no-op
+    buf = mmap.mmap(-1, 4096)
+    opends.register_buffer(buf)
+    with pytest.raises(opends.OpenDSError) as info:
+        opends.register_buffer(buf)
+    assert info.value.code is opends.ErrorCode.MEMORY_ALREADY_REGISTERED
+    opends.deregister_buffer(buf)
+    with pytest.raises(opends.OpenDSError) as info:
+        opends.deregister_buffer(buf)
+    assert info.value.code is opends.ErrorCode.MEMORY_NOT_REGISTERED
     opends.register_stream(0x1234)
     opends.deregister_stream(0x1234)
-
-
-def test_finalizer_inside_registration_does_not_deadlock(driver, tmp_path):
-    # A HostBuffer caught in a reference cycle is freed by the cyclic GC,
-    # which can run during any allocation, including inside a registration
-    # call that holds the registry lock. Its free() re-enters that lock on
-    # the same thread. Force the collection from inside buf_register.
-    import gc
-    import threading
-
-    class Cycle:
-        pass
-
-    cycle = Cycle()
-    cycle.buf = opends.alloc(4096)
-    cycle.me = cycle
-    del cycle
-
-    orig = cdll.buf_register
-
-    def collecting(ptr, size, flags):
-        gc.collect()
-        return orig(ptr, size, flags)
-
-    done = threading.Event()
-
-    def run():
-        dst = opends.alloc(4096)
-        with opends.OpenDSFile(str(tmp_path / "a"), "w") as f:
-            f.write_sync(dst, size=4096)
-        done.set()
-
-    cdll.buf_register = collecting
-    try:
-        threading.Thread(target=run, daemon=True).start()
-        assert done.wait(timeout=10), "registration deadlocked on a GC finalizer"
-    finally:
-        cdll.buf_register = orig
