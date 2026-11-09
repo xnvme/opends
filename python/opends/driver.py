@@ -8,6 +8,7 @@ with cuFileDriverOpen.
 import atexit
 import collections
 import ctypes
+import errno
 import os
 import signal
 import threading
@@ -77,10 +78,18 @@ def check(err):
         raise OpenDSError(err.err, err.dev_err)
 
 
+def io_error(ret):
+    """The exception for a negative read or write result. -1 is an I/O
+    error, as cuFile reports one. Any other value is a negated code."""
+    if ret == -1:
+        return OSError(errno.EIO, "I/O error")
+    return OpenDSError(-ret)
+
+
 def io_result(ret):
-    """Byte count of a read or write result; raise for a negated error."""
+    """Byte count of a read or write result; raise for a negative one."""
     if ret < 0:
-        raise OpenDSError(-ret)
+        raise io_error(ret)
     return ret
 
 

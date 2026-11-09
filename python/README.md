@@ -88,7 +88,10 @@ stream order. `stream` accepts a raw handle (`int` or `ctypes.c_void_p`), a
 `torch.cuda.Stream` or a `cupy.cuda.Stream`; `None` is the default stream.
 The returned `StreamOp` holds the storage the backend reads and writes when
 the stream reaches the operation, so keep it alive until the stream has been
-synchronized; `result()` raises until then and returns the byte count after.
+synchronized. `nbytes` is the byte count as cuFile writes it, 0 before the
+stream has run, the count, -1 for an I/O error, or a negated code. `result()`
+is the same count and raises for a failed operation, `OpenDSError` with the
+code or `OSError` for the -1.
 `register_stream` and
 `deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
 

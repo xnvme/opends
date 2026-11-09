@@ -34,33 +34,28 @@ def deregister_stream(stream):
         check(_c.stream_deregister(stream_handle(stream)))
 
 
-# Initial byte count of a StreamOp: never a byte count, never a negated code.
-_PENDING = -1
-
-
 class StreamOp:
     """One read_stream or write_stream call.
 
     The backend reads the size and offsets, and writes the byte count, when
     the stream reaches the operation. Keep this object alive until the
-    stream has been synchronized; result() raises until then.
+    stream has been synchronized. The byte count is 0 until then, as with
+    cuFile, which requires the storage to start at 0.
     """
 
     def __init__(self, size, file_offset, dev_offset, buf):
         self._size = ctypes.c_size_t(size)
         self._file_offset = ctypes.c_long(file_offset)
         self._dev_offset = ctypes.c_long(dev_offset)
-        self._bytes = ctypes.c_ssize_t(_PENDING)
+        self._bytes = ctypes.c_ssize_t(0)
         self._buf = buf
 
     @property
-    def done(self):
-        return self._bytes.value != _PENDING
+    def nbytes(self):
+        """cuFile's byte count as written: 0 before the stream has run, the
+        count, -1 for an I/O error, or a negated code."""
+        return int(self._bytes.value)
 
     def result(self):
-        """Byte count once the stream has executed the operation."""
-        if not self.done:
-            raise RuntimeError(
-                "the stream has not reached this operation; synchronize it first"
-            )
-        return io_result(int(self._bytes.value))
+        """Byte count of the operation; raises for a failed one."""
+        return io_result(self.nbytes)

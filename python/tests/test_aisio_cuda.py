@@ -206,7 +206,6 @@ def check_stream(f, cuda, expected):
         cuda.zero(dst.ptr, size)
         op = f.read_stream(dst, size=size, stream=stream)
         cuda.sync(stream)
-        assert op.done
         assert op.result() == size
         assert cuda.d2h(dst.ptr, size) == expected
 
