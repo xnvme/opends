@@ -57,26 +57,42 @@ _FLAGS = {
 
 
 class OpenDSFile:
-    def __init__(self, path, flags="r", *, use_direct_io=None, mode=0o644):
-        if flags not in _FLAGS:
-            raise ValueError("unsupported flags %r" % flags)
-        oflags = _FLAGS[flags]
-        if use_direct_io is None:
-            use_direct_io = True
-        if use_direct_io:
-            oflags |= os.O_DIRECT
+    """A file registered with the driver.
+
+    path is a file to open, or a descriptor that is already open, as with
+    the builtin open(). A descriptor keeps the flags it was opened with, so
+    flags, use_direct_io and mode do not apply to it. closefd=False leaves
+    the descriptor open when the file closes. A path needs closefd=True.
+    """
+
+    def __init__(
+        self, path, flags="r", *, use_direct_io=None, mode=0o644, closefd=True
+    ):
         self._fh = None
         self._fd = -1
-        require_driver()
-        self._fd = os.open(path, oflags, mode)
+        self._closefd = closefd
+        if isinstance(path, int):
+            self._fd = path
+        else:
+            if not closefd:
+                raise ValueError("closefd=False needs a descriptor, not a path")
+            if flags not in _FLAGS:
+                raise ValueError("unsupported flags %r" % flags)
+            oflags = _FLAGS[flags]
+            if use_direct_io is None:
+                use_direct_io = True
+            if use_direct_io:
+                oflags |= os.O_DIRECT
+            require_driver()
+            self._fd = os.open(path, oflags, mode)
         try:
+            require_driver()
             with preserve_cuda_context():
                 fh = ctypes.c_void_p()
                 check(_c.handle_register(ctypes.byref(fh), self._fd))
             self._fh = fh
         except Exception:
-            os.close(self._fd)
-            self._fd = -1
+            self._release_fd()
             raise
 
     def _submit(self, c_fn, buf, size, file_offset, dev_offset):
@@ -163,9 +179,12 @@ class OpenDSFile:
             with preserve_cuda_context():
                 _c.handle_deregister(self._fh)
             self._fh = None
-        if self._fd >= 0:
+        self._release_fd()
+
+    def _release_fd(self):
+        if self._fd >= 0 and self._closefd:
             os.close(self._fd)
-            self._fd = -1
+        self._fd = -1
 
     def __enter__(self):
         return self

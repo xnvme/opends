@@ -30,6 +30,17 @@ torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
 shutdown. `opends.alloc` is the backend's own allocator: host memory on ref,
 device memory on GPU backends.
 
+`OpenDSFile` also takes a descriptor that is already open in place of a path,
+as the builtin `open()` does. Pass `closefd=False` to keep the descriptor
+open when the file closes:
+
+```python
+fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+with opends.OpenDSFile(fd, closefd=False) as f:
+    f.read_sync(buf, size=4096)
+os.close(fd)
+```
+
 For the cuFile pattern of one large allocation indexed by offset, pass a
 bare device pointer (`ctypes.c_void_p` or an `int` address) plus an
 explicit `size` and `dev_offset`. A bare pointer has no discoverable
