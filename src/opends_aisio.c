@@ -1088,19 +1088,22 @@ park_gate_cb(void *arg)
 		;
 }
 
+/* The release write tells the worker the copies landed */
 static int
-run_bounce_copies(struct file_op *op)
+enqueue_bounce_copies(struct io_worker *w, struct file_op *op)
 {
 	for (int i = 0; i < op->n_bounces; i++) {
-		if (ds_accel->copy(op->bounces[i].dst, op->bounces[i].src,
-		                   op->bounces[i].nbytes) != 0)
+		if (ds_accel->copy_async(op->bounces[i].dst, op->bounces[i].src,
+		                         op->bounces[i].nbytes,
+		                         w->bounce_stream) != 0)
 			return -1;
 	}
-	return 0;
+	return ds_accel->stream_write_value32(w->bounce_stream, op->gate_dptr,
+	                                      gate_release_value(op->pos));
 }
 
 static void
-complete_read_op(struct file_op *op)
+complete_read_op(struct io_worker *w, struct file_op *op)
 {
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
 
@@ -1117,10 +1120,26 @@ complete_read_op(struct file_op *op)
 		return;
 	}
 
-	if (!op->err && run_bounce_copies(op) < 0)
+	if (!op->err && op->n_bounces) {
+		if (enqueue_bounce_copies(w, op) == 0) {
+			__atomic_store_n(&op->state, FILE_OP_COPYING,
+			                 __ATOMIC_RELEASE);
+			return;
+		}
+		/* Copies enqueued before the failure may still run */
 		n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
+	}
 
 	ds_aisio_future_complete(op->u.async.future, n);
+	mark_done(op);
+}
+
+static void
+reap_copying(struct file_op *op)
+{
+	if (!gate_reached(op->gate, gate_release_value(op->pos)))
+		return;
+	ds_aisio_future_complete(op->u.async.future, (ssize_t)op->bytes_acc);
 	mark_done(op);
 }
 
@@ -1172,7 +1191,7 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 		dispatch_pending(w, op);
 		return;
 	}
-	complete_read_op(op);
+	complete_read_op(w, op);
 }
 
 /* Service a PENDING stream op: dispatch it once its stream has reached it,
@@ -1238,6 +1257,7 @@ io_thread_main(void *arg)
 				}
 				break;
 			case FILE_OP_IN_FLIGHT: reap_in_flight(w, op); break;
+			case FILE_OP_COPYING: reap_copying(op); break;
 			default: break; /* FREE: claimed, not yet published */
 			}
 		}
@@ -1345,6 +1365,12 @@ workers_setup(struct driver *d)
 			w->file_op_queue[s].gate_dptr =
 			        dptr + word * sizeof(uint32_t);
 		}
+		/* Not on the worker: stream creation may sync the device */
+		if (!d->cfg.assume_aligned_only &&
+		    ds_accel->stream_create(&w->bounce_stream) != 0) {
+			w->bounce_stream = NULL;
+			goto fail;
+		}
 		if (ds_write_words_setup(d, w, i) < 0)
 			goto fail;
 		if (posix_memalign(&w->edge_buf, OPENDS_DIRECT_ALIGN,
@@ -1393,6 +1419,8 @@ fail:
 		struct io_worker *w = &d->workers[i];
 		if (w->queue)
 			xnvme_queue_term(w->queue);
+		if (w->bounce_stream)
+			ds_accel->stream_destroy(w->bounce_stream);
 		kernel_read_teardown(w);
 		free(w->edge_buf);
 		if (w->descs)
@@ -1432,6 +1460,11 @@ workers_teardown(struct driver *d)
 		if (w->queue) {
 			xnvme_queue_term(w->queue);
 			w->queue = NULL;
+		}
+		/* Workers exit with no copies pending */
+		if (w->bounce_stream) {
+			ds_accel->stream_destroy(w->bounce_stream);
+			w->bounce_stream = NULL;
 		}
 		kernel_read_teardown(w);
 		free(w->extents.v);

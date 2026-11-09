@@ -54,7 +54,8 @@ enum file_op_state {
 	FILE_OP_FREE = 0,
 	FILE_OP_PENDING = 1,
 	FILE_OP_IN_FLIGHT = 2,
-	FILE_OP_DONE = 3,
+	FILE_OP_COPYING = 3,
+	FILE_OP_DONE = 4,
 };
 
 struct buf_entry {
@@ -215,6 +216,7 @@ struct kernel_read {
 struct io_worker {
 	struct driver *drv;
 	struct xnvme_queue *queue;
+	ds_accel_stream_t bounce_stream;
 	struct kernel_read kread;
 	struct extent_buf extents;
 	void *edge_buf; /* one block, for the edges of a staged write */

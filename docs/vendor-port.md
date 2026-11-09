@@ -3,9 +3,10 @@
 The aisio backend reads NVMe straight into GPU memory over xNVMe P2P DMA.
 Its only GPU dependency is a narrow runtime surface, `struct ds_accel_ops`
 in `src/ds_accel.h`: context capture and binding, pinned-mapped host
-allocation, a host/device copy, a stream-ordered host callback, and a
-deferred stream-ordered copy. The NVMe and extent code calls only through
-the active-ops pointer `ds_accel`, never a vendor symbol.
+allocation, a host/device copy, a stream-ordered host callback, a deferred
+stream-ordered copy, and an async copy on a stream of the driver's own. The
+NVMe and extent code calls only through the active-ops pointer `ds_accel`,
+never a vendor symbol.
 
 A port is one implementation file, `src/ds_accel_<backend>.c`, that fills in
 `struct ds_accel_ops` and binds `ds_accel` to it, plus a `meson.build`
@@ -30,8 +31,10 @@ validating on real hardware before trusting a port:
 are published after it is enqueued, by host stores the I/O thread makes
 while the stream is parked in the callback. CUDA needs a kernel for that,
 shipped in `ds_bounce_kernel_cuda.cu`; a vendor whose runtime can defer a
-stream copy may not need a separate kernel translation unit at all. Setting
-`OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` drops the bounce path entirely
+stream copy may not need a separate kernel translation unit at all. Async
+reads copy their unaligned spans with `copy_async` on a non-blocking stream
+per I/O thread.
+Setting `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` drops the bounce path entirely
 (unaligned reads then fail with `OPENDS_INVALID_VALUE`).
 Driver open validates the ops the chosen mode drives and fails cleanly when
 one is missing, so a partial table may leave the other mode's ops NULL.

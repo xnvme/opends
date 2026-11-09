@@ -127,6 +127,30 @@ cuda_copy_from_dev_async(void *dst, const void *src, size_t bytes,
 }
 
 static int
+cuda_stream_create(ds_accel_stream_t *out)
+{
+	CUstream s;
+	CUresult rc = cuStreamCreate(&s, CU_STREAM_NON_BLOCKING);
+	if (rc != CUDA_SUCCESS)
+		return (int)rc;
+	*out = s;
+	return 0;
+}
+
+static void
+cuda_stream_destroy(ds_accel_stream_t s)
+{
+	cuStreamDestroy((CUstream)s);
+}
+
+static int
+cuda_copy_async(void *dst, const void *src, size_t bytes, ds_accel_stream_t s)
+{
+	return (int)cuMemcpyAsync((CUdeviceptr)dst, (CUdeviceptr)src, bytes,
+	                          (CUstream)s);
+}
+
+static int
 cuda_stream_write_value32(ds_accel_stream_t s, ds_accel_devptr_t addr,
                           uint32_t value)
 {
@@ -161,6 +185,9 @@ static const struct ds_accel_ops cuda_ops = {
         .copy = cuda_copy,
         .copy_to_dev_async = cuda_copy_to_dev_async,
         .copy_from_dev_async = cuda_copy_from_dev_async,
+        .stream_create = cuda_stream_create,
+        .stream_destroy = cuda_stream_destroy,
+        .copy_async = cuda_copy_async,
         .stream_write_value32 = cuda_stream_write_value32,
         .stream_wait_value32_geq = cuda_stream_wait_value32_geq,
         .launch_host_func = cuda_launch_host_func,

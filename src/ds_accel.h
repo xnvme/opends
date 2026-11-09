@@ -75,11 +75,19 @@ struct ds_accel_ops {
 	int (*copy_from_dev_async)(void *dst, const void *src, size_t bytes,
 	                           ds_accel_stream_t s);
 
-	/* Per-stream gate, required only when assume_aligned_only is off:
-	 * write a gate word in stream order. */
+	/* A non-blocking stream; required, as is copy_async, only when
+	 * assume_aligned_only is off. */
+	int (*stream_create)(ds_accel_stream_t *out);
+	void (*stream_destroy)(ds_accel_stream_t s);
+	/* Device to device */
+	int (*copy_async)(void *dst, const void *src, size_t bytes,
+	                  ds_accel_stream_t s);
+
+	/* Gate words, required only when assume_aligned_only is off:
+	 * write a word in stream order. */
 	int (*stream_write_value32)(ds_accel_stream_t s, ds_accel_devptr_t addr,
 	                            uint32_t value);
-	/* Hold the stream until the gate word reaches value (>=). */
+	/* Hold the stream until the gate word reaches value (>=, wrapping). */
 	int (*stream_wait_value32_geq)(ds_accel_stream_t s,
 	                               ds_accel_devptr_t addr, uint32_t value);
 

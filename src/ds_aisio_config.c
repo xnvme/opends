@@ -170,13 +170,15 @@ aisio_config_read(struct aisio_config *cfg)
 		        ENV_ASSUME_ALIGNED_ONLY);
 		return -EINVAL;
 	}
-	if (!cfg->assume_aligned_only && (!ds_accel->stream_write_value32 ||
-	                                  !ds_accel->stream_wait_value32_geq ||
-	                                  !ds_accel->copy_to_dev_async)) {
+	if (!cfg->assume_aligned_only &&
+	    (!ds_accel->stream_write_value32 ||
+	     !ds_accel->stream_wait_value32_geq ||
+	     !ds_accel->copy_to_dev_async || !ds_accel->stream_create ||
+	     !ds_accel->stream_destroy || !ds_accel->copy_async)) {
 		fprintf(stderr,
 		        "aisio: the vendor ops table does not provide the "
-		        "stream gate and pinned copy ops; set %s=1 to gate "
-		        "via launch_host_func\n",
+		        "stream gate, pinned copy and async copy ops; set %s=1 "
+		        "to gate via launch_host_func\n",
 		        ENV_ASSUME_ALIGNED_ONLY);
 		return -EINVAL;
 	}
