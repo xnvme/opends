@@ -1842,9 +1842,6 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 		return opends_err(OPENDS_INVALID_VALUE);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
-	/* NULL is the stream map's empty key */
-	if (!stream)
-		return opends_err(OPENDS_INVALID_VALUE);
 
 	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
 	struct opends_stream *opends_stream = opends_stream_get(d, cus);
@@ -2016,8 +2013,6 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!stream)
-		return opends_err(OPENDS_INVALID_VALUE);
 
 	if (!drv->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
