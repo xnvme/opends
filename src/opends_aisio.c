@@ -149,9 +149,26 @@ struct read_cursor {
 
 struct driver;
 
+/* One read through the kernel at a time for each worker, in chunks through
+ * buf. The default stream writes seq to word when a chunk has landed. */
+struct kernel_read {
+	void *buf;
+	size_t buf_nbytes;
+	uint32_t *word;
+	ds_accel_devptr_t word_dptr;
+	uint32_t seq;
+	struct file_op *op;
+	uint8_t *dst;
+	uint64_t off;
+	size_t remaining;
+	bool last;
+	bool broken;
+};
+
 struct io_worker {
 	struct driver *drv;
 	struct xnvme_queue *queue;
+	struct kernel_read kread;
 	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
 	uint32_t queue_head;
 	uint32_t queue_tail;
@@ -651,6 +668,150 @@ pwrite_op(struct registered_file *h, const void *src, size_t size,
 	                            ds_accel->copy);
 }
 
+/* Whole LBAs cannot be DMAed to a destination off a dword: upcie wants the
+ * data buffer dword aligned, and the PRP offset is dword granular. Every LBA
+ * boundary of a read lands at the same offset modulo 4, so one test covers
+ * them all. A read with no whole LBA is bounced whatever its destination. */
+static bool
+needs_kernel_read(const struct driver *d, const uint8_t *dst, size_t size,
+                  uint64_t req_start)
+{
+	uint64_t lba_mask = d->lba_size - 1;
+	uint64_t first_lba = (req_start + lba_mask) & ~lba_mask;
+	uintptr_t shift = (uintptr_t)dst - req_start;
+
+	if (size < d->lba_size || first_lba + d->lba_size > req_start + size)
+		return false;
+	return (shift & (NVME_PRP_OFFSET_ALIGN - 1)) != 0;
+}
+
+/* Read the next chunk into the pinned buffer and queue its copy on the
+ * default stream, with the write of the word behind it. An I/O thread must
+ * not wait for the accelerator: a stream can wait for this thread. */
+static void
+kernel_read_chunk(struct io_worker *w)
+{
+	struct kernel_read *k = &w->kread;
+	struct file_op *op = k->op;
+	off_t start = (off_t)k->off & ~(off_t)(OPENDS_DIRECT_ALIGN - 1);
+	size_t head = (size_t)((off_t)k->off - start);
+	size_t n = k->buf_nbytes - head;
+	size_t span;
+	ssize_t got;
+	int err;
+
+	if (n > k->remaining) {
+		n = k->remaining;
+	}
+	span = (head + n + OPENDS_DIRECT_ALIGN - 1) &
+	       ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+	got = opends_direct_pread_span(op->h->fd, k->buf, span, start);
+	if (got < 0) {
+		op->err = (got == -(ssize_t)EINVAL)
+		                  ? OPENDS_INVALID_VALUE
+		                  : OPENDS_DEVICE_DRIVER_ERROR;
+		goto done;
+	}
+	if ((size_t)got <= head) {
+		goto done;
+	}
+	if ((size_t)got - head < n) {
+		n = (size_t)got - head;
+		k->last = true;
+	}
+
+	err = ds_accel->copy_to_dev_async(k->dst, (uint8_t *)k->buf + head, n);
+	if (err != 0) {
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		goto done;
+	}
+	k->seq++;
+	err = ds_accel->stream_write_value32(NULL, k->word_dptr, k->seq);
+	if (err != 0) {
+		/* nothing tells when the queued copy has run, so the buffer
+		 * cannot be used again */
+		k->broken = true;
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		goto done;
+	}
+	op->bytes_acc += n;
+	k->dst += n;
+	k->off += n;
+	k->remaining -= n;
+	return;
+done:
+	op->chunks_remaining = 0;
+	k->op = NULL;
+}
+
+static void
+kernel_read_poll(struct io_worker *w)
+{
+	struct kernel_read *k = &w->kread;
+
+	if (__atomic_load_n(k->word, __ATOMIC_ACQUIRE) != k->seq) {
+		return;
+	}
+	if (k->remaining == 0 || k->last) {
+		k->op->chunks_remaining = 0;
+		k->op = NULL;
+		return;
+	}
+	kernel_read_chunk(w);
+}
+
+static void
+kernel_read_start(struct io_worker *w, struct file_op *op, uint8_t *dst,
+                  size_t size, uint64_t req_start)
+{
+	struct kernel_read *k = &w->kread;
+
+	k->op = op;
+	k->dst = dst;
+	k->off = req_start;
+	k->remaining = size;
+	k->last = false;
+	op->chunks_remaining = 1;
+	kernel_read_chunk(w);
+}
+
+static int
+kernel_read_setup(struct driver *d, struct io_worker *w, int idx)
+{
+	struct kernel_read *k = &w->kread;
+	size_t word = MAX_STREAMS + (size_t)idx;
+	int err;
+
+	/* the same chunk size as on the direct path */
+	k->buf_nbytes = ((size_t)d->mdts_nbytes + OPENDS_DIRECT_ALIGN - 1) &
+	                ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+	err = posix_memalign(&k->buf, OPENDS_DIRECT_ALIGN, k->buf_nbytes);
+	if (err != 0) {
+		k->buf = NULL;
+		return -1;
+	}
+	err = ds_accel->host_pin(k->buf, k->buf_nbytes);
+	if (err != 0) {
+		free(k->buf);
+		k->buf = NULL;
+		return -1;
+	}
+	k->word = (uint32_t *)d->stream_words_host + word;
+	k->word_dptr = d->stream_words_dptr + word * sizeof(uint32_t);
+	return 0;
+}
+
+static void
+kernel_read_teardown(struct io_worker *w)
+{
+	if (!w->kread.buf) {
+		return;
+	}
+	ds_accel->host_unpin(w->kread.buf);
+	free(w->kread.buf);
+	w->kread.buf = NULL;
+}
+
 static int
 open_device(struct driver *d)
 {
@@ -917,6 +1078,24 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
+	if (needs_kernel_read(d, dst_base, size, req_start)) {
+		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM) {
+			op->err = OPENDS_INVALID_VALUE;
+			return;
+		}
+		if (w->kread.broken) {
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+			return;
+		}
+		if (w->kread.op) {
+			/* the buffer is in use: stay pending */
+			__atomic_store_n(&op->state, FILE_OP_PENDING,
+			                 __ATOMIC_RELEASE);
+			return;
+		}
+		kernel_read_start(w, op, dst_base, size, req_start);
+		return;
+	}
 	uint64_t req_end = req_start + size;
 
 	struct ds_extent *extents;
@@ -954,11 +1133,6 @@ start_read_op(struct io_worker *w, struct file_op *op)
 
 			if (head_bytes > remaining)
 				head_bytes = remaining;
-			if (remaining - head_bytes >= d->lba_size &&
-			    (head_bytes & (NVME_PRP_OFFSET_ALIGN - 1))) {
-				op->err = OPENDS_INVALID_VALUE;
-				goto out;
-			}
 			if (submit_partial(w, op, abs_dst, cur_slba, head_off,
 			                   head_bytes) < 0)
 				goto out;
@@ -1104,8 +1278,11 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 }
 
 static void
-reap_in_flight(struct file_op *op)
+reap_in_flight(struct io_worker *w, struct file_op *op)
 {
+	if (w->kread.op == op) {
+		kernel_read_poll(w);
+	}
 	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
 		complete_read_op(op);
 }
@@ -1160,7 +1337,7 @@ io_thread_main(void *arg)
 					break;
 				}
 				break;
-			case FILE_OP_IN_FLIGHT: reap_in_flight(op); break;
+			case FILE_OP_IN_FLIGHT: reap_in_flight(w, op); break;
 			default: break;
 			}
 		}
@@ -1235,10 +1412,13 @@ workers_setup(struct driver *d)
 	 * callback path uses the host view only. */
 	void *host = NULL;
 	ds_accel_devptr_t dptr = 0;
-	rc = ds_accel->host_alloc_mapped(STREAM_WORDS_BYTES, &host, &dptr);
+	/* one more word for the kernel reads of each worker */
+	size_t words_bytes = STREAM_WORDS_BYTES +
+	                     (size_t)d->cfg.n_io_threads * sizeof(uint32_t);
+	rc = ds_accel->host_alloc_mapped(words_bytes, &host, &dptr);
 	if (rc != 0)
 		return rc;
-	memset(host, 0, STREAM_WORDS_BYTES);
+	memset(host, 0, words_bytes);
 	d->stream_words_host = host;
 	d->stream_words_dptr = dptr;
 
@@ -1252,6 +1432,9 @@ workers_setup(struct driver *d)
 	for (int i = 0; i < d->cfg.n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
 		w->drv = d;
+		if (!d->cfg.assume_aligned_only &&
+		    kernel_read_setup(d, w, i) < 0)
+			goto fail;
 		if (xnvme_queue_init(d->xdev, d->cfg.queue_depth, 0,
 		                     &w->queue) < 0) {
 			w->queue = NULL;
@@ -1290,6 +1473,7 @@ fail:
 		struct io_worker *w = &d->workers[i];
 		if (w->queue)
 			xnvme_queue_term(w->queue);
+		kernel_read_teardown(w);
 	}
 	free(d->workers);
 	d->workers = NULL;
@@ -1326,6 +1510,7 @@ workers_teardown(struct driver *d)
 			xnvme_queue_term(w->queue);
 			w->queue = NULL;
 		}
+		kernel_read_teardown(w);
 	}
 	free(d->workers);
 	d->workers = NULL;

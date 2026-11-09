@@ -176,7 +176,31 @@ out:
 }
 
 ssize_t
-opends_direct_pread(int fd, void *dst, size_t size, off_t off)
+opends_direct_pread_span(int fd, void *bounce, size_t span, off_t start)
+{
+	size_t got = 0;
+	ssize_t r;
+
+	while (got < span) {
+		r = pread(fd, (uint8_t *)bounce + got, span - got,
+		          start + (off_t)got);
+		if (r < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			return -errno;
+		}
+		if (r == 0) {
+			break;
+		}
+		got += (size_t)r;
+	}
+	return (ssize_t)got;
+}
+
+ssize_t
+opends_direct_pread(int fd, void *dst, size_t size, off_t off,
+                    int (*copy)(void *dst, const void *src, size_t bytes))
 {
 	if (size == 0)
 		return 0;
@@ -192,29 +216,16 @@ opends_direct_pread(int fd, void *dst, size_t size, off_t off)
 		return -ENOMEM;
 
 	ssize_t ret = 0;
-	size_t got = 0;
-	while (got < span) {
-		ssize_t r = pread(fd, (uint8_t *)bounce + got, span - got,
-		                  start + (off_t)got);
-		if (r < 0) {
-			if (errno == EINTR)
-				continue;
-			ret = -errno;
-			goto out;
-		}
-		if (r == 0)
-			break;
-		got += (size_t)r;
-	}
-
-	if (got > head) {
-		size_t n = got - head;
+	ssize_t got = opends_direct_pread_span(fd, bounce, span, start);
+	if (got < 0) {
+		ret = got;
+	} else if ((size_t)got > head) {
+		size_t n = (size_t)got - head;
 		if (n > size)
 			n = size;
-		memcpy(dst, (uint8_t *)bounce + head, n);
-		ret = (ssize_t)n;
+		err = copy(dst, (uint8_t *)bounce + head, n);
+		ret = err != 0 ? -EIO : (ssize_t)n;
 	}
-out:
 	free(bounce);
 	return ret;
 }

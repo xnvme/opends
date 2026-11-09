@@ -6,7 +6,9 @@
  * byte-for-byte against a kernel pread of the same file. This exercises
  * extent resolution and the MDTS chunking that the small (64 KiB) sync/async
  * read tests do not reach: a corruption that only appears above a few MiB
- * (wrong slbas, off-by-one chunking) shows up here as a byte mismatch.
+ * (wrong slbas, off-by-one chunking) shows up here as a byte mismatch. A
+ * second read from offset 1 goes through the kernel fallback at a size the
+ * small tests do not reach.
  *
  * The file is passed on the command line; it must already exist on the mount
  * (e.g. one of the bench datasets or a prepared scratch file).
@@ -25,6 +27,30 @@
 #include <unistd.h>
 
 #define READ_CAP ((size_t)64 * 1024 * 1024)
+
+static int
+compare(const unsigned char *got, const unsigned char *want, size_t size,
+        const char *label)
+{
+	size_t mism = 0, first = (size_t)-1;
+	for (size_t i = 0; i < size; i++) {
+		if (got[i] != want[i]) {
+			if (first == (size_t)-1)
+				first = i;
+			mism++;
+		}
+	}
+	if (mism) {
+		fprintf(stderr,
+		        "COHERENCY FAIL (%s): %zu/%zu bytes differ, first at "
+		        "offset %zu (got 0x%02x want 0x%02x)\n",
+		        label, mism, size, first, got[first], want[first]);
+		return 1;
+	}
+	fprintf(stderr, "coherency ok (%s): %zu bytes match (%.2f MiB)\n",
+	        label, size, size / (1024.0 * 1024.0));
+	return 0;
+}
 
 int
 main(int argc, char **argv)
@@ -122,24 +148,23 @@ main(int argc, char **argv)
 	if (failed)
 		goto out;
 
-	size_t mism = 0, first = (size_t)-1;
-	for (size_t i = 0; i < size; i++) {
-		if (got[i] != want[i]) {
-			if (first == (size_t)-1)
-				first = i;
-			mism++;
-		}
-	}
-	if (mism) {
+	failed = compare(got, want, size, "aligned");
+	if (failed)
+		goto out;
+
+	/* From offset 1 every whole LBA lands off a dword. */
+	size_t shifted = size - 4096;
+	cuda_buf_zero(gpu, size);
+	n = opends_sync_read(a.fh, gpu, shifted, 1, 0);
+	if (n != (ssize_t)shifted) {
 		fprintf(stderr,
-		        "COHERENCY FAIL: %zu/%zu bytes differ, first at offset "
-		        "%zu (got 0x%02x want 0x%02x)\n",
-		        mism, size, first, got[first], want[first]);
+		        "opends_sync_read at offset 1: %zd (want %zu)\n", n,
+		        shifted);
 		failed = 1;
-	} else {
-		fprintf(stderr, "coherency ok: %zu bytes match (%.2f MiB)\n",
-		        size, size / (1024.0 * 1024.0));
+		goto out;
 	}
+	cuda_buf_to_host(got, gpu, shifted);
+	failed = compare(got, want + 1, shifted, "offset 1");
 
 out:
 	free(want);

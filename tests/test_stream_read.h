@@ -1036,6 +1036,268 @@ out:
 	return rc;
 }
 
+/*
+ * A stream read whose whole LBAs would land off a 4-byte boundary cannot
+ * go through the kernel, so it is refused, behind the gate like the two
+ * above: OPENDS_INVALID_VALUE through bytes_read, the stream released,
+ * and an aligned read on it still working. Two LBAs of either size.
+ */
+static int
+stream_test_nondword_rejected(struct stream_test_env *env)
+{
+	void *buf = env->buf_acquire(3 * PAGE);
+	size_t sz = 2 * PAGE;
+	off_t foff = 0;
+	off_t boff = 2;
+	ssize_t bytes_read = 0;
+	opends_error_t err;
+	int rc = 1;
+
+	if (!buf) {
+		return 1;
+	}
+	env->buf_zero(buf, 3 * PAGE);
+
+	err = opends_stream_read(env->fh, buf, &sz, &foff, &boff, &bytes_read,
+	                         env->stream);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  nondword_rejected: submit: %s\n",
+		        opends_op_status_error(err.err));
+		goto out;
+	}
+
+	if (stream_test_stream_sync_timeout(env->stream, 20.0,
+	                                    "nondword_rejected") != 0) {
+		goto out;
+	}
+
+	if (bytes_read != -(ssize_t)OPENDS_INVALID_VALUE) {
+		fprintf(stderr,
+		        "  nondword_rejected: bytes_read = %zd, expected "
+		        "%zd\n",
+		        bytes_read, -(ssize_t)OPENDS_INVALID_VALUE);
+		goto out;
+	}
+
+	rc = verify_stream_read(env, buf, 3 * PAGE, PAGE, 0, 0,
+	                        "nondword_rejected/aligned_after");
+out:
+	env->buf_release(buf);
+	return rc;
+}
+
+/* At least two stream reads and one aligned read for each I/O thread. */
+#define KERNEL_READ_STREAM_READS 32
+#define KERNEL_READ_ALIGNED_READS 16
+
+struct stream_test_plug {
+	int pulled;
+};
+
+static void
+stream_test_plug_cb(void *arg)
+{
+	struct stream_test_plug *plug = arg;
+	struct timespec sl = {0, 1000000};
+
+	while (!__atomic_load_n(&plug->pulled, __ATOMIC_ACQUIRE)) {
+		nanosleep(&sl, NULL);
+	}
+}
+
+static bool
+stream_test_futures_done(opends_async_future_t *futs, int n, double timeout_s)
+{
+	struct timespec sl = {0, 1000000};
+	struct timespec t0, now;
+	double elapsed;
+	int done;
+
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	for (;;) {
+		done = 0;
+		for (int i = 0; i < n; i++) {
+			if (__atomic_load_n(&futs[i].done, __ATOMIC_ACQUIRE)) {
+				done++;
+			}
+		}
+		if (done == n) {
+			return true;
+		}
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		elapsed = (now.tv_sec - t0.tv_sec) +
+		          (now.tv_nsec - t0.tv_nsec) * 1e-9;
+		if (elapsed >= timeout_s) {
+			return false;
+		}
+		nanosleep(&sl, NULL);
+	}
+}
+
+/*
+ * An I/O thread must not wait for a stream. A plug holds a stream made with
+ * default flags, with stream reads behind it, so every I/O thread owes a gate
+ * when the read through the kernel starts. Aligned reads must finish while the
+ * plug is in, and everything once it is out.
+ */
+static int
+stream_test_kernel_read_blocking(struct stream_test_env *env)
+{
+	/* static: a stuck run returns while the I/O threads still use these */
+	static struct stream_test_plug plug;
+	static size_t sizes[KERNEL_READ_STREAM_READS];
+	static off_t foffs[KERNEL_READ_STREAM_READS];
+	static off_t boffs[KERNEL_READ_STREAM_READS];
+	static ssize_t brs[KERNEL_READ_STREAM_READS];
+	static opends_async_future_t futs[1 + KERNEL_READ_ALIGNED_READS];
+	const size_t ksize = 3 * PAGE;
+	CUstream blocking;
+	void *buf = NULL;
+	void *kbuf = NULL;
+	void *abuf = NULL;
+	char *host = NULL;
+	char *expected = NULL;
+	opends_error_t err;
+	bool ok = false;
+	int nfuts = 0;
+	int rc = 1;
+
+	memset(futs, 0, sizeof(futs));
+	plug.pulled = 0;
+
+	if (cuStreamCreate(&blocking, CU_STREAM_DEFAULT) != CUDA_SUCCESS) {
+		fprintf(stderr, "  kernel_read_blocking: cuStreamCreate\n");
+		return 1;
+	}
+	if (opends_stream_register(blocking, 0).err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  kernel_read_blocking: stream register\n");
+		cuStreamDestroy(blocking);
+		return 1;
+	}
+
+	buf = env->buf_acquire(KERNEL_READ_STREAM_READS * FILE_SIZE);
+	kbuf = env->buf_acquire(ksize);
+	abuf = env->buf_acquire(KERNEL_READ_ALIGNED_READS * PAGE);
+	host = malloc(ksize);
+	expected = malloc(ksize);
+	if (!buf || !kbuf || !abuf || !host || !expected) {
+		goto out;
+	}
+	env->buf_zero(kbuf, ksize);
+
+	/* From here to the drain, a CUDA call that waits would wait here. */
+	if (cuLaunchHostFunc(blocking, stream_test_plug_cb, &plug) !=
+	    CUDA_SUCCESS) {
+		fprintf(stderr, "  kernel_read_blocking: cuLaunchHostFunc\n");
+		goto out;
+	}
+
+	for (int i = 0; i < KERNEL_READ_STREAM_READS; i++) {
+		sizes[i] = FILE_SIZE;
+		foffs[i] = 0;
+		boffs[i] = (off_t)((size_t)i * FILE_SIZE);
+		brs[i] = 0;
+		err = opends_stream_read(env->fh, buf, &sizes[i], &foffs[i],
+		                         &boffs[i], &brs[i], blocking);
+		if (err.err != OPENDS_SUCCESS) {
+			fprintf(stderr,
+			        "  kernel_read_blocking: submit %d: %s\n", i,
+			        opends_op_status_error(err.err));
+			goto drain;
+		}
+	}
+
+	/* File offset 1 puts the whole LBAs off a dword in the buffer. */
+	err = opends_async_read(env->fh, kbuf, ksize, 1, 0, &futs[0]);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  kernel_read_blocking: kernel read: %s\n",
+		        opends_op_status_error(err.err));
+		goto drain;
+	}
+	nfuts = 1;
+
+	for (int i = 0; i < KERNEL_READ_ALIGNED_READS; i++) {
+		err = opends_async_read(env->fh, abuf, PAGE, 0,
+		                        (off_t)((size_t)i * PAGE),
+		                        &futs[1 + i]);
+		if (err.err != OPENDS_SUCCESS) {
+			fprintf(stderr,
+			        "  kernel_read_blocking: aligned read %d: "
+			        "%s\n",
+			        i, opends_op_status_error(err.err));
+			goto drain;
+		}
+		nfuts++;
+	}
+
+	ok = stream_test_futures_done(futs + 1, KERNEL_READ_ALIGNED_READS, 5.0);
+	if (!ok) {
+		fprintf(stderr, "  kernel_read_blocking: an I/O thread waits "
+		                "for the stream\n");
+	}
+drain:
+	__atomic_store_n(&plug.pulled, 1, __ATOMIC_RELEASE);
+	if (!stream_test_futures_done(futs, nfuts, 20.0) ||
+	    stream_test_stream_sync_timeout(blocking, 20.0,
+	                                    "kernel_read_blocking") != 0) {
+		fprintf(stderr, "  kernel_read_blocking: the reads and the "
+		                "stream wait for each other\n");
+		/* The runner exits on a failure; the buffers are in use. */
+		free(host);
+		free(expected);
+		return 1;
+	}
+	if (!ok) {
+		goto out;
+	}
+
+	if (opends_async_await(&futs[0]) != (ssize_t)ksize) {
+		fprintf(stderr, "  kernel_read_blocking: kernel read = %zd\n",
+		        futs[0].result);
+		goto out;
+	}
+	for (int i = 0; i < KERNEL_READ_ALIGNED_READS; i++) {
+		if (opends_async_await(&futs[1 + i]) != (ssize_t)PAGE) {
+			fprintf(stderr,
+			        "  kernel_read_blocking: aligned read %d = "
+			        "%zd\n",
+			        i, futs[1 + i].result);
+			goto out;
+		}
+	}
+	for (int i = 0; i < KERNEL_READ_STREAM_READS; i++) {
+		if (brs[i] != (ssize_t)FILE_SIZE) {
+			fprintf(stderr,
+			        "  kernel_read_blocking: read %d = %zd\n", i,
+			        brs[i]);
+			goto out;
+		}
+	}
+
+	env->buf_to_host(host, kbuf, ksize);
+	stream_expected_bytes(expected, 1, ksize);
+	if (memcmp(host, expected, ksize) != 0) {
+		fprintf(stderr, "  kernel_read_blocking: data mismatch\n");
+		goto out;
+	}
+	rc = 0;
+out:
+	free(host);
+	free(expected);
+	opends_stream_deregister(blocking);
+	cuStreamDestroy(blocking);
+	if (abuf) {
+		env->buf_release(abuf);
+	}
+	if (kbuf) {
+		env->buf_release(kbuf);
+	}
+	if (buf) {
+		env->buf_release(buf);
+	}
+	return rc;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct stream_test_entry {
@@ -1063,6 +1325,8 @@ static const struct stream_test_entry stream_read_tests[] = {
 	{"concurrent_short_reads",  stream_test_concurrent_short_reads, true},
 	{"unaligned_rejected",      stream_test_unaligned_rejected, false, true},
 	{"unaligned_head_rejected", stream_test_unaligned_head_rejected},
+	{"nondword_rejected",       stream_test_nondword_rejected},
+	{"kernel_read_blocking",    stream_test_kernel_read_blocking, true},
 	{"burst_single_stream",     stream_test_burst_single_stream},
 	{"multi_stream_burst",      stream_test_multi_stream_burst},
 };

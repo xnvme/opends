@@ -48,11 +48,21 @@ struct ds_accel_ops {
 	                         ds_accel_devptr_t *dptr);
 	/* Free a host_alloc_mapped allocation. */
 	void (*host_free)(void *host);
+	/* Pin host memory the caller owns, for copy_to_dev_async. Required
+	 * only when assume_aligned_only is off. */
+	int (*host_pin)(void *host, size_t bytes);
+	void (*host_unpin)(void *host);
 
 	/* Host/device bulk copy (direction inferred from the pointers). the
 	 * calling thread must bind the accelerator context via ctx_set before
 	 * using copy. */
 	int (*copy)(void *dst, const void *src, size_t bytes);
+	/* Queue a copy from pinned host memory to the device on the default
+	 * stream and return at once. src must stay as it is until the copy
+	 * has run; a stream_write_value32 queued behind it on the default
+	 * stream (a NULL stream) tells when. Required only when
+	 * assume_aligned_only is off. */
+	int (*copy_to_dev_async)(void *dst, const void *src, size_t bytes);
 
 	/* Per-stream gate, required only when assume_aligned_only is off:
 	 * write a gate word in stream order. */
