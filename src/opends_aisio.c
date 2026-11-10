@@ -13,200 +13,18 @@
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
  *
- * Writes go through the kernel-mounted filesystem: the source is staged to a
- * host buffer and pwritten via the fd, so XFS over qublk allocates blocks and
- * writes the data; the file's extents are then re-resolved for later P2P reads.
+ * Writes go through the kernel-mounted filesystem: the source is staged
+ * through a pinned host buffer and pwritten via the fd, so XFS over qublk
+ * allocates blocks and writes the data; the file's extents are then
+ * re-resolved for later P2P reads. The copies into the buffer are queued, on
+ * the user's stream ahead of its gate for a stream write and on the default
+ * stream for the rest, and an I/O thread only polls for them. An I/O thread
+ * never makes an accelerator call that waits: a stream can be waiting for it.
  */
 
 #define _GNU_SOURCE
 
-#include "ds_accel.h"
-#include "ds_aisio_config.h"
-#include "ds_stream_map.h"
-#include "ds_bounce_kernel.h"
-#include "opends_internal.h"
-#include "ds_extent.h"
-
-#include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <pthread.h>
-#include <sched.h>
-#include <stdatomic.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <time.h>
-#include <unistd.h>
-
-#include <libxal.h>
-#include <libxnvme.h>
-
-#define MAX_BUF_ENTRIES 8192
-#define DEFAULT_BOUNCE_SIZE (128 * 1024)
-#define NVME_MAX_NLB 65536
-#define NVME_PRP_OFFSET_ALIGN 4
-#define BOUNCE_SLOTS 2
-#define MAX_STREAMS 8192
-#define STREAM_WORDS_BYTES (MAX_STREAMS * sizeof(uint32_t))
-#define FILE_OP_QUEUE_SIZE 1024
-#define FILE_OP_QUEUE_MASK (FILE_OP_QUEUE_SIZE - 1)
-#define STREAM_MAP_SIZE (2 * MAX_STREAMS)
-#define STREAM_MAP_MASK (STREAM_MAP_SIZE - 1)
-
-enum file_op_state {
-	FILE_OP_FREE = 0,
-	FILE_OP_PENDING = 1,
-	FILE_OP_IN_FLIGHT = 2,
-};
-
-struct buf_entry {
-	const void *base;
-	size_t length;
-	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
-};
-
-/* One xnvme_mem_map of whole allocation chunks. A registered buffer references
- * every run its chunks fall in; the run is unmapped when the last one leaves.
- */
-struct map_run {
-	uintptr_t base;
-	size_t nbytes;
-	int refs;
-};
-#define MAX_MAP_RUNS MAX_BUF_ENTRIES
-
-struct registered_file {
-	int fd;
-	int oflags;
-};
-
-struct opends_stream {
-	uint32_t *gate;
-	ds_accel_devptr_t gate_dptr;
-	uint32_t next_seq;
-	void *bounce_buf;
-	struct ds_bounce_copy *bounce_desc_host;
-	ds_accel_devptr_t bounce_desc_dev;
-};
-
-enum file_op_mode {
-	FILE_OP_STREAM,
-	FILE_OP_ASYNC,
-};
-
-struct file_op_stream {
-	size_t *size_p;
-	off_t *file_offset_p;
-	off_t *buf_offset_p;
-	ssize_t *bytes_read_p;
-	struct opends_stream *opends_stream;
-	uint32_t seq;
-};
-
-struct file_op_async {
-	size_t size;
-	off_t file_offset;
-	off_t buf_offset;
-	opends_async_future_t *future;
-};
-
-struct bounce_slot {
-	void *dst;
-	void *src;
-	size_t nbytes;
-};
-
-struct file_op {
-	enum file_op_mode mode;
-	bool is_write;
-	enum file_op_state state;
-	struct registered_file *h;
-	void *buf_base;
-	int chunks_remaining;
-	int bounces_outstanding;
-	size_t bytes_acc;
-	int err;
-	struct bounce_slot bounces[BOUNCE_SLOTS];
-	int n_bounces;
-	void *bounce_buf;
-	union {
-		struct file_op_stream stream;
-		struct file_op_async async;
-	} u;
-};
-
-struct read_cursor {
-	struct xnvme_queue *queue;
-	uint64_t cur_slba;
-	uint8_t *abs_dst;
-	size_t remaining;
-};
-
-struct driver;
-
-/* One read through the kernel at a time for each worker, in chunks through
- * buf. The default stream writes seq to word when a chunk has landed. */
-struct kernel_read {
-	void *buf;
-	size_t buf_nbytes;
-	uint32_t *word;
-	ds_accel_devptr_t word_dptr;
-	uint32_t seq;
-	struct file_op *op;
-	uint8_t *dst;
-	uint64_t off;
-	size_t remaining;
-	bool last;
-	bool broken;
-};
-
-struct io_worker {
-	struct driver *drv;
-	struct xnvme_queue *queue;
-	struct kernel_read kread;
-	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
-	uint32_t queue_head;
-	uint32_t queue_tail;
-	pthread_t thread;
-};
-
-struct driver {
-	char dev_uri[XNVME_IDENT_URI_LEN]; ///< NVMe device the HOMI server owns
-	struct aisio_config cfg;           ///< From the environment at open
-	struct xal *xal; ///< Attach to the index xal-server publishes
-	struct xnvme_dev *xdev;
-	uint32_t nsid;
-	uint32_t lba_size;
-	uint32_t lba_shift;
-	uint32_t mdts_nbytes;
-	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
-	int buf_count;
-	size_t chunk_nbytes; ///< Allocation granularity registrations round to
-	struct map_run runs[MAX_MAP_RUNS]; ///< Disjoint, sorted by base
-	int run_count;
-
-	bool workers_ready;
-	ds_accel_ctx_t accel_ctx;
-
-	struct opends_stream streams[MAX_STREAMS];
-	int n_streams;
-	void *stream_words_host;
-	ds_accel_devptr_t stream_words_dptr;
-
-	struct ds_stream_map_entry stream_map[STREAM_MAP_SIZE];
-
-	struct io_worker *workers;
-	uint32_t rr_next;
-	pthread_mutex_t submit_lock;
-	pthread_mutex_t reg_lock;
-	pthread_mutex_t alloc_lock;
-	bool stop;
-};
+#include "ds_aisio.h"
 
 static struct driver *drv;
 static long use_count;
@@ -313,8 +131,8 @@ buf_remove(struct driver *d, struct buf_entry *e)
 
 /* A chunk mapping also covers neighbouring allocations, which xnvme then
  * cannot refuse, so every op is checked against the table it came from. */
-static bool
-op_range_registered(struct driver *d, const void *ptr, size_t size)
+bool
+ds_aisio_range_registered(struct driver *d, const void *ptr, size_t size)
 {
 	bool ok;
 
@@ -486,8 +304,12 @@ buf_free_locked(struct driver *d, void *p)
 	pthread_mutex_unlock(&d->alloc_lock);
 }
 
-static void
-async_future_complete(opends_async_future_t *fut, ssize_t result)
+/* ------------------------------------------------------------------ */
+/*  Staging buffers                                                     */
+/* ------------------------------------------------------------------ */
+
+void
+ds_aisio_future_complete(opends_async_future_t *fut, ssize_t result)
 {
 	fut->result = result;
 	__atomic_store_n(&fut->done, 1, __ATOMIC_RELEASE);
@@ -660,14 +482,6 @@ resolve_extents(struct driver *d, int fd, struct ds_extent **out,
 	return rc;
 }
 
-static ssize_t
-pwrite_op(struct registered_file *h, const void *src, size_t size,
-          off_t file_offset)
-{
-	return opends_direct_pwrite(h->fd, h->oflags, src, size, file_offset,
-	                            ds_accel->copy);
-}
-
 /* Whole LBAs cannot be DMAed to a destination off a dword: upcie wants the
  * data buffer dword aligned, and the PRP offset is dword granular. Every LBA
  * boundary of a read lands at the same offset modulo 4, so one test covers
@@ -790,7 +604,7 @@ kernel_read_setup(struct driver *d, struct io_worker *w, int idx)
 		k->buf = NULL;
 		return -1;
 	}
-	err = ds_accel->host_pin(k->buf, k->buf_nbytes);
+	err = ds_accel->host_pin(k->buf, k->buf_nbytes, NULL);
 	if (err != 0) {
 		free(k->buf);
 		k->buf = NULL;
@@ -1070,7 +884,7 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		req_start = (uint64_t)op->u.async.file_offset;
 		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	}
-	if (!op_range_registered(w->drv, dst_base, size)) {
+	if (!ds_aisio_range_registered(w->drv, dst_base, size)) {
 		op->err = OPENDS_MEMORY_NOT_REGISTERED;
 		return;
 	}
@@ -1168,12 +982,6 @@ out:
 }
 
 static void
-release_gate(struct opends_stream *s, uint32_t seq)
-{
-	__atomic_store_n(s->gate, 2 * seq + 1, __ATOMIC_RELEASE);
-}
-
-static void
 park_gate_cb(void *arg)
 {
 	struct file_op *op = arg;
@@ -1219,54 +1027,20 @@ complete_read_op(struct file_op *op)
 	if (!op->err && run_bounce_copies(op) < 0)
 		n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
-	async_future_complete(op->u.async.future, n);
+	ds_aisio_future_complete(op->u.async.future, n);
 	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
 
-static void
-dispatch_write(struct io_worker *w, struct file_op *op)
-{
-	struct driver *d = w->drv;
-	const void *src;
-	size_t size;
-	off_t file_offset;
-	if (op->mode == FILE_OP_STREAM) {
-		src = (const uint8_t *)op->buf_base +
-		      *op->u.stream.buf_offset_p;
-		size = *op->u.stream.size_p;
-		file_offset = *op->u.stream.file_offset_p;
-	} else {
-		src = (const uint8_t *)op->buf_base + op->u.async.buf_offset;
-		size = op->u.async.size;
-		file_offset = op->u.async.file_offset;
-	}
+/* ------------------------------------------------------------------ */
+/*  Writes                                                            */
+/* ------------------------------------------------------------------ */
 
-	ssize_t n;
-	if (!op_range_registered(d, src, size)) {
-		n = -(ssize_t)OPENDS_MEMORY_NOT_REGISTERED;
-	} else {
-		n = pwrite_op(op->h, src, size, file_offset);
-		if (n < 0)
-			n = (n == -(ssize_t)EINVAL)
-			            ? -(ssize_t)OPENDS_INVALID_VALUE
-			            : -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
-	}
-
-	if (op->mode == FILE_OP_STREAM) {
-		*op->u.stream.bytes_read_p = n;
-		release_gate(op->u.stream.opends_stream, op->u.stream.seq);
-	} else {
-		async_future_complete(op->u.async.future, n);
-	}
-	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
-}
-
-static void
+/* Start a PENDING op. Returns true when it has to stay pending. */
+static bool
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
 	if (op->is_write) {
-		dispatch_write(w, op);
-		return;
+		return ds_dispatch_write(w, op);
 	}
 	op->chunks_remaining = 0;
 	op->bounces_outstanding = 0;
@@ -1275,11 +1049,16 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->n_bounces = 0;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_read_op(w, op);
+	return false;
 }
 
 static void
 reap_in_flight(struct io_worker *w, struct file_op *op)
 {
+	if (op->is_write) {
+		ds_write_poll(w, op);
+		return;
+	}
 	if (w->kread.op == op) {
 		kernel_read_poll(w);
 	}
@@ -1287,22 +1066,29 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 		complete_read_op(op);
 }
 
-/* Service a PENDING async op: dispatch it once its stream gate has opened,
- * otherwise leave it for a later pass. Returns true while still gated. The gate
- * is a free-running +1 counter (the submitter's arrival publish then this
- * thread's release each tick it by one), so compare with serial/cyclic
- * arithmetic to match the device-side GEQ wait, keeping the sequence
- * wrap-safe. */
+/* Service a PENDING stream op: dispatch it once its stream has reached it,
+ * otherwise leave it for a later pass. Returns true while still gated. A
+ * read, and a write that stages nothing, publish 2*seq on the gate on
+ * arrival; a staged write has reached the stream when its first round has
+ * landed. The gate is a free-running counter (an arrival publish and this
+ * thread's release each tick it), so compare with serial/cyclic arithmetic
+ * to match the device-side GEQ wait, keeping the sequence wrap-safe. */
 static bool
 poll_stream_pending(struct io_worker *w, struct file_op *op)
 {
-	uint32_t gate = __atomic_load_n(op->u.stream.opends_stream->gate,
-	                                __ATOMIC_ACQUIRE);
+	uint32_t gate;
 
-	if ((int32_t)(gate - 2 * op->u.stream.seq) < 0)
-		return true;
-	dispatch_pending(w, op);
-	return false;
+	if (op->is_write && op->wr.rounds) {
+		if (!op->err &&
+		    __atomic_load_n(op->wr.landed, __ATOMIC_ACQUIRE) < 1)
+			return true;
+	} else {
+		gate = __atomic_load_n(op->u.stream.opends_stream->gate,
+		                       __ATOMIC_ACQUIRE);
+		if ((int32_t)(gate - 2 * op->u.stream.seq) < 0)
+			return true;
+	}
+	return dispatch_pending(w, op);
 }
 
 static void *
@@ -1329,7 +1115,8 @@ io_thread_main(void *arg)
 			case FILE_OP_PENDING:
 				switch (op->mode) {
 				case FILE_OP_ASYNC:
-					dispatch_pending(w, op);
+					if (dispatch_pending(w, op))
+						busy = true;
 					break;
 				case FILE_OP_STREAM:
 					if (poll_stream_pending(w, op))
@@ -1394,12 +1181,13 @@ mask_nth_cpu(uint64_t mask, int n)
 	return -1;
 }
 
-/* Returns 0 on success; on failure, the dev_err to report (vendor code or
- * -1). */
 static int
 workers_setup(struct driver *d)
 {
 	int rc = ds_accel->ctx_get(&d->accel_ctx);
+	if (rc != 0)
+		return rc;
+	rc = ds_accel->load();
 	if (rc != 0)
 		return rc;
 	rc = ds_accel->alloc_granularity(&d->chunk_nbytes);
@@ -1412,9 +1200,12 @@ workers_setup(struct driver *d)
 	 * callback path uses the host view only. */
 	void *host = NULL;
 	ds_accel_devptr_t dptr = 0;
-	/* one more word for the kernel reads of each worker */
+	/* one more word for the kernel reads of each worker, then for each
+	 * op slot a write's turn and the landed word of every stage block */
 	size_t words_bytes = STREAM_WORDS_BYTES +
-	                     (size_t)d->cfg.n_io_threads * sizeof(uint32_t);
+	                     (size_t)d->cfg.n_io_threads * sizeof(uint32_t) +
+	                     (size_t)d->cfg.n_io_threads * FILE_OP_QUEUE_SIZE *
+	                             (1 + DS_STAGE_BLOCKS) * sizeof(uint32_t);
 	rc = ds_accel->host_alloc_mapped(words_bytes, &host, &dptr);
 	if (rc != 0)
 		return rc;
@@ -1432,6 +1223,13 @@ workers_setup(struct driver *d)
 	for (int i = 0; i < d->cfg.n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
 		w->drv = d;
+		if (ds_write_words_setup(d, w, i) < 0)
+			goto fail;
+		if (posix_memalign(&w->edge_buf, OPENDS_DIRECT_ALIGN,
+		                   OPENDS_DIRECT_ALIGN) != 0) {
+			w->edge_buf = NULL;
+			goto fail;
+		}
 		if (!d->cfg.assume_aligned_only &&
 		    kernel_read_setup(d, w, i) < 0)
 			goto fail;
@@ -1474,6 +1272,9 @@ fail:
 		if (w->queue)
 			xnvme_queue_term(w->queue);
 		kernel_read_teardown(w);
+		free(w->edge_buf);
+		if (w->descs)
+			ds_accel->host_free(w->descs);
 	}
 	free(d->workers);
 	d->workers = NULL;
@@ -1511,9 +1312,16 @@ workers_teardown(struct driver *d)
 			w->queue = NULL;
 		}
 		kernel_read_teardown(w);
+		free(w->edge_buf);
+		w->edge_buf = NULL;
+		if (w->descs) {
+			ds_accel->host_free(w->descs);
+			w->descs = NULL;
+		}
 	}
 	free(d->workers);
 	d->workers = NULL;
+	ds_write_buf_teardown(d);
 
 	ds_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
@@ -1642,9 +1450,11 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->submit_lock, NULL);
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
+	pthread_mutex_init(&d->write_buf_lock, NULL);
 
 	int rc = xal_attach(d);
 	if (rc < 0) {
+		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1657,6 +1467,7 @@ opends_driver_open(void)
 	int orc = open_device(d);
 	if (orc < 0) {
 		xal_close(d->xal);
+		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1669,6 +1480,7 @@ opends_driver_open(void)
 		fprintf(stderr, "aisio: workers_setup failed\n");
 		xnvme_dev_close(d->xdev);
 		xal_close(d->xal);
+		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
 		pthread_mutex_destroy(&d->reg_lock);
@@ -1701,6 +1513,7 @@ opends_driver_close(void)
 
 	xal_close(drv->xal);
 
+	pthread_mutex_destroy(&drv->write_buf_lock);
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
 	pthread_mutex_destroy(&drv->reg_lock);
@@ -1914,6 +1727,13 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	future->done = 0;
 	future->result = 0;
 
+	/* A write's buffer, while the pool can give one; the I/O thread takes
+	 * one later otherwise. Pinning is an accelerator call, so it is this
+	 * thread's. */
+	struct write_buf *buf = NULL;
+	if (is_write && size)
+		buf = ds_write_buf_take_or_grow(d);
+
 	struct io_worker *w;
 	uint32_t head;
 
@@ -1923,6 +1743,12 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
 	op->buf_base = buf_base;
+	op->err = 0;
+	if (is_write) {
+		ds_write_init(&op->wr, (const uint8_t *)buf_base + buf_offset,
+		              size, file_offset, buf_offset);
+		op->wr.buf = buf;
+	}
 	op->u.async.size = size;
 	op->u.async.file_offset = file_offset;
 	op->u.async.buf_offset = buf_offset;
@@ -1978,6 +1804,27 @@ classify_accel_failure(struct driver *d, int accel_rc)
 	return opends_err_dev(OPENDS_INTERNAL_ERROR, accel_rc);
 }
 
+/* The gate of a read, and of a write that stages nothing: the submitter
+ * publishes 2*seq on arrival and parks the stream until the I/O thread's
+ * release. */
+static int
+gate_enqueue(struct driver *d, struct file_op *op, ds_accel_stream_t cus)
+{
+	struct opends_stream *s = op->u.stream.opends_stream;
+	uint32_t seq = op->u.stream.seq;
+	int rc;
+
+	if (d->cfg.assume_aligned_only) {
+		return ds_accel->launch_host_func(cus, park_gate_cb, op);
+	}
+	rc = ds_accel->stream_write_value32(cus, s->gate_dptr, 2 * seq);
+	if (rc != 0) {
+		return rc;
+	}
+	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
+	                                         2 * seq + 1);
+}
+
 static opends_error_t
 submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
                  void *buf_base, size_t *size_p, off_t *file_offset_p,
@@ -1988,8 +1835,6 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!fh || !buf_base || !size_p || !file_offset_p || !buf_offset_p ||
 	    !bytes_p)
 		return opends_err(OPENDS_INVALID_VALUE);
-	if (!stream)
-		return opends_err(OPENDS_INVALID_VALUE);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
@@ -1997,6 +1842,38 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	struct opends_stream *opends_stream = opends_stream_get(d, cus);
 	if (!opends_stream)
 		return opends_err(OPENDS_INTERNAL_ERROR);
+
+	/* A write is staged by copies queued below, ahead of the gate, so it
+	 * takes the parameters of the call and its buffer now; a full pool
+	 * waits for the I/O threads. A source the thread would refuse stages
+	 * nothing and fails at the gate, as before. */
+	size_t wsize = 0;
+	off_t wfoff = 0;
+	off_t wboff = 0;
+	struct write_buf *buf = NULL;
+	opends_op_error_t werr = OPENDS_SUCCESS;
+	bool deferred = is_write && !opends_stream->fixed;
+	if (deferred) {
+		buf = ds_write_buf_take_or_grow(d);
+		while (!buf) {
+			sched_yield();
+			buf = ds_write_buf_take(d);
+		}
+	} else if (is_write) {
+		wsize = *size_p;
+		wfoff = *file_offset_p;
+		wboff = *buf_offset_p;
+		if (wsize && !ds_aisio_range_registered(
+		                     d, (uint8_t *)buf_base + wboff, wsize)) {
+			werr = OPENDS_MEMORY_NOT_REGISTERED;
+		} else if (wsize) {
+			buf = ds_write_buf_take_or_grow(d);
+			while (!buf) {
+				sched_yield();
+				buf = ds_write_buf_take(d);
+			}
+		}
+	}
 
 	struct io_worker *w;
 	uint32_t head;
@@ -2008,20 +1885,31 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->is_write = is_write;
 	op->h = (struct registered_file *)fh;
 	op->buf_base = buf_base;
+	op->err = werr;
 	op->u.stream.size_p = size_p;
 	op->u.stream.file_offset_p = file_offset_p;
 	op->u.stream.buf_offset_p = buf_offset_p;
 	op->u.stream.bytes_read_p = bytes_p;
 	op->u.stream.opends_stream = opends_stream;
 	op->u.stream.seq = seq;
+	if (is_write) {
+		ds_write_init(&op->wr, (const uint8_t *)buf_base + wboff, wsize,
+		              wfoff, wboff);
+		op->wr.deferred = deferred;
+		op->wr.buf = buf;
+		if (buf && !deferred) {
+			ds_write_geometry(d, &op->wr);
+		}
+	}
 
 	/* Order the I/O thread against the user's stream through a per-stream
 	 * gate word (strictly monotonic, two phases per op): the submitter
 	 * publishes 2*seq on arrival and parks, and the I/O thread's store of
 	 * 2*seq+1 releases it once the I/O is done (a read's DMA landed, or a
-	 * write's source was staged). Do not roll back seq on failure: a reused
-	 * seq would let the I/O thread's gate check pass before the stream is
-	 * ready.
+	 * write's source was staged). A staged write publishes nothing: its
+	 * first landed round says the stream has arrived, and it parks at the
+	 * release. Do not roll back seq on failure: a reused seq would let the
+	 * I/O thread's gate check pass before the stream is ready.
 	 *
 	 * launch_host_func is faster when no copy kernel is enqueued per op.
 	 * Otherwise stream_write/stream_wait is. The gate ops are commands the
@@ -2035,21 +1923,26 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * stream in seq order; an enqueue that blocks (a full stream queue)
 	 * stalls all submission. */
 	int accel_rc;
-	if (d->cfg.assume_aligned_only) {
-		accel_rc = ds_accel->launch_host_func(cus, park_gate_cb, op);
-		if (accel_rc != 0) {
+	if (deferred) {
+		accel_rc = ds_stream_write_enqueue_deferred(d, op, cus);
+		if (accel_rc != 0 && !op->wr.copies) {
+			/* no kernel runs: nothing to drain */
+			ds_write_buf_put(d, buf);
 			pthread_mutex_unlock(&d->submit_lock);
 			return classify_accel_failure(d, accel_rc);
+		}
+		if (accel_rc != 0) {
+			op->err = OPENDS_INTERNAL_ERROR;
+		}
+	} else if (is_write && op->wr.rounds) {
+		accel_rc = ds_stream_write_enqueue(d, op, cus);
+		if (accel_rc != 0) {
+			/* the rounds already queued run: the I/O thread drains
+			 * them and returns the buffer */
+			op->err = OPENDS_INTERNAL_ERROR;
 		}
 	} else {
-		ds_accel_devptr_t gate = opends_stream->gate_dptr;
-		accel_rc = ds_accel->stream_write_value32(cus, gate, 2 * seq);
-		if (accel_rc != 0) {
-			pthread_mutex_unlock(&d->submit_lock);
-			return classify_accel_failure(d, accel_rc);
-		}
-		accel_rc = ds_accel->stream_wait_value32_geq(cus, gate,
-		                                             2 * seq + 1);
+		accel_rc = gate_enqueue(d, op, cus);
 		if (accel_rc != 0) {
 			pthread_mutex_unlock(&d->submit_lock);
 			return classify_accel_failure(d, accel_rc);
@@ -2059,6 +1952,8 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
 	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
 	pthread_mutex_unlock(&d->submit_lock);
+	if (accel_rc != 0)
+		return classify_accel_failure(d, accel_rc);
 
 	/* Reads enqueue the deferred tail copy (writes run none): offsets
 	 * resolve behind the gate, so the copy size is unknown here, and
@@ -2096,7 +1991,9 @@ opends_stream_write(opends_handle_t fh, void *buf_base, size_t *size_p,
 opends_error_t
 opends_stream_register(opends_stream_t stream, unsigned flags)
 {
-	(void)flags;
+	const unsigned fixed = OPENDS_STREAM_FIXED_BUF_OFFSET |
+	                       OPENDS_STREAM_FIXED_FILE_OFFSET |
+	                       OPENDS_STREAM_FIXED_FILE_SIZE;
 
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
@@ -2109,7 +2006,12 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	if (ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus) >= 0) {
+	int idx = ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus);
+	if (idx >= 0) {
+		/* The entry outlives a deregistration, and the runtime hands
+		 * out a destroyed stream's handle again, so the flags of the
+		 * new registration apply. */
+		drv->streams[idx].fixed = (flags & fixed) == fixed;
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_ok();
 	}
@@ -2126,6 +2028,7 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	        drv->stream_words_dptr + (size_t)n * sizeof(uint32_t);
 	*opends_stream->gate = 0;
 	opends_stream->next_seq = 0;
+	opends_stream->fixed = (flags & fixed) == fixed;
 
 	int rc = stream_bounce_alloc(opends_stream, drv);
 	if (rc != 0) {

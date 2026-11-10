@@ -243,14 +243,29 @@ ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
  * associated with a stream (e.g. a CUDA stream) and complete in stream
  * order. The size, offset, and byte count parameters are pointers so
  * the values can be read at stream execution time rather than
- * submission time.
+ * submission time. The flags of opends_stream_register are
+ * cuFileStreamRegister's: each FIXED flag says that the value is set at
+ * the call and may be read then. A stream write on a stream registered
+ * with all three copies its source with the copy engine, using the values
+ * of the call, and fails with OPENDS_INVALID_VALUE when it finds one
+ * changed; without them a kernel on the stream reads the values when the
+ * stream reaches the write.
  *
  * Backend limits (aisio): at most 8192 streams may be registered at
  * once; opends_stream_register returns OPENDS_INTERNAL_ERROR past that.
  * Each I/O worker holds at most 1024 operations in flight; a full queue
- * applies back-pressure rather than failing.
+ * applies back-pressure rather than failing. A stream write holds one of
+ * the backend's write buffers from the call until it completes, and a
+ * call that finds none free waits for one: queue no more stream writes
+ * ahead of a stream's progress than there are buffers when that progress
+ * needs the calling thread.
  */
 typedef void *opends_stream_t;
+
+#define OPENDS_STREAM_FIXED_BUF_OFFSET 1
+#define OPENDS_STREAM_FIXED_FILE_OFFSET 2
+#define OPENDS_STREAM_FIXED_FILE_SIZE 4
+#define OPENDS_STREAM_PAGE_ALIGNED_INPUTS 8
 
 opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
                                   size_t *size_p, off_t *file_offset_p,

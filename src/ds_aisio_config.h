@@ -25,6 +25,9 @@ struct aisio_config {
 	bool assume_aligned_only;
 	size_t host_heap_nbytes;
 	size_t device_heap_nbytes;
+	size_t write_buf_nbytes; ///< Pinned host buf a write is staged
+	                         ///< through
+	int write_bufs;          ///< Most buffers the driver pins
 };
 
 /* Returns 0, or -EINVAL after a message on stderr. */

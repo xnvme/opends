@@ -119,6 +119,15 @@ the open.
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+- `OPENDS_AISIO_WRITE_BUF_MB`: Size of one pinned host buffer a write is staged
+  through, in MiB. Default 16. A larger write goes through its buffer in
+  rounds.
+- `OPENDS_AISIO_WRITE_BUFS`: Most buffers the driver pins, allocated as writes
+  need them. Default four per I/O thread. Every write in flight holds one: a
+  stream write from its call, the others from their dispatch. A stream write
+  call that finds none free waits for one, so an application that queues many
+  stream writes behind work its own thread must still release needs a pool
+  at least that large.
 
 ### Writes and the extent index
 
@@ -129,7 +138,20 @@ nothing updates it while the stack is up.
 
 Writes through OpenDS (`opends_sync_write`, `opends_async_write`,
 `opends_stream_write`) go through the kernel and are correct: the bytes land
-in the file, and a kernel read sees them.
+in the file, and a kernel read sees them. The source is copied out of GPU
+memory into a pinned buffer, on the user's stream for a stream write, and the
+I/O thread only polls for the copy: it never makes a CUDA call that waits,
+since a stream may be waiting at a gate for that thread.
+
+A stream write on a stream registered with the three `FIXED` flags of
+`opends_stream_register` (`OPENDS_STREAM_FIXED_BUF_OFFSET`,
+`_FIXED_FILE_OFFSET`, `_FIXED_FILE_SIZE`, the flags of
+`cuFileStreamRegister`) takes its size and offsets at the call and copies
+with the copy engine; a value the stream changes later fails the write with
+`OPENDS_INVALID_VALUE`. Without the flags a kernel on the stream reads the
+values when the stream reaches the write and copies them, staying resident
+until the last round of a write larger than the buffer has landed. Pass the
+flags when the values are set before the call, which is the common case.
 
 **Undefined behaviour:** reading through OpenDS what was written after
 xal-server indexed. That read may return the bytes from before the write,

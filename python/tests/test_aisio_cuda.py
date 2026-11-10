@@ -16,6 +16,7 @@ import ctypes
 import mmap
 import os
 import sys
+import time
 from ctypes import POINTER, byref, c_int, c_size_t, c_void_p
 
 import opends
@@ -286,37 +287,71 @@ def check_dio_not_set():
         raise AssertionError("a buffered fd was accepted")
 
 
+def wait_stream_op(op, timeout):
+    """Bounded wait for a StreamOp. A backend whose I/O thread waits for
+    the stream never completes it, and a driver close would not return
+    either, so give up on the process instead of hanging the runner."""
+    deadline = time.monotonic() + timeout
+    while not op.done:
+        if time.monotonic() > deadline:
+            print(
+                "stream write did not complete: an I/O thread is stuck",
+                file=sys.stderr,
+                flush=True,
+            )
+            os._exit(1)
+        time.sleep(0.001)
+
+
 def check_write_roundtrip(cuda, size):
     if os.path.exists(SCRATCH):
         os.unlink(SCRATCH)
     image = bytes((i * 7 + 0x5A) & 0xFF for i in range(size))
-    quarter = size // 4
+    part = size // 8
     src = opends.alloc(size)
     cuda.h2d(src.ptr, image)
     try:
         with opends.OpenDSFile(SCRATCH, "rw") as f:
-            assert f.write_sync(src, size=quarter) == quarter
-            assert os.fstat(f.fileno()).st_size == quarter
-            fut = f.write_async(
-                src, size=quarter, file_offset=quarter, dev_offset=quarter
-            )
-            assert fut.result() == quarter
-            with opends.Batch(2) as batch:
+            assert f.write_sync(src, size=part) == part
+            assert os.fstat(f.fileno()).st_size == part
+            fut = f.write_async(src, size=part, file_offset=part, dev_offset=part)
+            assert fut.result() == part
+            with opends.Batch(4) as batch:
                 batch.submit(
                     opends.BatchOp(
                         f,
                         src,
-                        size=quarter,
-                        file_offset=k * quarter,
-                        dev_offset=k * quarter,
+                        size=part,
+                        file_offset=k * part,
+                        dev_offset=k * part,
                         opcode=opends.WRITE,
                         cookie=k,
                     )
-                    for k in (2, 3)
+                    for k in range(2, 6)
                 )
-                events = batch.get_status(min_nr=2, timeout=60)
+                events = batch.get_status(min_nr=4, timeout=60)
                 assert all(ev.status is opends.Status.COMPLETE for ev in events)
-                assert all(ev.ret == quarter for ev in events)
+                assert all(ev.ret == part for ev in events)
+            # Streams with default flags wait for the legacy default stream,
+            # so a backend that waits for them on an I/O thread never
+            # completes these. One with the FIXED flags (the copy engine),
+            # one without (the kernel on the stream).
+            for k, flags in ((6, opends.STREAM_FIXED), (7, 0)):
+                stream = cuda.stream()
+                opends.register_stream(stream, flags)
+                try:
+                    op = f.write_stream(
+                        src,
+                        size=part,
+                        file_offset=k * part,
+                        dev_offset=k * part,
+                        stream=stream,
+                    )
+                    wait_stream_op(op, 20.0)
+                    assert op.result() == part
+                finally:
+                    opends.deregister_stream(stream)
+                    cuda.rt.cudaStreamDestroy(stream)
             assert os.fstat(f.fileno()).st_size == size
         # Through the kernel: the index does not follow writes, so a read
         # through OpenDS of what was just written is undefined (README).

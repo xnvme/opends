@@ -175,6 +175,100 @@ out:
 	return ret;
 }
 
+void
+opends_direct_span(off_t off, size_t size, struct opends_direct_geom *g)
+{
+	g->start = off & ~(off_t)(OPENDS_DIRECT_ALIGN - 1);
+	g->head = (size_t)(off - g->start);
+	g->span = (g->head + size + OPENDS_DIRECT_ALIGN - 1) &
+	          ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+	g->tail = g->span - g->head - size;
+}
+
+int
+opends_direct_fill_edges(int fd, int oflags, uint8_t *bounce, off_t start,
+                         size_t span, size_t head, size_t tail, void *scratch)
+{
+	size_t last = span - OPENDS_DIRECT_ALIGN;
+	int rfd = fd;
+	int err = 0;
+
+	if (!head && !tail) {
+		return 0;
+	}
+	if ((oflags & O_ACCMODE) == O_WRONLY) {
+		char path[64];
+
+		snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+		rfd = open(path, O_RDONLY | O_DIRECT);
+		if (rfd < 0) {
+			return -errno;
+		}
+	}
+	if (head) {
+		err = read_block(rfd, scratch, start);
+		if (err == 0) {
+			memcpy(bounce, scratch, head);
+		}
+	}
+	if (err == 0 && tail) {
+		/* the head's block serves when the span is that one block */
+		if (last || !head) {
+			err = read_block(rfd, scratch, start + (off_t)last);
+		}
+		if (err == 0) {
+			memcpy(bounce + span - tail,
+			       (uint8_t *)scratch + OPENDS_DIRECT_ALIGN - tail,
+			       tail);
+		}
+	}
+	if (rfd != fd) {
+		close(rfd);
+	}
+	return err;
+}
+
+int
+opends_direct_pwrite_span(int fd, const void *bounce, size_t span, off_t start)
+{
+	size_t done = 0;
+	ssize_t w;
+
+	while (done < span) {
+		w = pwrite(fd, (const uint8_t *)bounce + done, span - done,
+		           start + (off_t)done);
+		if (w < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			return -errno;
+		}
+		if (w == 0) {
+			return -EIO;
+		}
+		done += (size_t)w;
+	}
+	return 0;
+}
+
+int
+opends_direct_trunc_to(int fd, off_t start, size_t span, off_t end,
+                       off_t *trunc_to)
+{
+	struct stat st;
+	int err;
+
+	err = fstat(fd, &st);
+	if (err < 0) {
+		return -errno;
+	}
+	if (st.st_size < end) {
+		st.st_size = end;
+	}
+	*trunc_to = start + (off_t)span > st.st_size ? st.st_size : -1;
+	return 0;
+}
+
 ssize_t
 opends_direct_pread_span(int fd, void *bounce, size_t span, off_t start)
 {
