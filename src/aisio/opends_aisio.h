@@ -59,6 +59,8 @@ struct opends_extent {
 	uint64_t file_offset;
 	uint64_t slba;
 	uint64_t length;
+	/* bits of enum xal_extent_flag; 0 holds the file's data */
+	uint8_t flag;
 };
 
 struct buf_entry {

@@ -19,6 +19,7 @@
 #include "read_pattern.h"
 #include "test_cuda_common.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +142,15 @@ run_write_homi_tests(struct write_homi_env *e)
 	                 (off_t)(FILE_SIZE - 500)) < 0)
 		failed++;
 
+	/* An unwritten extent past the end, for 7. It goes before the first
+	 * read, which maps the file again. */
+	if (fallocate(e->fd, 0, (off_t)(FILE_SIZE + PAGE), 2 * PAGE) < 0) {
+		fprintf(stderr, "[%s] fallocate failed: %s\n", e->mode_label,
+		        strerror(errno));
+		failed++;
+		goto out;
+	}
+
 	/* 6. The whole file back through OpenDS. The writes changed the file
 	 * under its lease, and the first read after them maps it again. */
 	cuda_buf_zero(gpu, FILE_SIZE);
@@ -153,6 +163,26 @@ run_write_homi_tests(struct write_homi_env *e)
 		failed++;
 	} else {
 		fprintf(stderr, "[%s] read-back through OpenDS ok\n",
+		        e->mode_label);
+	}
+
+	/* 7. An unwritten extent reads as zeros through OpenDS, whatever its
+	 * blocks hold. */
+	cuda_buf_from_host(gpu, image, 2 * PAGE);
+	r = opends_sync_read(e->fh, gpu, 2 * PAGE, (off_t)(FILE_SIZE + PAGE),
+	                     0);
+	cuda_buf_to_host(host, gpu, 2 * PAGE);
+	size_t nonzero = 0;
+	for (size_t i = 0; i < 2 * PAGE; i++)
+		nonzero += host[i] != 0;
+	if (r != (ssize_t)(2 * PAGE) || nonzero) {
+		fprintf(stderr,
+		        "[%s] unwritten extent read failed (r=%zd, %zu bytes "
+		        "not zero)\n",
+		        e->mode_label, r, nonzero);
+		failed++;
+	} else {
+		fprintf(stderr, "[%s] unwritten extent reads as zeros ok\n",
 		        e->mode_label);
 	}
 

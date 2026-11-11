@@ -422,6 +422,7 @@ lease_extents(struct driver *d, struct registered_file *h,
 		ex[i].file_offset = b.start_offset;
 		ex[i].slba = b.start_block >> d->lba_shift;
 		ex[i].length = b.size;
+		ex[i].flag = e->flag;
 	}
 	*out = ex;
 	*out_n = xe->count;
@@ -811,7 +812,7 @@ start_io_op(struct io_worker *w, struct file_op *op)
 	uint64_t req_end = req_start + size;
 
 	/* A raw handle is one extent spanning the namespace. */
-	struct opends_extent raw_ext = {0, 0, d->ns_nbytes};
+	struct opends_extent raw_ext = {0, 0, d->ns_nbytes, 0};
 	struct opends_extent *extents = &raw_ext;
 	uint32_t extent_count = 1;
 	int frc = op->h->raw ? 0
@@ -855,6 +856,12 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		uint8_t *abs_dst = dst_base + buf_off;
 		uint64_t cur_slba = e->slba + (off_in_ext >> lba_shift);
 		size_t remaining = span_end - span_start;
+
+		if (e->flag & XAL_EXTENT_UNWRITTEN) {
+			if (zero_fill(w, op, abs_dst, remaining) < 0)
+				goto out;
+			continue;
+		}
 
 		size_t head_off = off_in_ext & lba_mask;
 		if (head_off) {
