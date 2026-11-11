@@ -86,6 +86,8 @@ struct registered_file {
 	bool raw;
 	unsigned long open_seq;  /* the driver open that registered it */
 	struct xal_inode *lease; /* the file as attached to xal; NULL if raw */
+	bool remap; /* a write through fd since the map: map the file again */
+	pthread_mutex_t lock; /* orders the map again against acquires */
 };
 
 struct opends_stream {
