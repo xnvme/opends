@@ -15,6 +15,8 @@ struct ds_extent {
 	uint64_t file_offset;
 	uint64_t slba;
 	uint64_t length;
+	uint8_t flag; /* bits of enum xal_extent_flag; 0 holds the file's data
+	               */
 };
 
 #endif /* DS_EXTENT_H_ */

@@ -4,6 +4,7 @@
 
 #include "opends.h"
 
+#include <stdint.h>
 #include <sys/types.h>
 
 /* Practical upper bound of the logical block size O_DIRECT aligns to. */
@@ -16,6 +17,35 @@ ssize_t opends_direct_pwrite(int fd, int oflags, const void *src, size_t size,
                              off_t off,
                              int (*copy)(void *dst, const void *src,
                                          size_t bytes));
+
+/* The O_DIRECT span that holds [off, off + size): start is the first block,
+ * span the whole length, head and tail the bytes before and after the data. */
+struct opends_direct_geom {
+	off_t start;
+	size_t span;
+	size_t head;
+	size_t tail;
+};
+
+void opends_direct_span(off_t off, size_t size, struct opends_direct_geom *g);
+
+/* Complete the edge blocks of a span whose data is in bounce already: the
+ * file's bytes [0, head) and [span - tail, span) go around it, read through
+ * scratch (one aligned block). Returns 0 or a negative errno. */
+int opends_direct_fill_edges(int fd, int oflags, uint8_t *bounce, off_t start,
+                             size_t span, size_t head, size_t tail,
+                             void *scratch);
+
+/* O_DIRECT pwrite of the whole span at start. Returns 0 or a negative errno. */
+int opends_direct_pwrite_span(int fd, const void *bounce, size_t span,
+                              off_t start);
+
+/* The size to truncate the file to once the span is written, or -1 when the
+ * span ends inside the file, for a write whose data ends at end. Whole
+ * blocks go to the file, so a span past the data grows the file past it.
+ * Returns 0 or a negative errno. */
+int opends_direct_trunc_to(int fd, off_t start, size_t span, off_t end,
+                           off_t *trunc_to);
 
 /* O_DIRECT pread of the aligned span at start into bounce. Returns the bytes
  * read (short at EOF) or a negative errno. */

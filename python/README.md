@@ -6,6 +6,17 @@ laid out by concern (`opends.driver`, `opends.buffer`, `opends.file`,
 `opends.stream`, `opends.batch`, and `opends.cdll` for the raw prototypes);
 `import opends` gives the convenience surface used below.
 
+## Install
+
+```sh
+# needs the C library installed, or OPENDS_LIBRARY pointing at a build
+pip install ./python    # from the repository root
+```
+
+The distribution is named `opends-python` and the import name is `opends`.
+The name `opends` on PyPI belongs to another project, so `pip install opends`
+does not install these bindings.
+
 ## Usage
 
 ```python
@@ -26,8 +37,8 @@ return the byte count, `read_async`/`write_async` return a `Future`, and
 `read_stream`/`write_stream` enqueue on a CUDA stream. Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
-`opends.alloc`. These are registered on first use and deregistered at driver
-shutdown. `opends.alloc` is the backend's own allocator: host memory on ref,
+`opends.alloc`. All but a `HostBuffer` need `opends.register_buffer` first.
+`opends.alloc` is the backend's own allocator: host memory on ref,
 device memory on GPU backends.
 
 `OpenDSFile` also takes a descriptor that is already open in place of a path,
@@ -61,9 +72,9 @@ counted, so independent components may each hold one; the C driver closes
 when the last is closed, which drops every registration, so close files and
 deregister buffers first. `get_properties()`, `use_count()` and
 `set_max_direct_io_size()` pass through to the C driver calls. Failures raise
-`OpenDSError`, whose `code` is an `opends.ErrorCode` member. A driver left
-open is closed at exit and on SIGTERM/SIGINT; a framework that installs its
-own SIGTERM handler calls `opends.cleanup()` from it.
+`OpenDSError`, a `RuntimeError` whose `code` is an `opends.ErrorCode` member.
+A driver left open is closed at exit, and `opends.cleanup()` closes it on
+request, for example from a signal handler.
 
 ```python
 with opends.Driver():
@@ -99,9 +110,15 @@ stream order. `stream` accepts a raw handle (`int` or `ctypes.c_void_p`), a
 `torch.cuda.Stream` or a `cupy.cuda.Stream`; `None` is the default stream.
 The returned `StreamOp` holds the storage the backend reads and writes when
 the stream reaches the operation, so keep it alive until the stream has been
-synchronized; `result()` raises until then and returns the byte count after.
+synchronized. `nbytes` is the byte count as cuFile writes it, 0 before the
+stream has run, the count, -1 for an I/O error, or a negated code. `result()`
+is the same count and raises for a failed operation, `OpenDSError` with the
+code or `OSError` for the -1.
 `register_stream` and
-`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
+`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`. Pass
+`opends.STREAM_FIXED` as the flags when the size and offsets of a write are
+set before the call: the aisio backend then copies with the copy engine
+rather than with a kernel on the stream.
 
 ```python
 opends.register_stream(stream)

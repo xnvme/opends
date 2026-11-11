@@ -108,8 +108,9 @@ verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
 	                                        &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "  %s: opends_stream_read: %s\n", label,
-		        opends_op_status_error(err.err));
+		fprintf(stderr, "  %s: opends_stream_read: %s (dev_err=%d)\n",
+		        label, opends_op_status_error(err.err),
+		        (int)err.dev_err);
 		return 1;
 	}
 
@@ -1298,6 +1299,59 @@ out:
 	return rc;
 }
 
+/*
+ * A NULL stream is the default stream, as in cuFile: it registers, and
+ * reads on it run in its order, behind earlier work on it.
+ */
+static int
+stream_test_null_stream(struct stream_test_env *env)
+{
+	CUstream stream = env->stream;
+	opends_error_t err;
+	void *buf;
+	int rc;
+
+	err = opends_stream_register(NULL, 0);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  null_stream: register: %s\n",
+		        opends_op_status_error(err.err));
+		return 1;
+	}
+	buf = env->buf_acquire(2 * PAGE);
+	if (!buf) {
+		return 1;
+	}
+
+	env->stream = NULL;
+	rc = verify_stream_read(env, buf, 2 * PAGE, 2 * PAGE, PAGE, 0,
+	                        "null_stream");
+	if (rc == 0 && !env->sub_lba_unsupported) {
+		/* the tail copy is a kernel on the default stream */
+		rc = verify_stream_read(env, buf, 2 * PAGE, PAGE + 300,
+		                        2 * PAGE, 0, "null_stream/tail");
+	}
+	if (rc == 0) {
+		rc = stream_test_stream_ordering(env);
+	}
+	if (rc == 0) {
+		rc = stream_test_deferred_eval(env);
+	}
+	env->stream = stream;
+	env->buf_release(buf);
+	if (rc != 0) {
+		fprintf(stderr, "  null_stream: failed on stream 0\n");
+		return 1;
+	}
+
+	err = opends_stream_deregister(NULL);
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "  null_stream: deregister: %s\n",
+		        opends_op_status_error(err.err));
+		return 1;
+	}
+	return 0;
+}
+
 /* --- Test runner ------------------------------------------------ */
 
 struct stream_test_entry {
@@ -1329,6 +1383,7 @@ static const struct stream_test_entry stream_read_tests[] = {
 	{"kernel_read_blocking",    stream_test_kernel_read_blocking, true},
 	{"burst_single_stream",     stream_test_burst_single_stream},
 	{"multi_stream_burst",      stream_test_multi_stream_burst},
+	{"null_stream",             stream_test_null_stream},
 };
 /* clang-format on */
 

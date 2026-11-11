@@ -21,7 +21,7 @@ TESTS_BY_BACKEND = {
     "aisio": ["sync_read", "mt_read", "register_large", "coherency",
               "async_read", "async_read_busy_spin", "batch_read",
               "stream_read", "stream_read_busy_spin", "sync_write",
-              "stream_write", "python"],
+              "stream_write", "p2p_write", "python"],
 }
 ALL_TESTS = sorted({t for ts in TESTS_BY_BACKEND.values() for t in ts})
 
@@ -50,6 +50,8 @@ def _steps_for(backends, tests):
         steps.append("test_sync_read_prep")
     if any(t == "coherency" for _, t in selected):
         steps.append("test_coherency_prep")
+    if any(t == "p2p_write" for _, t in selected):
+        steps.append("test_p2p_write_prep")
     for b, t in selected:
         if b == "aisio":
             continue

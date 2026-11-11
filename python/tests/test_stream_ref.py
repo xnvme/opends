@@ -6,6 +6,7 @@ readable right after the call. Dependency-free (HostBuffer only).
 """
 
 import ctypes
+import errno
 
 import pytest
 
@@ -28,6 +29,7 @@ def test_roundtrip(driver, tmp_path):
         op = f.write_stream(src, size=2 * PAGE, stream=0)
         assert isinstance(op, opends.StreamOp)
         assert op.result() == 2 * PAGE
+        assert op.nbytes == 2 * PAGE
 
     dst = opends.alloc(2 * PAGE)
     with opends.OpenDSFile(path, "r") as f:
@@ -41,11 +43,30 @@ def test_register_deregister(driver):
     opends.deregister_stream(0x1234)
 
 
-def test_result_before_the_stream_ran_raises():
+def test_before_the_stream_ran():
     op = opends.StreamOp(10, 0, 0, None)
-    assert not op.done
-    with pytest.raises(RuntimeError):
+    assert op.nbytes == 0
+    assert op.result() == 0
+
+
+def test_failed_operation():
+    op = opends.StreamOp(10, 0, 0, None)
+    # ref reports a failed stream I/O at submission, so store the result
+    # the way a GPU backend does when the stream reaches the operation
+    op._bytes.value = -opends.ErrorCode.FS_SETUP_ERROR
+    assert op.nbytes == -opends.ErrorCode.FS_SETUP_ERROR
+    with pytest.raises(opends.OpenDSError) as info:
         op.result()
+    assert info.value.code is opends.ErrorCode.FS_SETUP_ERROR
+
+
+def test_io_error():
+    op = opends.StreamOp(10, 0, 0, None)
+    op._bytes.value = -1  # cuFile's I/O error
+    assert op.nbytes == -1
+    with pytest.raises(OSError) as info:
+        op.result()
+    assert info.value.errno == errno.EIO
 
 
 class _TorchLike:

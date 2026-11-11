@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Regression test: a SIGTERM-killed host must still run driver cleanup.
+"""The host owns its signals.
 
-atexit does not run on signal death, so without a signal handler a SIGTERM
-(how orchestrators tear a process down) skips opends' driver_close and leaks
-the pinned GPU dma-buf until reboot. This guards the handler in driver.py so
-a future refactor cannot silently drop it again (it has regressed before).
+Opening a driver leaves the handlers of the process alone. A host that wants
+the driver closed on a signal calls opends.cleanup() from its own handler, so
+cleanup() keeps its name, is safe to re-enter and closes the driver when a
+host's handler calls it.
 
-Runs against the ref backend, so no GPU is needed: it asserts that
-driver_close fires on SIGTERM, which is backend-independent.
+Runs against the ref backend, so no GPU is needed.
 """
 
 import os
@@ -19,12 +18,11 @@ import time
 
 import opends
 
-# Child: open the driver (which installs the signal handler), register a
-# buffer, and wrap driver_close so a SIGTERM-driven close leaves proof on
-# disk. Then wait for the parent's SIGTERM. If the handler is missing,
-# atexit does not run under SIGTERM and the sentinel is never written.
+# Child: a host with its own SIGTERM handler, which calls opends.cleanup().
+# driver_close is wrapped so a close leaves proof on disk, and the handler
+# leaves with os._exit so atexit cannot be what closed the driver.
 _CHILD = r"""
-import ctypes, os, signal
+import os, signal
 import opends
 from opends import cdll
 
@@ -38,9 +36,12 @@ def _close(*a, **k):
     return _orig_close(*a, **k)
 cdll.driver_close = _close
 
+def shutdown(signum, frame):
+    opends.cleanup()
+    os._exit(0)
+signal.signal(signal.SIGTERM, shutdown)
+
 driver = opends.Driver()
-buf = opends.alloc(4096)
-opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
 with open(ready, "w") as fh:
     fh.write("ready"); fh.flush(); os.fsync(fh.fileno())
@@ -50,7 +51,16 @@ while True:
 """
 
 
-def test_sigterm_runs_driver_cleanup():
+def test_driver_leaves_signals_alone():
+    # The host decides what a signal does, and when the driver closes.
+    signals = (signal.SIGTERM, signal.SIGINT)
+    before = [signal.getsignal(sig) for sig in signals]
+    with opends.Driver():
+        during = [signal.getsignal(sig) for sig in signals]
+    assert during == before, "opening a driver changed the signal handlers"
+
+
+def test_host_handler_closes_driver():
     workdir = tempfile.mkdtemp(prefix="opends_sig_")
     sentinel = os.path.join(workdir, "closed")
     ready = os.path.join(workdir, "ready")
@@ -68,11 +78,11 @@ def test_sigterm_runs_driver_cleanup():
 
     proc = subprocess.Popen([sys.executable, child_py], env=env)
     try:
-        for _ in range(200):  # up to ~10s for the child to arm the handler
+        for _ in range(200):  # up to ~10s for the child to open the driver
             if os.path.exists(ready):
                 break
             if proc.poll() is not None:
-                raise AssertionError("child exited before arming (rc=%s)" % proc.returncode)
+                raise AssertionError("child exited before it was ready (rc=%s)" % proc.returncode)
             time.sleep(0.05)
         else:
             raise AssertionError("child never became ready")
@@ -84,45 +94,41 @@ def test_sigterm_runs_driver_cleanup():
             proc.kill()
             proc.wait()
 
+    assert proc.returncode == 0, "the host's SIGTERM handler did not run (rc=%s)" % proc.returncode
     assert os.path.exists(sentinel), (
-        "driver_close did not run on SIGTERM: the signal cleanup handler "
-        "regressed, so the pinned GPU dma-buf would leak until reboot"
+        "driver_close did not run when the host's SIGTERM handler called "
+        "opends.cleanup()"
     )
 
 
 def test_cleanup_symbol_is_public():
     # External integrations call opends.cleanup() by name from their own
-    # signal handlers (e.g. vLLM's EngineCore SIGTERM handler, which shadows any
-    # handler opends installs). Renaming it makes that call a silent no-op and
-    # leaks the GPU dma-buf. Guard the exact name.
+    # signal handlers (e.g. vLLM's EngineCore SIGTERM handler). Renaming it
+    # makes that call fail and leaves the driver open. Guard the exact name.
     assert callable(getattr(opends, "cleanup", None)), (
         "opends.cleanup must exist and be callable. External signal handlers "
-        "call it by this exact name to free the GPU dma-buf."
+        "call it by this exact name to close the driver."
     )
 
 
 def test_cleanup_reentrant_safe():
-    # A second SIGTERM/SIGINT can re-enter cleanup on the same thread while it
-    # is inside the registry clear (buf_deregister can be slow). Without a
-    # guard the reentrant call closes the driver under the outer clear and the
-    # teardown can deadlock or double-close. Reproduce the re-entry by calling
-    # cleanup from within buf_deregister and assert the teardown still
-    # completes (does not hang).
-    import ctypes
+    # A host's signal handler can re-enter cleanup on the same thread while it
+    # is inside driver_close, which can be slow. Without a guard the reentrant
+    # call closes the driver under the outer one and the teardown can deadlock
+    # or double-close. Reproduce the re-entry by calling cleanup from within
+    # driver_close and assert the teardown still completes (does not hang).
     import threading
 
     from opends import cdll, driver as d
 
     d._cleaning = False
     driver = opends.Driver()
-    buf = opends.alloc(4096)
-    opends.register_buffer(ctypes.c_void_p(buf.ptr), 4096)
 
-    orig = cdll.buf_deregister
+    orig = cdll.driver_close
 
-    def reenter(ptr):
-        opends.cleanup()  # simulate a signal re-entering mid-clear
-        return orig(ptr)
+    def reenter():
+        opends.cleanup()  # simulate a signal re-entering mid-close
+        return orig()
 
     done = threading.Event()
 
@@ -130,21 +136,22 @@ def test_cleanup_reentrant_safe():
         opends.cleanup()
         done.set()
 
-    cdll.buf_deregister = reenter
+    cdll.driver_close = reenter
     try:
         threading.Thread(target=run_cleanup).start()
         assert done.wait(timeout=10), (
             "cleanup deadlocked on re-entry; the reentrancy guard is missing, "
-            "so a second signal during teardown would leak the GPU buffer"
+            "so a second signal during teardown would leave the driver open"
         )
     finally:
-        cdll.buf_deregister = orig
+        cdll.driver_close = orig
         d._cleaning = False
         driver.close()
 
 
 if __name__ == "__main__":
+    test_driver_leaves_signals_alone()
     test_cleanup_symbol_is_public()
     test_cleanup_reentrant_safe()
-    test_sigterm_runs_driver_cleanup()
+    test_host_handler_closes_driver()
     print("all ok")

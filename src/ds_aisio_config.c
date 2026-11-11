@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ENV_XAL_SHM "OPENDS_XAL_SHM"
+#define ENV_MOUNT "OPENDS_HOMI_MNT"
 #define ENV_IO_THREADS "OPENDS_AISIO_IO_THREADS"
 #define ENV_QUEUE_DEPTH "OPENDS_AISIO_QUEUE_DEPTH"
 #define ENV_CPU_MASK "OPENDS_AISIO_CPU_MASK"
@@ -21,7 +21,9 @@
 #define ENV_HOMI_ID "OPENDS_AISIO_HOMI_ID"
 #define ENV_HOST_HEAP_MB "OPENDS_AISIO_HOST_HEAP_MB"
 #define ENV_DEVICE_HEAP_MB "OPENDS_AISIO_DEVICE_HEAP_MB"
-#define DEFAULT_XAL_SHM "/xal_dev0"
+#define ENV_WRITE_BUF_MB "OPENDS_AISIO_WRITE_BUF_MB"
+#define ENV_WRITE_BUFS "OPENDS_AISIO_WRITE_BUFS"
+#define ENV_CQ_MIRROR "OPENDS_AISIO_CQ_MIRROR"
 #define DEFAULT_HOMI_ID 1
 #define DEFAULT_IO_THREADS 2
 #define MAX_IO_THREADS 15
@@ -29,13 +31,19 @@
 #define MAX_QUEUE_DEPTH 1024
 
 /* The host DMA heap holds this process's own SQ/CQ rings and PRP lists, one set
- * per I/O thread. 256 MiB covers the largest configuration the knobs allow
- * (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise default to
- * 1 GiB, which does not multiply across the processes sharing the hugepages. */
+ * per I/O thread. The heap is process-wide and the thread count does not grow
+ * with the device count, so 256 MiB covers the largest configuration the knobs
+ * allow (MAX_IO_THREADS queues at MAX_QUEUE_DEPTH). xNVMe would otherwise
+ * default to 1 GiB, which does not multiply across the processes sharing the
+ * hugepages. */
 #define DEFAULT_HOST_HEAP_MB 256
 #define MAX_HEAP_MB (64 * 1024)
 #define DEFAULT_IDLE_SPIN_US 200
 #define MAX_IDLE_SPIN_US 1000000
+#define DEFAULT_WRITE_BUF_MB 16
+#define MAX_WRITE_BUF_MB 1024
+#define DEFAULT_WRITE_BUFS_PER_THREAD 4
+#define MAX_WRITE_BUFS 1024
 
 static int
 env_int(const char *name, int def, int lo, int hi, int *out)
@@ -61,28 +69,35 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 }
 
 int
-aisio_config_read(struct aisio_config *cfg)
+aisio_config_homi_id(uint32_t *out)
 {
 	int n;
 
 	if (env_int(ENV_HOMI_ID, DEFAULT_HOMI_ID, 0, INT_MAX, &n) < 0) {
 		return -EINVAL;
 	}
-	cfg->homi_id = (uint32_t)n;
+	*out = (uint32_t)n;
+	return 0;
+}
 
-	const char *shm = getenv(ENV_XAL_SHM);
-	if (!shm || !shm[0]) {
-		shm = DEFAULT_XAL_SHM;
-	}
-	if (strlen(shm) >= sizeof(cfg->xal_shm)) {
-		fprintf(stderr, "aisio: %s is longer than %zu\n", ENV_XAL_SHM,
-		        sizeof(cfg->xal_shm) - 1);
+int
+aisio_config_read(struct aisio_config *cfg, int n_devices)
+{
+	int n;
+	int thr_def;
+
+	/* One worker per device at least, since a device with no worker cannot
+	 * be read. The threads are the total, not a per-device count. */
+	thr_def =
+	        DEFAULT_IO_THREADS < n_devices ? n_devices : DEFAULT_IO_THREADS;
+	if (env_int(ENV_IO_THREADS, thr_def, 1, MAX_IO_THREADS, &n) < 0) {
 		return -EINVAL;
 	}
-	strcpy(cfg->xal_shm, shm);
-
-	if (env_int(ENV_IO_THREADS, DEFAULT_IO_THREADS, 1, MAX_IO_THREADS, &n) <
-	    0) {
+	if (n < n_devices) {
+		fprintf(stderr,
+		        "aisio: %s=%d leaves some of the %d devices without a "
+		        "worker\n",
+		        ENV_IO_THREADS, n, n_devices);
 		return -EINVAL;
 	}
 	cfg->n_io_threads = n;
@@ -114,6 +129,9 @@ aisio_config_read(struct aisio_config *cfg)
 	const char *aligned = getenv(ENV_ASSUME_ALIGNED_ONLY);
 	cfg->assume_aligned_only = aligned && aligned[0] && aligned[0] != '0';
 
+	const char *cqm = getenv(ENV_CQ_MIRROR);
+	cfg->cq_mirror = cqm && cqm[0] && cqm[0] != '0';
+
 	if (env_int(ENV_HOST_HEAP_MB, DEFAULT_HOST_HEAP_MB, 1, MAX_HEAP_MB,
 	            &n) < 0) {
 		return -EINVAL;
@@ -127,6 +145,28 @@ aisio_config_read(struct aisio_config *cfg)
 	}
 	cfg->device_heap_nbytes = (size_t)n << 20;
 
+	if (env_int(ENV_WRITE_BUF_MB, DEFAULT_WRITE_BUF_MB, 1, MAX_WRITE_BUF_MB,
+	            &n) < 0) {
+		return -EINVAL;
+	}
+	cfg->write_buf_nbytes = (size_t)n << 20;
+
+	if (env_int(ENV_WRITE_BUFS,
+	            DEFAULT_WRITE_BUFS_PER_THREAD * cfg->n_io_threads, 1,
+	            MAX_WRITE_BUFS, &n) < 0) {
+		return -EINVAL;
+	}
+	cfg->write_bufs = n;
+
+	/* Every write stages through pinned buffers with async copies, and a
+	 * stream write with late parameters through the resident kernel. */
+	if (!ds_accel->load || !ds_accel->host_pin || !ds_accel->host_unpin ||
+	    !ds_accel->copy_from_dev_async || !ds_accel->stage_stream) {
+		fprintf(stderr, "aisio: the vendor ops table does not provide "
+		                "the copy ops writes stage through\n");
+		return -EINVAL;
+	}
+
 	/* The tail mode picks the async gate mechanism, and the vendor ops it
 	 * drives are required only for that mode (see ds_accel.h). A partial
 	 * port may leave the other mode's ops NULL; fail open instead of
@@ -138,10 +178,9 @@ aisio_config_read(struct aisio_config *cfg)
 		        ENV_ASSUME_ALIGNED_ONLY);
 		return -EINVAL;
 	}
-	if (!cfg->assume_aligned_only &&
-	    (!ds_accel->stream_write_value32 ||
-	     !ds_accel->stream_wait_value32_geq || !ds_accel->host_pin ||
-	     !ds_accel->host_unpin || !ds_accel->copy_to_dev_async)) {
+	if (!cfg->assume_aligned_only && (!ds_accel->stream_write_value32 ||
+	                                  !ds_accel->stream_wait_value32_geq ||
+	                                  !ds_accel->copy_to_dev_async)) {
 		fprintf(stderr,
 		        "aisio: the vendor ops table does not provide the "
 		        "stream gate and pinned copy ops; set %s=1 to gate "
@@ -149,6 +188,51 @@ aisio_config_read(struct aisio_config *cfg)
 		        ENV_ASSUME_ALIGNED_ONLY);
 		return -EINVAL;
 	}
+
+	return 0;
+}
+
+/* OPENDS_HOMI_MNT names the mountpoints as a comma-separated list, paired
+ * with the runtime's device order. No default. */
+int
+aisio_config_mount(int di, int n_devices, char *out, size_t out_len)
+{
+	const char *spec = getenv(ENV_MOUNT);
+	const char *p;
+	const char *end;
+	size_t len;
+	int n;
+
+	if (!spec || !spec[0]) {
+		fprintf(stderr, "aisio: %s is not set\n", ENV_MOUNT);
+		return -EINVAL;
+	}
+
+	n = 1;
+	for (p = spec; *p; p++) {
+		if (*p == ',') {
+			n++;
+		}
+	}
+	if (n != n_devices) {
+		fprintf(stderr, "aisio: %s names %d mounts for %d devices\n",
+		        ENV_MOUNT, n, n_devices);
+		return -EINVAL;
+	}
+
+	p = spec;
+	for (int i = 0; i < di; i++) {
+		p = strchr(p, ',') + 1;
+	}
+	end = strchr(p, ',');
+	len = end ? (size_t)(end - p) : strlen(p);
+	if (len == 0 || len >= out_len) {
+		fprintf(stderr, "aisio: %s entry %d is empty or too long\n",
+		        ENV_MOUNT, di);
+		return -EINVAL;
+	}
+	memcpy(out, p, len);
+	out[len] = '\0';
 
 	return 0;
 }
