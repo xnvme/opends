@@ -115,7 +115,10 @@ stream has run, the count, -1 for an I/O error, or a negated code. `result()`
 is the same count and raises for a failed operation, `OpenDSError` with the
 code or `OSError` for the -1.
 `register_stream` and
-`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
+`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`. Pass
+`opends.STREAM_FIXED` as the flags when the size and offsets of a write are
+set before the call: the aisio backend then copies with the copy engine
+rather than with a kernel on the stream.
 
 ```python
 opends.register_stream(stream)

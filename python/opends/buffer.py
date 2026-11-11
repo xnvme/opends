@@ -9,7 +9,7 @@ import ctypes
 import math
 
 from . import cdll as _c
-from .driver import check, preserve_cuda_context, require_driver
+from .driver import check, require_driver
 
 
 def register_buffer(buf, size=None):
@@ -25,14 +25,12 @@ def register_buffer(buf, size=None):
             raise ValueError("size is required to register a bare pointer")
         size = nbytes
     require_driver()
-    with preserve_cuda_context():
-        check(_c.buf_register(ptr, int(size), 0))
+    check(_c.buf_register(ptr, int(size), 0))
 
 
 def deregister_buffer(buf):
     ptr, _ = buffer_view(buf)
-    with preserve_cuda_context():
-        check(_c.buf_deregister(ptr))
+    check(_c.buf_deregister(ptr))
 
 
 class HostBuffer:
@@ -44,8 +42,7 @@ class HostBuffer:
         self._ptr = 0
         self._size = int(size)
         require_driver()
-        with preserve_cuda_context():
-            ptr = _c.alloc(size)
+        ptr = _c.alloc(size)
         if not ptr:
             raise MemoryError("opends_alloc(%d) failed" % size)
         self._ptr = int(ptr)
@@ -67,8 +64,7 @@ class HostBuffer:
 
     def free(self):
         if self._ptr:
-            with preserve_cuda_context():
-                _c.free(self._ptr)
+            _c.free(self._ptr)
             self._ptr = 0
 
     def __del__(self):

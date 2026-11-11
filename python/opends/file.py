@@ -6,7 +6,7 @@ import os
 
 from . import cdll as _c
 from .buffer import io_args
-from .driver import check, io_result, is_open, preserve_cuda_context, require_driver
+from .driver import check, io_result, is_open, require_driver
 from .stream import StreamOp, stream_handle
 
 
@@ -33,8 +33,7 @@ class Future:
             if not self._c_future.done:
                 # A closed driver completes nothing; fail instead of spinning.
                 require_driver()
-            with preserve_cuda_context():
-                ret = _c.async_await(ctypes.byref(self._c_future))
+            ret = _c.async_await(ctypes.byref(self._c_future))
             self._result = int(ret)
             self._buf = None
         return io_result(self._result)
@@ -87,9 +86,8 @@ class OpenDSFile:
             self._fd = os.open(path, oflags, mode)
         try:
             require_driver()
-            with preserve_cuda_context():
-                fh = ctypes.c_void_p()
-                check(_c.handle_register(ctypes.byref(fh), self._fd))
+            fh = ctypes.c_void_p()
+            check(_c.handle_register(ctypes.byref(fh), self._fd))
             self._fh = fh
         except Exception:
             self._release_fd()
@@ -97,40 +95,37 @@ class OpenDSFile:
 
     def _submit(self, c_fn, buf, size, file_offset, dev_offset):
         ptr, size = io_args(buf, size, dev_offset)
-        with preserve_cuda_context():
-            return io_result(c_fn(self._fh, ptr, size, file_offset, dev_offset))
+        return io_result(c_fn(self._fh, ptr, size, file_offset, dev_offset))
 
     def _submit_async(self, c_fn, buf, size, file_offset, dev_offset):
         ptr, size = io_args(buf, size, dev_offset)
         c_future = _c.DsAsyncFuture()
-        with preserve_cuda_context():
-            check(
-                c_fn(
-                    self._fh,
-                    ptr,
-                    size,
-                    file_offset,
-                    dev_offset,
-                    ctypes.byref(c_future),
-                )
+        check(
+            c_fn(
+                self._fh,
+                ptr,
+                size,
+                file_offset,
+                dev_offset,
+                ctypes.byref(c_future),
             )
+        )
         return Future(c_future, buf)
 
     def _submit_stream(self, c_fn, buf, size, file_offset, dev_offset, stream):
         ptr, size = io_args(buf, size, dev_offset)
         op = StreamOp(size, file_offset, dev_offset, buf)
-        with preserve_cuda_context():
-            check(
-                c_fn(
-                    self._fh,
-                    ptr,
-                    ctypes.byref(op._size),
-                    ctypes.byref(op._file_offset),
-                    ctypes.byref(op._dev_offset),
-                    ctypes.byref(op._bytes),
-                    stream_handle(stream),
-                )
+        check(
+            c_fn(
+                self._fh,
+                ptr,
+                ctypes.byref(op._size),
+                ctypes.byref(op._file_offset),
+                ctypes.byref(op._dev_offset),
+                ctypes.byref(op._bytes),
+                stream_handle(stream),
             )
+        )
         return op
 
     def read_sync(self, buf, size=None, file_offset=0, dev_offset=0):
@@ -173,8 +168,7 @@ class OpenDSFile:
 
     def close(self):
         if self._fh is not None:
-            with preserve_cuda_context():
-                _c.handle_deregister(self._fh)
+            _c.handle_deregister(self._fh)
             self._fh = None
         self._release_fd()
 

@@ -6,7 +6,7 @@ import ctypes
 
 from . import cdll as _c
 from .buffer import io_args
-from .driver import check, preserve_cuda_context, require_driver
+from .driver import check, require_driver
 
 READ = _c.READ
 WRITE = _c.WRITE
@@ -65,9 +65,8 @@ class Batch:
         self._pending = {}
         self._next_slot = 1
         require_driver()
-        with preserve_cuda_context():
-            handle = ctypes.c_void_p()
-            check(_c.batch_setup(ctypes.byref(handle), self._capacity))
+        handle = ctypes.c_void_p()
+        check(_c.batch_setup(ctypes.byref(handle), self._capacity))
         self._handle = handle
 
     @property
@@ -82,23 +81,22 @@ class Batch:
         ops = list(ops)
         params = (_c.DsIoParams * len(ops))()
         staged = {}
-        with preserve_cuda_context():
-            for p, op in zip(params, ops):
-                if op.file.handle is None:
-                    raise ValueError("file is closed")
-                ptr, size = io_args(op.buf, op.size, op.dev_offset)
-                slot = self._next_slot
-                self._next_slot += 1
-                p.mode = _c.BATCH_MODE
-                p.u.batch.dev_ptr_base = ptr
-                p.u.batch.file_offset = op.file_offset
-                p.u.batch.dev_ptr_offset = op.dev_offset
-                p.u.batch.size = size
-                p.fh = op.file.handle.value
-                p.opcode = op.opcode
-                p.cookie = slot
-                staged[slot] = (op.cookie, op.buf)
-            check(_c.batch_submit(self._handle, len(ops), params, flags))
+        for p, op in zip(params, ops):
+            if op.file.handle is None:
+                raise ValueError("file is closed")
+            ptr, size = io_args(op.buf, op.size, op.dev_offset)
+            slot = self._next_slot
+            self._next_slot += 1
+            p.mode = _c.BATCH_MODE
+            p.u.batch.dev_ptr_base = ptr
+            p.u.batch.file_offset = op.file_offset
+            p.u.batch.dev_ptr_offset = op.dev_offset
+            p.u.batch.size = size
+            p.fh = op.file.handle.value
+            p.opcode = op.opcode
+            p.cookie = slot
+            staged[slot] = (op.cookie, op.buf)
+        check(_c.batch_submit(self._handle, len(ops), params, flags))
         self._pending.update(staged)
 
     def get_status(self, min_nr=1, max_nr=None, timeout=None):
@@ -112,16 +110,15 @@ class Batch:
         nr = ctypes.c_uint(max_nr)
         events = (_c.DsIoEvents * max_nr)()
         ts = _timespec(timeout)
-        with preserve_cuda_context():
-            check(
-                _c.batch_get_status(
-                    self._handle,
-                    min_nr,
-                    ctypes.byref(nr),
-                    events,
-                    None if ts is None else ctypes.byref(ts),
-                )
+        check(
+            _c.batch_get_status(
+                self._handle,
+                min_nr,
+                ctypes.byref(nr),
+                events,
+                None if ts is None else ctypes.byref(ts),
             )
+        )
         out = []
         for ev in events[: nr.value]:
             cookie, _ = self._pending.pop(ev.cookie, (None, None))
@@ -129,13 +126,11 @@ class Batch:
         return out
 
     def cancel(self):
-        with preserve_cuda_context():
-            check(_c.batch_cancel(self._handle))
+        check(_c.batch_cancel(self._handle))
 
     def close(self):
         if self._handle is not None:
-            with preserve_cuda_context():
-                _c.batch_destroy(self._handle)
+            _c.batch_destroy(self._handle)
             self._handle = None
             self._pending.clear()
 

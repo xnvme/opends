@@ -4,7 +4,7 @@
 import ctypes
 
 from . import cdll as _c
-from .driver import check, io_result, preserve_cuda_context, require_driver
+from .driver import check, io_result, require_driver
 
 # register_stream flags, cuFileStreamRegister's. With the three FIXED ones a
 # stream write takes its size and offsets at the call and the copy engine
@@ -36,13 +36,11 @@ def stream_handle(stream):
 def register_stream(stream, flags=0):
     """cuFileStreamRegister."""
     require_driver()
-    with preserve_cuda_context():
-        check(_c.stream_register(stream_handle(stream), flags))
+    check(_c.stream_register(stream_handle(stream), flags))
 
 
 def deregister_stream(stream):
-    with preserve_cuda_context():
-        check(_c.stream_deregister(stream_handle(stream)))
+    check(_c.stream_deregister(stream_handle(stream)))
 
 
 class StreamOp:
