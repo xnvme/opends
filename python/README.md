@@ -37,8 +37,8 @@ return the byte count, `read_async`/`write_async` return a `Future`, and
 `read_stream`/`write_stream` enqueue on a CUDA stream. Buffers may be any
 object exposing `__cuda_array_interface__`, `__array_interface__`, a
 torch-style `data_ptr()`, the buffer protocol, or a `HostBuffer` from
-`opends.alloc`. These are registered on first use and deregistered at driver
-shutdown. `opends.alloc` is the backend's own allocator: host memory on ref,
+`opends.alloc`. All but a `HostBuffer` need `opends.register_buffer` first.
+`opends.alloc` is the backend's own allocator: host memory on ref,
 device memory on GPU backends.
 
 `OpenDSFile` also takes a descriptor that is already open in place of a path,
@@ -72,9 +72,9 @@ counted, so independent components may each hold one; the C driver closes
 when the last is closed, which drops every registration, so close files and
 deregister buffers first. `get_properties()`, `use_count()` and
 `set_max_direct_io_size()` pass through to the C driver calls. Failures raise
-`OpenDSError`, whose `code` is an `opends.ErrorCode` member. A driver left
-open is closed at exit, and `opends.cleanup()` closes it on request, for
-example from a signal handler.
+`OpenDSError`, a `RuntimeError` whose `code` is an `opends.ErrorCode` member.
+A driver left open is closed at exit, and `opends.cleanup()` closes it on
+request, for example from a signal handler.
 
 ```python
 with opends.Driver():
@@ -115,10 +115,7 @@ stream has run, the count, -1 for an I/O error, or a negated code. `result()`
 is the same count and raises for a failed operation, `OpenDSError` with the
 code or `OSError` for the -1.
 `register_stream` and
-`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`. Pass
-`opends.STREAM_FIXED` as the flags when the size and offsets of a write are
-set before the call: the aisio backend then copies with the copy engine
-rather than with a kernel on the stream.
+`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
 
 ```python
 opends.register_stream(stream)
