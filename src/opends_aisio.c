@@ -421,6 +421,7 @@ lease_extents(struct driver *d, struct registered_file *h,
 		ex[i].file_offset = b.start_offset;
 		ex[i].slba = b.start_block >> d->lba_shift;
 		ex[i].length = b.size;
+		ex[i].flag = e->flag;
 	}
 	*out = ex;
 	*out_n = xe->count;
@@ -808,6 +809,32 @@ submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 	return submit_host_bounce(w, op, abs_dst, slba, src_off, nbytes);
 }
 
+/* The filesystem reads an unwritten extent as zeros, whatever its blocks
+ * hold, and so does OpenDS. The stream path copies by descriptor on the
+ * device, which this does not extend. */
+static int
+zero_fill(struct file_op *op, uint8_t *dst, size_t nbytes)
+{
+	static const uint8_t zeros[1 << 20];
+
+	if (op->mode == FILE_OP_STREAM) {
+		op->err = OPENDS_INVALID_VALUE;
+		return -1;
+	}
+	while (nbytes) {
+		size_t n = nbytes < sizeof(zeros) ? nbytes : sizeof(zeros);
+
+		if (ds_accel->copy(dst, zeros, n) != 0) {
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+			return -1;
+		}
+		dst += n;
+		nbytes -= n;
+		op->bytes_acc += n;
+	}
+	return 0;
+}
+
 static void
 start_read_op(struct io_worker *w, struct file_op *op)
 {
@@ -896,6 +923,12 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		uint8_t *abs_dst = dst_base + buf_off;
 		uint64_t cur_slba = e->slba + (off_in_ext >> lba_shift);
 		size_t remaining = span_end - span_start;
+
+		if (e->flag & XAL_EXTENT_UNWRITTEN) {
+			if (zero_fill(op, abs_dst, remaining) < 0)
+				goto out;
+			continue;
+		}
 
 		size_t head_off = off_in_ext & lba_mask;
 		if (head_off) {
