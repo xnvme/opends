@@ -127,6 +127,7 @@ if aisio_enabled
   libopends_aisio = shared_library('opends_aisio',
     'src/opends_common.c',
     'src/opends_aisio.c',
+    'src/ds_aisio_posix.c',
     'src/ds_aisio_config.c',
     'src/opends_sync_async.c',
     'src/opends_batch_async.c',
