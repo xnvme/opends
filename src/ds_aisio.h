@@ -70,6 +70,9 @@ struct map_run {
 struct registered_file {
 	int fd;
 	int oflags;
+	struct xal_inode *lease; ///< The file as attached to xal
+	bool remap; ///< A write through fd since the map: map the file again
+	pthread_mutex_t lock; ///< Orders the map again against acquires
 };
 
 struct opends_stream {
@@ -162,6 +165,7 @@ struct file_op {
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
 	void *bounce_buf;
+	bool held; ///< Counted as a reader of the file's extents until released
 	struct file_op_write wr;
 	union {
 		struct file_op_stream stream;

@@ -92,8 +92,10 @@ The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
 the open.
 
-- `OPENDS_XAL_SHM`: Shared-memory name of the xal-server extent index.
-  Default `/xal_dev0`.
+- `OPENDS_HOMI_MNT`: Mountpoint of the filesystem on the device the homi
+  group holds. The driver maps a registered file there, under a lease on the
+  registered descriptor, and reads no index. No default; the open fails
+  without it.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
   Driver open creates one NVMe queue per worker.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
