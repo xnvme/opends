@@ -8,8 +8,6 @@ with cuFileDriverOpen.
 import atexit
 import collections
 import ctypes
-import os
-import signal
 import threading
 
 from . import cdll as _c
@@ -90,8 +88,8 @@ def io_result(ret):
 # need an open Driver and do not keep it open.
 # ---------------------------------------------------------------------------
 
-# Reentrant so a signal-driven cleanup can re-acquire while the same thread
-# already holds the lock, instead of deadlocking.
+# Reentrant: a host may call cleanup() from a signal handler while the same
+# thread holds the lock.
 _lock = threading.RLock()
 _driver_refs = 0
 # Run before the C driver closes, so state tied to it (the registration
@@ -109,7 +107,6 @@ def _acquire():
         if _driver_refs == 0:
             check(_c.driver_open())
         _driver_refs += 1
-    _install_signal_handlers()
 
 
 def _release():
@@ -133,8 +130,8 @@ def is_open():
     return _driver_refs > 0
 
 
-# _cleaning guards against signal reentrancy: a second SIGTERM/SIGINT arriving
-# while cleanup is inside the slow buf_deregister re-enters it on the same
+# _cleaning guards against reentrancy: a host's signal handler that calls
+# cleanup() can run while cleanup is inside the slow buf_deregister on the same
 # thread. A reentrant call is a no-op so the first completes; reset in finally
 # so a later driver lifecycle can clean up too.
 _cleaning = False
@@ -142,12 +139,9 @@ _cleaning = False
 
 @atexit.register
 def cleanup():
-    """Close the driver if it is still open, releasing the GPU dma-buf.
+    """Close the driver if it is still open.
 
-    Idempotent. Runs at exit and on SIGTERM/SIGINT. A framework that installs
-    its own SIGTERM handler shadows ours, and its graceful shutdown may never
-    reach the code that closes the Driver, so it calls opends.cleanup() from
-    that handler instead.
+    Idempotent. Runs at exit. A host may call it from a signal handler.
     """
     global _driver_refs, _cleaning
     if _cleaning:
@@ -162,47 +156,6 @@ def cleanup():
                 _driver_refs = 0
     finally:
         _cleaning = False
-
-
-# ---------------------------------------------------------------------------
-# Backstop for standalone consumers: atexit does not run on signal death, so a
-# SIGTERM/SIGINT with no handler skips driver_close and leaks the GPU dma-buf.
-# Install a handler that runs cleanup and chains to the prior one.
-# ---------------------------------------------------------------------------
-
-_CLEANUP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
-_prev_handlers = {}
-
-
-def _signal_cleanup(signum, frame):
-    cleanup()
-    prev = _prev_handlers.get(signum, signal.SIG_DFL)
-    if prev is None:  # handler installed outside Python; treat as default
-        prev = signal.SIG_DFL
-    if callable(prev):
-        prev(signum, frame)
-    else:
-        # SIG_DFL / SIG_IGN: restore it and re-raise so the original
-        # disposition (terminate for SIGTERM) still applies.
-        signal.signal(signum, prev)
-        os.kill(os.getpid(), signum)
-
-
-def _install_signal_handlers():
-    """Route SIGTERM/SIGINT through _signal_cleanup, chaining to whatever was
-    installed before. Idempotent (skips signals we already own, so it never
-    chains to itself). A no-op off the main thread, where signal.signal raises;
-    atexit still covers a clean exit there.
-    """
-    for sig in _CLEANUP_SIGNALS:
-        try:
-            cur = signal.getsignal(sig)
-            if cur is _signal_cleanup:
-                continue
-            signal.signal(sig, _signal_cleanup)
-            _prev_handlers[sig] = cur
-        except (ValueError, OSError):
-            pass
 
 
 class Driver:
