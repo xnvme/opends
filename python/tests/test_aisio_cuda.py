@@ -235,6 +235,14 @@ def check_stream(f, cuda, expected):
         cuda.sync(stream)
         assert op.result() == PAGE + 300
         assert cuda.d2h(dst.ptr, PAGE + 300) == expected[2 * PAGE : 3 * PAGE + 300]
+
+        opends.register_stream(None)
+        cuda.zero(dst.ptr, size)
+        op = f.read_stream(dst, size=size)
+        cuda.sync(None)
+        assert op.result() == size
+        assert cuda.d2h(dst.ptr, size) == expected
+        opends.deregister_stream(None)
     finally:
         opends.deregister_stream(stream)
         cuda.rt.cudaStreamDestroy(stream)

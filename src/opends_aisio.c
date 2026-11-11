@@ -1997,8 +1997,6 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 
 	if (!drv)
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
-	if (!stream)
-		return opends_err(OPENDS_INVALID_VALUE);
 
 	if (!drv->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
