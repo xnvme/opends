@@ -369,8 +369,9 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 /* The extents of a registered file, from the lease taken at registration.
  * xal counts the caller as a reader until the matching release, which is
  * what keeps a writer's open() or truncate() waiting until the DMA is done.
- * An extent without an address cannot be read raw. The region carries no
- * LBA size, so convert with our own geometry. */
+ * An extent without an address cannot be read raw. The handle carries no
+ * LBA size, so convert with our own geometry. -EAGAIN: the old map is being
+ * recalled, try again later. */
 static int
 lease_extents(struct driver *d, struct registered_file *h,
               struct ds_extent **out, uint32_t *out_n)
@@ -379,7 +380,20 @@ lease_extents(struct driver *d, struct registered_file *h,
 	struct ds_extent *ex;
 	int rc;
 
+	/* A write through the descriptor leaves the map behind. A release
+	 * finds that, and the acquire after it maps the file again; the lock
+	 * keeps another acquire from taking the old map meanwhile. */
+	pthread_mutex_lock(&h->lock);
+	if (__atomic_exchange_n(&h->remap, false, __ATOMIC_ACQ_REL)) {
+		rc = xal_extents_acquire(d->xal, h->lease, &xe);
+		if (rc == 0) {
+			xal_extents_release(d->xal, h->lease);
+		} else {
+			__atomic_store_n(&h->remap, true, __ATOMIC_RELEASE);
+		}
+	}
 	rc = xal_extents_acquire(d->xal, h->lease, &xe);
+	pthread_mutex_unlock(&h->lock);
 	if (rc < 0)
 		return rc;
 
@@ -851,6 +865,11 @@ start_read_op(struct io_worker *w, struct file_op *op)
 	struct ds_extent *extents;
 	uint32_t extent_count;
 	int frc = lease_extents(d, op->h, &extents, &extent_count);
+	if (frc == -EAGAIN) {
+		/* the old map is being recalled: stay pending */
+		__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
+		return;
+	}
 	if (frc < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
@@ -1536,6 +1555,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	h->fd = fd;
 	h->oflags = oflags;
+	pthread_mutex_init(&h->lock, NULL);
 
 	/* A read lease for a read-only descriptor, a write lease otherwise.
 	 * -EAGAIN: the file is open elsewhere. -EXDEV: it is not on the mount.
@@ -1547,6 +1567,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		        "err(%d)%s\n",
 		        fd, rc,
 		        rc == -EAGAIN ? " (the file is open elsewhere)" : "");
+		pthread_mutex_destroy(&h->lock);
 		free(h);
 		switch (rc) {
 		case -EXDEV: return opends_err(OPENDS_DEVICE_NOT_FOUND);
@@ -1571,6 +1592,7 @@ opends_handle_deregister(opends_handle_t fh)
 		return;
 	if (drv && h->lease)
 		xal_extents_detach_fd(drv->xal, h->lease);
+	pthread_mutex_destroy(&h->lock);
 	free(h);
 	__atomic_fetch_sub(&use_count, 1, __ATOMIC_RELAXED);
 }

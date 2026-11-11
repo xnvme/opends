@@ -74,7 +74,9 @@ struct map_run {
 struct registered_file {
 	int fd;
 	int oflags;
-	struct xal_inode *lease; ///< The file as attached to the xal region
+	struct xal_inode *lease; ///< The file as attached to xal
+	bool remap; ///< A write through fd since the map: map the file again
+	pthread_mutex_t lock; ///< Orders the map again against acquires
 };
 
 struct opends_stream {

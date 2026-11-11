@@ -19,6 +19,7 @@
 #include "read_pattern.h"
 #include "test_cuda_common.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,21 @@ run_write_homi_tests(struct write_homi_env *e)
 	if (write_verify(e, gpu, host, image, &file_size, 1000,
 	                 (off_t)(FILE_SIZE - 500)) < 0)
 		failed++;
+
+	/* 6. The whole file back through OpenDS. The writes changed the file
+	 * under its lease, and the first read after them maps it again. */
+	cuda_buf_zero(gpu, FILE_SIZE);
+	ssize_t r = opends_sync_read(e->fh, gpu, FILE_SIZE, 0, 0);
+	cuda_buf_to_host(host, gpu, FILE_SIZE);
+	if (r != (ssize_t)FILE_SIZE || memcmp(host, image, FILE_SIZE)) {
+		fprintf(stderr,
+		        "[%s] read-back through OpenDS failed (r=%zd)\n",
+		        e->mode_label, r);
+		failed++;
+	} else {
+		fprintf(stderr, "[%s] read-back through OpenDS ok\n",
+		        e->mode_label);
+	}
 
 out:
 	free(image);

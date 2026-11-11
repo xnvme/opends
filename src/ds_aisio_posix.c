@@ -496,6 +496,11 @@ write_complete(struct driver *d, struct file_op *op)
 	struct file_op_write *wr = &op->wr;
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)wr->size;
 
+	if (wr->rounds) {
+		/* the file changed under its lease: the next acquire maps it
+		 * again */
+		__atomic_store_n(&op->h->remap, true, __ATOMIC_RELEASE);
+	}
 	if (wr->buf) {
 		/* a copy with no signal behind it may still land: keep the
 		 * buffer out of the pool */
