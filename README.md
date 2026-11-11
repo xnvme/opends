@@ -85,8 +85,10 @@ kernel over the bytes and a copy back on one CUDA stream.
   own I/O queues. The driver takes its device set from the group's runtime:
   every device the server holds gets its own queues and I/O threads. File
   extents come from xal, which maps a registered file under a lease on its
-  descriptor, and the mount that holds a file binds it to its device. Reads and writes are
-  supported. Requires xNVMe, xal, and the CUDA toolkit.
+  descriptor, and the mount that holds a file binds it to its device. Reads
+  are P2P DMA, and so are writes inside the file's allocated extents; see
+  Writes and the extent index below. Requires xNVMe, xal, and the CUDA
+  toolkit.
 
 ## OpenDS AiSIO configuration
 
@@ -132,11 +134,11 @@ is the only place they are named.
   through, in MiB. Default 16. A larger write goes through its buffer in
   rounds.
 - `OPENDS_AISIO_WRITE_BUFS`: Most buffers the driver pins, allocated as writes
-  need them. Default four per I/O thread. Every write in flight holds one: a
-  stream write from its call, the others from their dispatch. A stream write
-  call that finds none free waits for one, so an application that queues many
-  stream writes behind work its own thread must still release needs a pool
-  at least that large.
+  need them. Default four per I/O thread. Every staged write in flight holds
+  one: a stream write from its call, the others from their dispatch. A stream
+  write call that finds none free waits for one, so an application that queues
+  many stream writes behind work its own thread must still release needs a
+  pool at least that large.
 
 ### Writes and the extent index
 
@@ -145,12 +147,24 @@ that xal-server publishes. The stack runs xal-server with `watchmode = 0`, so
 the index describes the file system as it was when xal-server started, and
 nothing updates it while the stack is up.
 
-Writes through OpenDS (`opends_sync_write`, `opends_async_write`,
-`opends_stream_write`) go through the kernel and are correct: the bytes land
-in the file, and a kernel read sees them. The source is copied out of GPU
-memory into a pinned buffer, on the user's stream for a stream write, and the
-I/O thread only polls for the copy: it never makes a CUDA call that waits,
-since a stream may be waiting at a gate for that thread.
+A write whose range lies inside the file's written extents, at or below the
+file size, goes GPU to NVMe by DMA when it is LBA-aligned and its source is a
+registered buffer. The extents come from the lease on the registered
+descriptor at the call, and the write holds them until it has landed, so a
+writer elsewhere waits for it. The choice is made at the call, on the values
+of the call, so a stream write takes this path only on a stream registered
+with the three `FIXED` flags described below. The write changes no mapping,
+so a read that follows returns the written bytes.
+
+Every other write, an append, a write into a hole or into an unwritten or
+shared extent, an unaligned one, or a stream write without the flags, goes
+through the kernel-mounted filesystem, which allocates blocks as needed, and
+is correct too: the bytes land in the file, and a kernel read sees them. A
+write from a buffer that is not registered is refused on either path with
+`OPENDS_MEMORY_NOT_REGISTERED`. The source is
+copied out of GPU memory into a pinned buffer, on the user's stream for a
+stream write, and the I/O thread only polls for the copy: it never makes a
+CUDA call that waits, since a stream may be waiting at a gate for that thread.
 
 A stream write on a stream registered with the three `FIXED` flags of
 `opends_stream_register` (`OPENDS_STREAM_FIXED_BUF_OFFSET`,
@@ -162,13 +176,18 @@ values when the stream reaches the write and copies them, staying resident
 until the last round of a write larger than the buffer has landed. Pass the
 flags when the values are set before the call, which is the common case.
 
-**Undefined behaviour:** reading through OpenDS what was written after
-xal-server indexed. That read may return the bytes from before the write,
-zeros, or another file's blocks, and no error. It covers a file created
+**Undefined behaviour:** reading through OpenDS what the kernel path wrote
+after xal-server indexed. That read may return the bytes from before the
+write, zeros, or another file's blocks, and no error. It covers a file created
 after the index, bytes appended to a file, a hole that a write filled, and an
-overwrite the file system placed in new blocks. An in-place overwrite of
-blocks that were allocated at index time usually reads back correctly, but
-XFS does not promise it, and OpenDS does not check it.
+overwrite the file system placed in new blocks.
+
+The DMA path writes only extents that hold the file's data. A range
+preallocated with `fallocate`, which the filesystem reads as zeros, and blocks
+shared by reflink take the kernel path, which converts or unshares them. A DMA
+write leaves the file's timestamps and other processes' cached pages alone,
+and the caller keeps a registered file's layout stable: no truncate, hole
+punch or defragmentation while a handle is registered, as cuFile requires.
 
 To read written data through OpenDS, restart xal-server after the writes so it
 indexes again. A process that opened the driver before the restart stays on the

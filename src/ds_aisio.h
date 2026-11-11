@@ -134,6 +134,9 @@ struct write_buf {
  * ds_bounce_kernel.h instead, from a descriptor the thread fills for each
  * round, and every block of the kernel has a landed word. */
 struct file_op_write {
+	bool dma; /* in place, from src by DMA: no buffer, no rounds */
+	struct ds_extent *extents; /* the snapshot a DMA write goes over */
+	uint32_t extent_count;
 	struct write_buf *buf;
 	bool deferred;
 	struct ds_stage_copy *desc;
@@ -196,10 +199,10 @@ struct file_op {
 	} u;
 };
 
-struct read_cursor {
+struct io_cursor {
 	struct xnvme_queue *queue;
 	uint64_t cur_slba;
-	uint8_t *abs_dst;
+	uint8_t *abs_buf;
 	size_t remaining;
 };
 
