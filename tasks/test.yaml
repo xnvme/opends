@@ -102,7 +102,6 @@ steps:
   - name: test_sync_read_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' \
@@ -113,7 +112,6 @@ steps:
       # Files in raw block mode: the driver opens xal at the first
       # registration, and homi's character device registers.
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_RAW_BLOCK=1 \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
@@ -123,7 +121,6 @@ steps:
   - name: test_mt_read_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_mt_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -133,7 +130,6 @@ steps:
       # Two workers so concurrent async ops exercise the per-op tail bounce
       # and serialized allocator paths.
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
         '{{ config.test.build_dir }}/test_async_read_aisio' \
@@ -144,7 +140,6 @@ steps:
       # Two spinning workers, so the async submit path runs with no worker
       # ever napping. Each one holds a CPU until the driver closes.
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
         OPENDS_AISIO_IDLE_SPIN=busy \
@@ -156,7 +151,6 @@ steps:
       # Two workers so the batched ops actually run concurrently on the
       # backend.
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IO_THREADS=2 \
         '{{ config.test.build_dir }}/test_batch_read_aisio' \
@@ -167,7 +161,6 @@ steps:
       # Increase fd limit to support more than enough file descriptors needed for xnvme cuda memory mapping.
       echo "fd limit (soft/hard): $(ulimit -Sn)/$(ulimit -Hn)"
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         prlimit --nofile=1048576:1048576 -- \
           '{{ config.test.build_dir }}/test_register_large_aisio' \
@@ -176,7 +169,6 @@ steps:
   - name: test_coherency_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_coherency_aisio' \
           '{{ config.test.mount_point }}/opends_tests/coherency_large.bin'
@@ -184,7 +176,6 @@ steps:
   - name: test_sparse_read_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sparse_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sparse_read.bin'
@@ -192,7 +183,6 @@ steps:
   - name: test_stream_read_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_stream_read_aisio' \
           '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -200,7 +190,6 @@ steps:
   - name: test_stream_read_busy_spin_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         OPENDS_AISIO_IDLE_SPIN=busy \
         '{{ config.test.build_dir }}/test_stream_read_aisio' \
@@ -209,7 +198,6 @@ steps:
   - name: test_sync_write_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
@@ -217,7 +205,6 @@ steps:
   - name: test_stream_write_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_stream_write_aisio' \
           '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
@@ -226,7 +213,6 @@ steps:
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
         cd '{{ config.test.repo_path }}/python' && \
-        OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' OPENDS_BACKEND=aisio \
         OPENDS_LIBRARY='{{ config.test.build_dir }}/libopends_aisio.so' \
         PYTHONPATH=. python3 tests/test_aisio_cuda.py

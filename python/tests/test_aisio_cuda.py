@@ -8,8 +8,8 @@ back through the kernel. Skips unless OPENDS_BACKEND is aisio,
 OPENDS_HOMI_MNT names the mount and the CUDA libraries load. Runs under
 pytest or on its own, which needs no pytest on the target:
 
-    OPENDS_BACKEND=aisio OPENDS_XAL_SHM=/xal_dev0 \\
-        OPENDS_HOMI_MNT=/mnt/datasets PYTHONPATH=. python3 tests/test_aisio_cuda.py
+    OPENDS_BACKEND=aisio OPENDS_HOMI_MNT=/mnt/datasets \\
+        PYTHONPATH=. python3 tests/test_aisio_cuda.py
 """
 
 import ctypes
