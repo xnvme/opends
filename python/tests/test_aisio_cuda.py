@@ -31,6 +31,7 @@ MNT = os.environ.get("OPENDS_HOMI_MNT")
 PATTERN = os.path.join(MNT, "opends_tests", "sync_read_pattern.bin") if MNT else None
 SCRATCH = os.path.join(MNT, "opends_tests", "py_write_scratch.bin") if MNT else None
 H2D, D2H = 1, 2
+CUDA_ERROR_NOT_READY = 600
 
 
 def unavailable():
@@ -82,6 +83,7 @@ class Cuda:
         rt.cudaDeviceSynchronize.argtypes = []
         rt.cudaStreamCreate.argtypes = [POINTER(c_void_p)]
         rt.cudaStreamSynchronize.argtypes = [c_void_p]
+        rt.cudaStreamQuery.argtypes = [c_void_p]
         rt.cudaStreamDestroy.argtypes = [c_void_p]
         self.ok(cu.cuInit(0), "cuInit")
         dev = c_int()
@@ -121,6 +123,12 @@ class Cuda:
 
     def sync(self, stream):
         self.ok(self.rt.cudaStreamSynchronize(stream), "cudaStreamSynchronize")
+
+    def idle(self, stream):
+        """Whether all work queued on the stream has run."""
+        rc = self.rt.cudaStreamQuery(stream)
+        assert rc in (0, CUDA_ERROR_NOT_READY), "cudaStreamQuery: cuda rc %d" % rc
+        return rc == 0
 
     def malloc(self, n):
         ptr = c_void_p()
@@ -287,12 +295,13 @@ def check_dio_not_set():
         raise AssertionError("a buffered fd was accepted")
 
 
-def wait_stream_op(op, timeout):
-    """Bounded wait for a StreamOp. A backend whose I/O thread waits for
-    the stream never completes it, and a driver close would not return
-    either, so give up on the process instead of hanging the runner."""
+def wait_stream(cuda, stream, timeout):
+    """Bounded wait for the work queued on a stream. A backend whose I/O
+    thread waits for the stream never completes it, and a driver close would
+    not return either, so give up on the process instead of hanging the
+    runner."""
     deadline = time.monotonic() + timeout
-    while not op.done:
+    while not cuda.idle(stream):
         if time.monotonic() > deadline:
             print(
                 "stream write did not complete: an I/O thread is stuck",
@@ -347,7 +356,7 @@ def check_write_roundtrip(cuda, size):
                         dev_offset=k * part,
                         stream=stream,
                     )
-                    wait_stream_op(op, 20.0)
+                    wait_stream(cuda, stream, 20.0)
                     assert op.result() == part
                 finally:
                     opends.deregister_stream(stream)
