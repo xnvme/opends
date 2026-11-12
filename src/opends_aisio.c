@@ -594,10 +594,9 @@ kernel_read_start(struct io_worker *w, struct file_op *op, uint8_t *dst,
 }
 
 static int
-kernel_read_setup(struct driver *d, struct io_worker *w, int idx)
+kernel_read_setup(struct driver *d, struct io_worker *w)
 {
 	struct kernel_read *k = &w->kread;
-	size_t word = MAX_STREAMS + (size_t)idx;
 	int err;
 
 	/* the same chunk size as on the direct path */
@@ -614,8 +613,6 @@ kernel_read_setup(struct driver *d, struct io_worker *w, int idx)
 		k->buf = NULL;
 		return -1;
 	}
-	k->word = (uint32_t *)d->stream_words_host + word;
-	k->word_dptr = d->stream_words_dptr + word * sizeof(uint32_t);
 	return 0;
 }
 
@@ -879,6 +876,49 @@ raw_write_allowed(const struct driver *d, const uint8_t *src, size_t size,
 	return start < d->ns_nbytes;
 }
 
+/* Queue zeros for a part of a read that no extent covers, with the worker's
+ * marker behind them on the default stream. The file system reads a hole as
+ * zeros and counts it. A stream read has no such fill. */
+static int
+zero_fill(struct io_worker *w, struct file_op *op, uint8_t *dst, size_t nbytes)
+{
+	struct kernel_read *k = &w->kread;
+	int err;
+
+	if (op->mode == FILE_OP_STREAM || !ds_accel->fill_dev_async ||
+	    !ds_accel->stream_write_value32) {
+		op->err = OPENDS_INVALID_VALUE;
+		return -1;
+	}
+	err = ds_accel->fill_dev_async(dst, nbytes);
+	if (err != 0) {
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		return -1;
+	}
+	err = ds_accel->stream_write_value32(NULL, k->word_dptr, k->seq + 1);
+	if (err != 0) {
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		return -1;
+	}
+	k->seq++;
+	op->fill = true;
+	op->fill_seq = k->seq;
+	op->bytes_acc += nbytes;
+	return 0;
+}
+
+static bool
+fill_landed(const struct io_worker *w, const struct file_op *op)
+{
+	uint32_t word;
+
+	if (!op->fill) {
+		return true;
+	}
+	word = __atomic_load_n(w->kread.word, __ATOMIC_ACQUIRE);
+	return (int32_t)(word - op->fill_seq) >= 0;
+}
+
 /* Reads of any handle and writes of a raw handle; a write to a file takes
  * ds_dispatch_write. */
 static void
@@ -961,6 +1001,9 @@ start_io_op(struct io_worker *w, struct file_op *op)
 
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
+	uint64_t covered = req_start;
+	uint64_t file_end;
+	struct stat st;
 
 	for (uint32_t i = 0; i < extent_count; i++) {
 		const struct ds_extent *e = &extents[i];
@@ -973,6 +1016,11 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		uint64_t span_end = XNVME_MIN_U64(req_end, ext_end);
 		if (span_start >= span_end)
 			continue;
+		if (span_start > covered &&
+		    zero_fill(w, op, dst_base + (covered - req_start),
+		              span_start - covered) < 0)
+			goto out;
+		covered = span_end;
 
 		uint64_t off_in_ext = span_start - ext_start;
 		size_t buf_off = span_start - req_start;
@@ -1014,6 +1062,17 @@ start_io_op(struct io_worker *w, struct file_op *op)
 			if (submit_partial(w, op, abs_dst, cur_slba, 0,
 			                   tail_bytes) < 0)
 				goto out;
+		}
+	}
+	if (covered < req_end && !op->h->raw) {
+		/* a hole up to the end of the file, or the end itself */
+		file_end = covered;
+		if (fstat(op->h->fd, &st) == 0) {
+			file_end = XNVME_MIN_U64(req_end, (uint64_t)st.st_size);
+		}
+		if (file_end > covered) {
+			zero_fill(w, op, dst_base + (covered - req_start),
+			          file_end - covered);
 		}
 	}
 out:
@@ -1095,6 +1154,7 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->bytes_acc = 0;
 	op->err = 0;
 	op->n_bounces = 0;
+	op->fill = false;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
 	start_io_op(w, op);
 	return false;
@@ -1110,7 +1170,8 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 	if (w->kread.op == op) {
 		kernel_read_poll(w);
 	}
-	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0)
+	if (op->chunks_remaining == 0 && op->bounces_outstanding == 0 &&
+	    fill_landed(w, op))
 		complete_read_op(op);
 }
 
@@ -1278,8 +1339,12 @@ workers_setup(struct driver *d)
 			w->edge_buf = NULL;
 			goto fail;
 		}
-		if (!d->cfg.assume_aligned_only &&
-		    kernel_read_setup(d, w, i) < 0)
+		w->kread.word =
+		        (uint32_t *)d->stream_words_host + MAX_STREAMS + i;
+		w->kread.word_dptr =
+		        d->stream_words_dptr +
+		        (MAX_STREAMS + (size_t)i) * sizeof(uint32_t);
+		if (!d->cfg.assume_aligned_only && kernel_read_setup(d, w) < 0)
 			goto fail;
 		if (xnvme_queue_init(d->xdev, d->cfg.queue_depth, 0,
 		                     &w->queue) < 0) {

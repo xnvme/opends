@@ -68,6 +68,10 @@ struct ds_accel_ops {
 	 * stream (a NULL stream) tells when. Required only when
 	 * assume_aligned_only is off. */
 	int (*copy_to_dev_async)(void *dst, const void *src, size_t bytes);
+	/* Queue a fill of device memory with zeros on the default stream and
+	 * return at once; a stream_write_value32 queued behind it tells when
+	 * it has run. Optional: without it a read of a hole fails. */
+	int (*fill_dev_async)(void *dst, size_t bytes);
 	/* Queue a copy from the device to pinned host memory on stream s (NULL
 	 * is the default stream) and return at once. dst must stay unused
 	 * until a stream_write_value32 or a launch_host_func queued behind it
