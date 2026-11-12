@@ -9,6 +9,7 @@
 #include <cuda.h>
 
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,9 +119,30 @@ run_pass(struct aisio_homi *a, unsigned cu_flags, unsigned flags,
 	return 0;
 }
 
-/* A write the file system refuses: the handle is on a read-only descriptor,
- * so the pwrite fails. The stream has to come free, and the byte count has
- * to carry the error. */
+/* A file of one page next to path, opened read-only; -1 on failure. */
+static int
+ro_file(const char *ro)
+{
+	static const char page[PAGE];
+	int rfd = -1;
+	int fd;
+
+	fd = open(ro, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		return -1;
+	}
+	if (write(fd, page, PAGE) == PAGE && fsync(fd) == 0) {
+		rfd = open(ro, O_RDONLY | O_DIRECT);
+	}
+	close(fd);
+	return rfd;
+}
+
+/* A write the file system refuses: the handle is on a read-only descriptor
+ * of a file of its own, so the pwrite fails. The stream has to come free,
+ * and the byte count has to carry the error. The scratch file cannot serve:
+ * a read-only descriptor of a file open for writing gets no lease, and
+ * another open of the file would break its handle's write lease. */
 static int
 stream_write_refused(const char *path, unsigned cu_flags, unsigned flags,
                      const char *label)
@@ -128,6 +150,7 @@ stream_write_refused(const char *path, unsigned cu_flags, unsigned flags,
 	const ssize_t want = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 	opends_handle_t rfh = NULL;
 	void *gpu = opends_alloc(PAGE);
+	char ro[PATH_MAX];
 	size_t sz = PAGE;
 	off_t fo = 0;
 	off_t bo = 0;
@@ -138,7 +161,8 @@ stream_write_refused(const char *path, unsigned cu_flags, unsigned flags,
 	int rfd;
 	int err;
 
-	rfd = open(path, O_RDONLY | O_DIRECT);
+	snprintf(ro, sizeof(ro), "%s.ro", path);
+	rfd = ro_file(ro);
 	if (rfd < 0 || !gpu) {
 		fprintf(stderr, "[%s] refused: setup failed\n", label);
 		goto out;
@@ -183,6 +207,7 @@ out:
 	if (rfd >= 0) {
 		close(rfd);
 	}
+	unlink(ro);
 	if (gpu) {
 		opends_free(gpu);
 	}
