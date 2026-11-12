@@ -83,8 +83,9 @@ kernel over the bytes and a copy back on one CUDA stream.
   the primary of an xNVMe multi-process group and holds the userspace NVMe
   controller up. The driver joins that group as a secondary and allocates its
   own I/O queues. File extents come from the index xal-server publishes over
-  POSIX shared memory, built over the qublk-exported block device. Reads and
-  writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
+  POSIX shared memory, built over the qublk-exported block device. Reads are
+  P2P DMA, and so are writes inside the file's allocated extents; see Writes
+  and the extent index below. Requires xNVMe, xal, and the CUDA toolkit.
 
 ## OpenDS AiSIO configuration
 
@@ -92,8 +93,10 @@ The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
 the open.
 
-- `OPENDS_XAL_SHM`: Shared-memory name of the xal-server extent index.
-  Default `/xal_dev0`.
+- `OPENDS_HOMI_MNT`: Mountpoint of the filesystem on the device the homi
+  group holds. The driver maps a registered file there, under a lease on the
+  registered descriptor, and reads no index. No default; the open fails
+  without it.
 - `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
   Driver open creates one NVMe queue per worker.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
@@ -119,6 +122,15 @@ the open.
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+- `OPENDS_AISIO_WRITE_BUF_MB`: Size of one pinned host buffer a write is staged
+  through, in MiB. Default 16. A larger write goes through its buffer in
+  rounds.
+- `OPENDS_AISIO_WRITE_BUFS`: Most buffers the driver pins, allocated as writes
+  need them. Default four per I/O thread. Every staged write in flight holds
+  one: a stream write from its call, the others from their dispatch. A stream
+  write call that finds none free waits for one, so an application that queues
+  many stream writes behind work its own thread must still release needs a
+  pool at least that large.
 
 ### Writes and the extent index
 
@@ -127,17 +139,50 @@ that xal-server publishes. The stack runs xal-server with `watchmode = 0`, so
 the index describes the file system as it was when xal-server started, and
 nothing updates it while the stack is up.
 
-Writes through OpenDS (`opends_sync_write`, `opends_async_write`,
-`opends_stream_write`) go through the kernel and are correct: the bytes land
-in the file, and a kernel read sees them.
+A write whose range lies inside the file's written extents, at or below the
+file size, goes GPU to NVMe by DMA when it is LBA-aligned and its source is a
+registered buffer. The extents come from the lease on the registered
+descriptor at the call, and the write holds them until it has landed, so a
+writer elsewhere waits for it. The choice is made at the call, on the values
+of the call, so a stream write takes this path only on a stream registered
+with the three `FIXED` flags described below. The write changes no mapping,
+so a read that follows returns the written bytes.
 
-**Undefined behaviour:** reading through OpenDS what was written after
-xal-server indexed. That read may return the bytes from before the write,
-zeros, or another file's blocks, and no error. It covers a file created
+Every other write, an append, a write into a hole or into an unwritten or
+shared extent, an unaligned one, or a stream write without the flags, goes
+through the kernel-mounted filesystem, which allocates blocks as needed, and
+is correct too: the bytes land in the file, and a kernel read sees them. A
+write from a buffer that is not registered is refused on either path with
+`OPENDS_MEMORY_NOT_REGISTERED`, and a write through a read-only descriptor
+takes the kernel path, which refuses it. The source is copied out of GPU
+memory into a pinned buffer, on the user's stream for a stream write, and the
+I/O thread only polls for the copy: it never makes a CUDA call that waits,
+since a stream may be waiting at a gate for that thread.
+
+A stream write on a stream registered with the three `FIXED` flags of
+`opends_stream_register` (`OPENDS_STREAM_FIXED_BUF_OFFSET`,
+`_FIXED_FILE_OFFSET`, `_FIXED_FILE_SIZE`, the flags of
+`cuFileStreamRegister`) takes its size and offsets at the call and copies
+with the copy engine; a value the stream changes later fails the write with
+`OPENDS_INVALID_VALUE`. Without the flags a kernel on the stream reads the
+values when the stream reaches the write and copies them, staying resident
+until the last round of a write larger than the buffer has landed. A write
+of more than 64 buffers goes through the kernel with the flags too, since a
+stream takes only so many queued commands. Pass the flags when the values
+are set before the call, which is the common case.
+
+**Undefined behaviour:** reading through OpenDS what the kernel path wrote
+after xal-server indexed. That read may return the bytes from before the
+write, zeros, or another file's blocks, and no error. It covers a file created
 after the index, bytes appended to a file, a hole that a write filled, and an
-overwrite the file system placed in new blocks. An in-place overwrite of
-blocks that were allocated at index time usually reads back correctly, but
-XFS does not promise it, and OpenDS does not check it.
+overwrite the file system placed in new blocks.
+
+The DMA path writes only extents that hold the file's data. A range
+preallocated with `fallocate`, which the filesystem reads as zeros, and blocks
+shared by reflink take the kernel path, which converts or unshares them. A DMA
+write leaves the file's timestamps and other processes' cached pages alone,
+and the caller keeps a registered file's layout stable: no truncate, hole
+punch or defragmentation while a handle is registered, as cuFile requires.
 
 To read written data through OpenDS, restart xal-server after the writes so it
 indexes again. A process that opened the driver before the restart stays on the
