@@ -112,7 +112,10 @@ The returned `StreamOp` holds the storage the backend reads and writes when
 the stream reaches the operation, so keep it alive until the stream has been
 synchronized; `result()` raises until then and returns the byte count after.
 `register_stream` and
-`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`.
+`deregister_stream` wrap `cuFileStreamRegister`/`Deregister`. Pass
+`opends.STREAM_FIXED` as the flags when the size and offsets of a write are
+set before the call: the aisio backend then copies with the copy engine
+rather than with a kernel on the stream.
 
 ```python
 opends.register_stream(stream)

@@ -32,6 +32,11 @@ struct ds_accel_ops {
 	/* xNVMe P2P backend string for this vendor (e.g. "upcie-cuda"). */
 	const char *xnvme_be;
 
+	/* Load the device code now, on the thread that opens the driver. A
+	 * runtime that loads a module at a kernel's first launch may
+	 * synchronize the context to do it, and that launch can come with a
+	 * stream already parked for an I/O thread. */
+	int (*load)(void);
 	/* Capture the caller's current context (fails if there is none).
 	 * Captured values compare equal iff they name the same context. */
 	int (*ctx_get)(ds_accel_ctx_t *out);
@@ -48,9 +53,9 @@ struct ds_accel_ops {
 	                         ds_accel_devptr_t *dptr);
 	/* Free a host_alloc_mapped allocation. */
 	void (*host_free)(void *host);
-	/* Pin host memory the caller owns, for copy_to_dev_async. Required
-	 * only when assume_aligned_only is off. */
-	int (*host_pin)(void *host, size_t bytes);
+	/* Pin host memory the caller owns, for the async copies below, and map
+	 * it for the device (dptr may be NULL when no kernel will touch it). */
+	int (*host_pin)(void *host, size_t bytes, ds_accel_devptr_t *dptr);
 	void (*host_unpin)(void *host);
 
 	/* Host/device bulk copy (direction inferred from the pointers). the
@@ -63,6 +68,12 @@ struct ds_accel_ops {
 	 * stream (a NULL stream) tells when. Required only when
 	 * assume_aligned_only is off. */
 	int (*copy_to_dev_async)(void *dst, const void *src, size_t bytes);
+	/* Queue a copy from the device to pinned host memory on stream s (NULL
+	 * is the default stream) and return at once. dst must stay unused
+	 * until a stream_write_value32 or a launch_host_func queued behind it
+	 * on the same stream tells that the copy has run. */
+	int (*copy_from_dev_async)(void *dst, const void *src, size_t bytes,
+	                           ds_accel_stream_t s);
 
 	/* Per-stream gate, required only when assume_aligned_only is off:
 	 * write a gate word in stream order. */
@@ -82,6 +93,12 @@ struct ds_accel_ops {
 	 * no-ops), ordered on the stream. The mechanism (a copy kernel or a
 	 * stream-ordered memcpy) is the vendor's choice. */
 	int (*copy_stream)(ds_accel_devptr_t desc, ds_accel_stream_t stream);
+	/* Start the resident copy of a stream write whose parameters are read
+	 * late (a ds_stage_copy at desc, the turn word, DS_STAGE_BLOCKS landed
+	 * words), ordered on the stream. It must hold the stream until it has
+	 * copied the round marked last; see ds_bounce_kernel.h. */
+	int (*stage_stream)(ds_accel_devptr_t desc, ds_accel_devptr_t turn,
+	                    ds_accel_devptr_t landed, ds_accel_stream_t stream);
 };
 
 /* The active vendor, bound at link time by the one ds_accel_<vendor>.c
