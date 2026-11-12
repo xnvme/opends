@@ -81,21 +81,31 @@ kernel over the bytes and a copy back on one CUDA stream.
   `nvme` driver in the read data path). Based on
   [AiSIO](https://github.com/xnvme/aisio). A homi server (an xNVMe tool) is
   the primary of an xNVMe multi-process group and holds the userspace NVMe
-  controller up. The driver joins that group as a secondary and allocates its
-  own I/O queues. File extents come from the index xal-server publishes over
-  POSIX shared memory, built over the qublk-exported block device. Reads and
-  writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
+  controllers up; the driver joins that group as a secondary and allocates its
+  own I/O queues. The driver takes its device set from the group's runtime:
+  every device the server holds gets its own queues and I/O threads. File
+  extents come from xal, which maps a registered file under a lease on its
+  descriptor, and the mount that holds a file binds it to its device. Reads and writes are
+  supported. Requires xNVMe, xal, and the CUDA toolkit.
 
 ## OpenDS AiSIO configuration
 
 The AiSIO backend reads its configuration from environment variables at
 `opends_driver_open`. Values that are out of range, or not a number, fail
-the open.
+the open. The devices are not configured here: the driver takes them from
+the multi-process runtime the homi server created, so the homi command line
+is the only place they are named.
 
-- `OPENDS_XAL_SHM`: Shared-memory name of the xal-server extent index.
-  Default `/xal_dev0`.
-- `OPENDS_AISIO_IO_THREADS`: Number of internal IO worker threads. Default 2.
-  Driver open creates one NVMe queue per worker.
+- `OPENDS_HOMI_MNT`: Mountpoints of the filesystems on the devices the homi
+  group holds, a comma-separated list paired with the runtime's device order.
+  The driver maps a registered file there, under a lease on the registered
+  descriptor, and reads no index. The mount that holds a file binds it to
+  its device. There is no default, and the open fails without it.
+- `OPENDS_AISIO_IO_THREADS`: Total number of internal IO worker threads.
+  Default 2, or the device count when that is larger. Driver open creates one
+  NVMe queue per worker and gives the workers to the devices round-robin, so a
+  worker serves one device. It fails when the workers are fewer than the
+  devices, since a device with no worker cannot be read.
 - `OPENDS_AISIO_QUEUE_DEPTH`: xNVMe queue depth per worker. Default 8.
 - `OPENDS_AISIO_CPU_MASK`: Hex mask of CPUs for the workers (e.g. `0xf0`).
   Each worker gets a one-CPU affinity via `pthread_attr_setaffinity_np(3)`:
@@ -111,14 +121,22 @@ the open.
   `OPENDS_INVALID_VALUE`, and the stream path stops enqueueing the bounce
   kernel.
 - `OPENDS_AISIO_HOMI_ID`: xNVMe multi-process group to join. Default 1, which
-  the test tasks also pass to homi, so both sides agree. The driver asks the
-  homi server of this group for its device, and the group must hold exactly
-  one.
+  the test tasks also pass to homi, so both sides agree. The driver takes
+  every device the group holds.
 - `OPENDS_AISIO_HOST_HEAP_MB`: Host DMA heap for this process, holding its own
   queue rings and PRP lists. Default 256. The heap comes out of the hugepages
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+- `OPENDS_AISIO_WRITE_BUF_MB`: Size of one pinned host buffer a write is staged
+  through, in MiB. Default 16. A larger write goes through its buffer in
+  rounds.
+- `OPENDS_AISIO_WRITE_BUFS`: Most buffers the driver pins, allocated as writes
+  need them. Default four per I/O thread. Every write in flight holds one: a
+  stream write from its call, the others from their dispatch. A stream write
+  call that finds none free waits for one, so an application that queues many
+  stream writes behind work its own thread must still release needs a pool
+  at least that large.
 
 ### Writes and the extent index
 
@@ -129,7 +147,22 @@ nothing updates it while the stack is up.
 
 Writes through OpenDS (`opends_sync_write`, `opends_async_write`,
 `opends_stream_write`) go through the kernel and are correct: the bytes land
-in the file, and a kernel read sees them.
+in the file, and a kernel read sees them. The source is copied out of GPU
+memory into a pinned buffer, on the user's stream for a stream write, and the
+I/O thread only polls for the copy: it never makes a CUDA call that waits,
+since a stream may be waiting at a gate for that thread.
+
+A stream write on a stream registered with the three `FIXED` flags of
+`opends_stream_register` (`OPENDS_STREAM_FIXED_BUF_OFFSET`,
+`_FIXED_FILE_OFFSET`, `_FIXED_FILE_SIZE`, the flags of
+`cuFileStreamRegister`) takes its size and offsets at the call and copies
+with the copy engine; a value the stream changes later fails the write with
+`OPENDS_INVALID_VALUE`. Without the flags a kernel on the stream reads the
+values when the stream reaches the write and copies them, staying resident
+until the last round of a write larger than the buffer has landed. A write
+of more than 64 buffers goes through the kernel with the flags too, since a
+stream takes only so many queued commands. Pass the flags when the values
+are set before the call, which is the common case.
 
 **Undefined behaviour:** reading through OpenDS what was written after
 xal-server indexed. That read may return the bytes from before the write,

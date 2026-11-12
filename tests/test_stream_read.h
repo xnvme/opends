@@ -108,8 +108,9 @@ verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
 	opends_error_t err = opends_stream_read(env->fh, buf, &sz, &foff, &boff,
 	                                        &bytes_read, env->stream);
 	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "  %s: opends_stream_read: %s\n", label,
-		        opends_op_status_error(err.err));
+		fprintf(stderr, "  %s: opends_stream_read: %s (dev_err=%d)\n",
+		        label, opends_op_status_error(err.err),
+		        (int)err.dev_err);
 		return 1;
 	}
 
