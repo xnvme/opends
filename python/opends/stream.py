@@ -6,6 +6,17 @@ import ctypes
 from . import cdll as _c
 from .driver import check, io_result, require_driver
 
+# register_stream flags, cuFileStreamRegister's. With the three FIXED ones a
+# stream write takes its size and offsets at the call and the copy engine
+# stages it; without them a kernel on the stream reads them late.
+STREAM_FIXED_BUF_OFFSET = 1
+STREAM_FIXED_FILE_OFFSET = 2
+STREAM_FIXED_FILE_SIZE = 4
+STREAM_PAGE_ALIGNED_INPUTS = 8
+STREAM_FIXED = (
+    STREAM_FIXED_BUF_OFFSET | STREAM_FIXED_FILE_OFFSET | STREAM_FIXED_FILE_SIZE
+)
+
 
 def stream_handle(stream):
     """Raw handle of a CUDA stream-like object. None is the default stream."""

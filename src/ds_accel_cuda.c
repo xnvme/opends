@@ -15,6 +15,9 @@
 /* The copy_stream kernel launcher, defined in the nvcc TU
  * (ds_bounce_kernel_cuda.cu). */
 int cuda_copy_stream(uint64_t desc_dev, void *stream);
+int cuda_stage_stream(uint64_t desc_dev, uint64_t turn_dev, uint64_t landed_dev,
+                      void *stream);
+int cuda_kernels_load(void);
 
 static int
 cuda_ctx_get(ds_accel_ctx_t *out)
@@ -77,9 +80,24 @@ cuda_host_free(void *host)
 }
 
 static int
-cuda_host_pin(void *host, size_t bytes)
+cuda_host_pin(void *host, size_t bytes, ds_accel_devptr_t *dptr)
 {
-	return (int)cuMemHostRegister(host, bytes, 0);
+	CUdeviceptr d = 0;
+	CUresult rc;
+
+	rc = cuMemHostRegister(host, bytes, CU_MEMHOSTREGISTER_DEVICEMAP);
+	if (rc != CUDA_SUCCESS) {
+		return (int)rc;
+	}
+	if (dptr) {
+		rc = cuMemHostGetDevicePointer(&d, host, 0);
+		if (rc != CUDA_SUCCESS) {
+			cuMemHostUnregister(host);
+			return (int)rc;
+		}
+		*dptr = (ds_accel_devptr_t)d;
+	}
+	return 0;
 }
 
 static void
@@ -98,6 +116,14 @@ static int
 cuda_copy_to_dev_async(void *dst, const void *src, size_t bytes)
 {
 	return (int)cuMemcpyHtoDAsync((CUdeviceptr)dst, src, bytes, NULL);
+}
+
+static int
+cuda_copy_from_dev_async(void *dst, const void *src, size_t bytes,
+                         ds_accel_stream_t s)
+{
+	return (int)cuMemcpyDtoHAsync(dst, (CUdeviceptr)src, bytes,
+	                              (CUstream)s);
 }
 
 static int
@@ -124,6 +150,7 @@ cuda_launch_host_func(ds_accel_stream_t s, void (*fn)(void *), void *arg)
 
 static const struct ds_accel_ops cuda_ops = {
         .xnvme_be = "upcie-cuda",
+        .load = cuda_kernels_load,
         .ctx_get = cuda_ctx_get,
         .ctx_set = cuda_ctx_set,
         .alloc_granularity = cuda_alloc_granularity,
@@ -133,10 +160,12 @@ static const struct ds_accel_ops cuda_ops = {
         .host_unpin = cuda_host_unpin,
         .copy = cuda_copy,
         .copy_to_dev_async = cuda_copy_to_dev_async,
+        .copy_from_dev_async = cuda_copy_from_dev_async,
         .stream_write_value32 = cuda_stream_write_value32,
         .stream_wait_value32_geq = cuda_stream_wait_value32_geq,
         .launch_host_func = cuda_launch_host_func,
         .copy_stream = cuda_copy_stream,
+        .stage_stream = cuda_stage_stream,
 };
 
 const struct ds_accel_ops *const ds_accel = &cuda_ops;
