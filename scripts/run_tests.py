@@ -19,7 +19,8 @@ TESTS_BY_BACKEND = {
     "ref":   ["smoke", "sync_read", "mt_read", "async_read", "batch_read"],
     "cufile": ["sync_read"],
     "aisio": ["sync_read", "sync_read_raw_mode", "mt_read", "register_large",
-              "coherency", "async_read", "async_read_busy_spin", "batch_read",
+              "coherency", "sparse_read", "async_read",
+              "async_read_busy_spin", "batch_read",
               "stream_read", "stream_read_busy_spin", "sync_write",
               "stream_write", "python", "raw_block"],
 }
@@ -50,6 +51,8 @@ def _steps_for(backends, tests):
         steps.append("test_sync_read_prep")
     if any(t == "coherency" for _, t in selected):
         steps.append("test_coherency_prep")
+    if any(t == "sparse_read" for _, t in selected):
+        steps.append("test_sparse_read_prep")
     for b, t in selected:
         if b == "aisio":
             continue
