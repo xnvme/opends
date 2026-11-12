@@ -19,7 +19,16 @@ from .driver import (
     use_count,
 )
 from .file import Future, OpenDSFile
-from .stream import StreamOp, deregister_stream, register_stream
+from .stream import (
+    STREAM_FIXED,
+    STREAM_FIXED_BUF_OFFSET,
+    STREAM_FIXED_FILE_OFFSET,
+    STREAM_FIXED_FILE_SIZE,
+    STREAM_PAGE_ALIGNED_INPUTS,
+    StreamOp,
+    deregister_stream,
+    register_stream,
+)
 
 __all__ = [
     "Batch",
@@ -33,6 +42,11 @@ __all__ = [
     "OpenDSError",
     "OpenDSFile",
     "READ",
+    "STREAM_FIXED",
+    "STREAM_FIXED_BUF_OFFSET",
+    "STREAM_FIXED_FILE_OFFSET",
+    "STREAM_FIXED_FILE_SIZE",
+    "STREAM_PAGE_ALIGNED_INPUTS",
     "Status",
     "StreamOp",
     "WRITE",

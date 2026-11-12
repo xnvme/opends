@@ -22,4 +22,22 @@ struct ds_bounce_copy {
 	uint32_t _pad;
 };
 
+/* The staged copy of a stream write whose parameters are read late. The
+ * kernel stays resident for the write: for each round it waits for the turn
+ * word to reach the round's number, copies n_bytes from src (device) to dst
+ * (the mapped buffer), and writes the number to its block's landed word; it
+ * exits after the round marked last. The I/O thread fills the descriptor
+ * before it grants a turn and reads it back only after every block has
+ * landed. */
+#define DS_STAGE_BLOCKS 8
+#define DS_STAGE_THREADS 512
+
+struct ds_stage_copy {
+	uint64_t src;
+	uint64_t dst;
+	uint64_t n_bytes;
+	uint32_t round; /* 1-based */
+	uint32_t last;
+};
+
 #endif

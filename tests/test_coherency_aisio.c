@@ -9,6 +9,9 @@
  * (wrong slbas, off-by-one chunking) shows up here as a byte mismatch. A
  * second read from offset 1 goes through the kernel fallback at a size the
  * small tests do not reach.
+ * The span is then read again as concurrent async reads of several commands
+ * each, which is the only place the suite has more than one such read in
+ * flight.
  *
  * The file is passed on the command line; it must already exist on the mount
  * (e.g. one of the bench datasets or a prepared scratch file).
@@ -27,6 +30,78 @@
 #include <unistd.h>
 
 #define READ_CAP ((size_t)64 * 1024 * 1024)
+#define SLICES 8
+
+static const unsigned scattered[SLICES] = {0, 4, 1, 5, 2, 6, 3, 7};
+static const unsigned in_order[SLICES] = {0, 1, 2, 3, 4, 5, 6, 7};
+
+/*
+ * Read the span as SLICES concurrent async reads into one buffer and compare.
+ * In scattered order every read starts away from the previous one, in file
+ * order every read continues it; the driver treats the two differently.
+ */
+static int
+check_async_slices(opends_handle_t fh, void *gpu, unsigned char *got,
+                   const unsigned char *want, size_t size,
+                   const unsigned *order, const char *label)
+{
+	opends_async_future_t futures[SLICES];
+	size_t slice = (size / SLICES) & ~((size_t)4095);
+	unsigned submitted = 0;
+	int failed = 0;
+
+	if (!slice) {
+		return 0;
+	}
+	cuda_buf_zero(gpu, size);
+	for (unsigned i = 0; i < SLICES; i++) {
+		size_t off = order[i] * slice;
+		size_t len = order[i] == SLICES - 1 ? size - off : slice;
+		opends_error_t err;
+
+		err = opends_async_read(fh, gpu, len, (off_t)off, (off_t)off,
+		                        &futures[i]);
+		if (err.err != OPENDS_SUCCESS) {
+			fprintf(stderr, "async slices %s: submit failed: %s\n",
+			        label, opends_op_status_error(err.err));
+			failed = 1;
+			break;
+		}
+		submitted++;
+	}
+	for (unsigned i = 0; i < submitted; i++) {
+		size_t off = order[i] * slice;
+		size_t len = order[i] == SLICES - 1 ? size - off : slice;
+		ssize_t n = opends_async_await(&futures[i]);
+
+		if (n != (ssize_t)len) {
+			fprintf(stderr,
+			        "async slices %s: read at %zu returned %zd "
+			        "(want "
+			        "%zu)\n",
+			        label, off, n, len);
+			failed = 1;
+		}
+	}
+	if (failed) {
+		return 1;
+	}
+
+	cuda_buf_to_host(got, gpu, size);
+	for (size_t i = 0; i < size; i++) {
+		if (got[i] != want[i]) {
+			fprintf(stderr,
+			        "COHERENCY FAIL: async slices %s differ, first "
+			        "at "
+			        "offset %zu\n",
+			        label, i);
+			return 1;
+		}
+	}
+	fprintf(stderr, "async slices %s ok\n", label);
+
+	return 0;
+}
 
 static int
 compare(const unsigned char *got, const unsigned char *want, size_t size,
@@ -165,6 +240,12 @@ main(int argc, char **argv)
 	}
 	cuda_buf_to_host(got, gpu, shifted);
 	failed = compare(got, want + 1, shifted, "offset 1");
+	if (!failed) {
+		failed |= check_async_slices(a.fh, gpu, got, want, size,
+		                             scattered, "scattered");
+		failed |= check_async_slices(a.fh, gpu, got, want, size,
+		                             in_order, "in order");
+	}
 
 out:
 	free(want);
