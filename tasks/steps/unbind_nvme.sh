@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Unmount and hand an NVMe device to userspace (xnvme upcie-cuda), leaving
 # the controller in a clean, verified power-on state.
+#
+# HOMI_NVME_DRIVER  uio_pci_generic or vfio-pci; unset picks by the IOMMU.
 set -e
 
 if [ $# -ne 2 ]; then
@@ -59,15 +61,29 @@ echo "resetting $BDF"
 echo 1 > "/sys/bus/pci/devices/$BDF/reset"
 sleep 1
 
-# The upcie owner path (xnvme SYSFS backend) claims the function through
-# uio_pci_generic; a fully unbound device is no longer accepted. driver_override
-# pins the binding to this device only.
-modprobe uio_pci_generic
-echo uio_pci_generic > "/sys/bus/pci/devices/$BDF/driver_override"
-echo "$BDF" > /sys/bus/pci/drivers/uio_pci_generic/bind
+# xNVMe takes the drive through vfio-pci behind a translating IOMMU and through
+# uio_pci_generic without one. HOMI_NVME_DRIVER names the driver instead.
+# driver_override pins the binding to this device only.
+USER_DRIVER=${HOMI_NVME_DRIVER:-}
+if [ -z "$USER_DRIVER" ]; then
+	USER_DRIVER=uio_pci_generic
+	case "$(cat "/sys/bus/pci/devices/$BDF/iommu_group/type" 2>/dev/null)" in
+		DMA | DMA-FQ) USER_DRIVER=vfio-pci ;;
+	esac
+fi
+case "$USER_DRIVER" in
+	uio_pci_generic | vfio-pci) ;;
+	*)
+		echo "error: HOMI_NVME_DRIVER is '$USER_DRIVER'; use uio_pci_generic or vfio-pci" >&2
+		exit 1
+		;;
+esac
+modprobe "$USER_DRIVER"
+echo "$USER_DRIVER" > "/sys/bus/pci/devices/$BDF/driver_override"
+echo "$BDF" > "/sys/bus/pci/drivers/$USER_DRIVER/bind"
 DRIVER=$(basename "$(readlink "/sys/bus/pci/devices/$BDF/driver")" 2>/dev/null)
-if [ "$DRIVER" != "uio_pci_generic" ]; then
-	echo "error: $BDF not bound to uio_pci_generic (got '$DRIVER')" >&2
+if [ "$DRIVER" != "$USER_DRIVER" ]; then
+	echo "error: $BDF not bound to $USER_DRIVER (got '$DRIVER')" >&2
 	exit 1
 fi
-echo "$BDF bound to uio_pci_generic"
+echo "$BDF bound to $USER_DRIVER"
