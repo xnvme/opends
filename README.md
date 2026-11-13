@@ -13,9 +13,15 @@ filperf logs, and `report.md`, the rendered report.
 | snapshot | job | run |
 | --- | --- | --- |
 | [`20261112-e122034-bench-43044459328`](snapshots/20261112-e122034-bench-43044459328/report.md) | bench | [43044459328](https://github.com/xnvme/opends/actions/runs/43044459328) |
+| [`20261112-8c4cdae-bench-sweep-43242456241`](snapshots/20261112-8c4cdae-bench-sweep-43242456241/report.md) | bench-sweep | [43242456241](https://github.com/xnvme/opends/actions/runs/43242456241) |
+| [`20261112-8c4cdae-bench-43242456241`](snapshots/20261112-8c4cdae-bench-43242456241/report.md) | bench | [43242456241](https://github.com/xnvme/opends/actions/runs/43242456241) |
 | [`20261112-5ee949a-bench-43191336788`](snapshots/20261112-5ee949a-bench-43191336788/report.md) | bench | [43191336788](https://github.com/xnvme/opends/actions/runs/43191336788) |
 | [`20261112-3326044-bench-43186936169`](snapshots/20261112-3326044-bench-43186936169/report.md) | bench | [43186936169](https://github.com/xnvme/opends/actions/runs/43186936169) |
+| [`20261112-2aae6f6-bench-sweep-43242569998`](snapshots/20261112-2aae6f6-bench-sweep-43242569998/report.md) | bench-sweep | [43242569998](https://github.com/xnvme/opends/actions/runs/43242569998) |
+| [`20261112-2aae6f6-bench-43242569998`](snapshots/20261112-2aae6f6-bench-43242569998/report.md) | bench | [43242569998](https://github.com/xnvme/opends/actions/runs/43242569998) |
 | [`20261112-2aae6f6-bench-43227711404`](snapshots/20261112-2aae6f6-bench-43227711404/report.md) | bench | [43227711404](https://github.com/xnvme/opends/actions/runs/43227711404) |
+| [`20261112-010220f-bench-sweep-43318852307`](snapshots/20261112-010220f-bench-sweep-43318852307/report.md) | bench-sweep | [43318852307](https://github.com/xnvme/opends/actions/runs/43318852307) |
+| [`20261112-010220f-bench-43318852307`](snapshots/20261112-010220f-bench-43318852307/report.md) | bench | [43318852307](https://github.com/xnvme/opends/actions/runs/43318852307) |
 | [`20261112-00ae85c-bench-43185253126`](snapshots/20261112-00ae85c-bench-43185253126/report.md) | bench | [43185253126](https://github.com/xnvme/opends/actions/runs/43185253126) |
 | [`20261109-baee7a5-bench-42630145467`](snapshots/20261109-baee7a5-bench-42630145467/report.md) | bench | [42630145467](https://github.com/xnvme/opends/actions/runs/42630145467) |
 | [`20261109-aaaeaac-bench-42614720598`](snapshots/20261109-aaaeaac-bench-42614720598/report.md) | bench | [42614720598](https://github.com/xnvme/opends/actions/runs/42614720598) |
