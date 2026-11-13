@@ -165,6 +165,8 @@ struct file_op {
 	int bounces_outstanding;
 	size_t bytes_acc;
 	int err;
+	bool fill; /* waits for the worker's marker to reach fill_seq */
+	uint32_t fill_seq;
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
 	void *bounce_buf;

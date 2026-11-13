@@ -119,6 +119,12 @@ cuda_copy_to_dev_async(void *dst, const void *src, size_t bytes)
 }
 
 static int
+cuda_fill_dev_async(void *dst, size_t bytes)
+{
+	return (int)cuMemsetD8Async((CUdeviceptr)dst, 0, bytes, NULL);
+}
+
+static int
 cuda_copy_from_dev_async(void *dst, const void *src, size_t bytes,
                          ds_accel_stream_t s)
 {
@@ -160,6 +166,7 @@ static const struct ds_accel_ops cuda_ops = {
         .host_unpin = cuda_host_unpin,
         .copy = cuda_copy,
         .copy_to_dev_async = cuda_copy_to_dev_async,
+        .fill_dev_async = cuda_fill_dev_async,
         .copy_from_dev_async = cuda_copy_from_dev_async,
         .stream_write_value32 = cuda_stream_write_value32,
         .stream_wait_value32_geq = cuda_stream_wait_value32_geq,

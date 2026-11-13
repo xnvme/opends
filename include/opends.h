@@ -55,7 +55,8 @@
  *   whole LBAs would land off a 4-byte boundary goes through the
  *   kernel instead, at the kernel's speed. A stream read must start
  *   on an LBA boundary and land on a 4-byte boundary, and only its
- *   tail may be partial; a violation fails with OPENDS_INVALID_VALUE.
+ *   tail may be partial; a violation fails with OPENDS_INVALID_VALUE,
+ *   and so does a stream read of a hole in a sparse file.
  *   With OPENDS_AISIO_ASSUME_ALIGNED_ONLY set, every read must be
  *   fully LBA-aligned.
  *   A raw handle (see opends_handle_register) has no kernel path: a
