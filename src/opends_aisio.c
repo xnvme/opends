@@ -26,6 +26,10 @@
 
 #include "ds_aisio.h"
 
+#include <sys/ioctl.h>
+
+#include <linux/nvme_ioctl.h>
+
 static struct driver *drv;
 static long use_count;
 
@@ -653,6 +657,7 @@ open_device(struct driver *d)
 	d->lba_size = geo->lba_nbytes ? geo->lba_nbytes : geo->nbytes;
 	d->mdts_nbytes =
 	        geo->mdts_nbytes ? geo->mdts_nbytes : DEFAULT_BOUNCE_SIZE;
+	d->ns_nbytes = geo->tbytes;
 
 	if (d->lba_size == 0) {
 		fprintf(stderr,
@@ -697,8 +702,8 @@ chunk_cb(struct xnvme_cmd_ctx *ctx, void *opaque)
 }
 
 static int
-submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
-                   uint64_t middle_lbas)
+submit_middle(struct driver *d, struct io_cursor *c, struct file_op *op,
+              uint64_t middle_lbas)
 {
 	uint32_t lba_nbytes = d->lba_size;
 	uint64_t max_chunk_lbas = d->mdts_nbytes >> d->lba_shift;
@@ -719,11 +724,14 @@ submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
 
 		uint16_t nlb = (uint16_t)(chunk_lbas - 1);
 		uint64_t chunk_slba = c->cur_slba + lbas_done;
-		uint8_t *dst_chunk = c->abs_dst + lbas_done * lba_nbytes;
+		uint8_t *buf_chunk = c->abs_buf + lbas_done * lba_nbytes;
 
 		op->chunks_remaining++;
-		int srv = xnvme_nvm_read(ctx, d->nsid, chunk_slba, nlb,
-		                         dst_chunk, NULL);
+		int srv = op->is_write
+		                  ? xnvme_nvm_write(ctx, d->nsid, chunk_slba,
+		                                    nlb, buf_chunk, NULL)
+		                  : xnvme_nvm_read(ctx, d->nsid, chunk_slba,
+		                                   nlb, buf_chunk, NULL);
 		if (srv == -EBUSY) {
 			op->chunks_remaining--;
 			xnvme_queue_put_cmd_ctx(c->queue, ctx);
@@ -741,7 +749,7 @@ submit_read_middle(struct driver *d, struct read_cursor *c, struct file_op *op,
 	}
 
 	c->cur_slba += middle_lbas;
-	c->abs_dst += middle_lbas * lba_nbytes;
+	c->abs_buf += middle_lbas * lba_nbytes;
 	c->remaining -= middle_lbas * lba_nbytes;
 	return 0;
 }
@@ -858,8 +866,23 @@ submit_partial(struct io_worker *w, struct file_op *op, uint8_t *abs_dst,
 	return submit_host_bounce(w, op, abs_dst, slba, src_off, nbytes);
 }
 
+static bool
+raw_write_allowed(const struct driver *d, const uint8_t *src, size_t size,
+                  uint64_t start)
+{
+	if (!size)
+		return true;
+	if ((start | size) & (d->lba_size - 1))
+		return false;
+	if ((uintptr_t)src & (NVME_PRP_OFFSET_ALIGN - 1))
+		return false;
+	return start < d->ns_nbytes;
+}
+
+/* Reads of any handle and writes of a raw handle; a write to a file takes
+ * ds_dispatch_write. */
 static void
-start_read_op(struct io_worker *w, struct file_op *op)
+start_io_op(struct io_worker *w, struct file_op *op)
 {
 	struct driver *d = w->drv;
 
@@ -892,12 +915,18 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
-	if (!op->h->readable) {
+	if (op->is_write ? !op->h->writable : !op->h->readable) {
 		op->err = OPENDS_INVALID_FILE_OPEN_FLAG;
 		return;
 	}
-	if (needs_kernel_read(d, dst_base, size, req_start)) {
-		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM) {
+	if (op->is_write && !raw_write_allowed(d, dst_base, size, req_start)) {
+		op->err = OPENDS_INVALID_VALUE;
+		return;
+	}
+	if (!op->is_write && needs_kernel_read(d, dst_base, size, req_start)) {
+		/* a raw handle has no kernel read path */
+		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM ||
+		    op->h->raw) {
 			op->err = OPENDS_INVALID_VALUE;
 			return;
 		}
@@ -916,10 +945,16 @@ start_read_op(struct io_worker *w, struct file_op *op)
 	}
 	uint64_t req_end = req_start + size;
 
-	struct ds_extent *extents;
-	uint32_t extent_count;
-	int frc = resolve_extents(d, op->h->fd, &extents, &extent_count);
-	if (frc < 0) {
+	/* A raw handle is one extent spanning the namespace. */
+	struct ds_extent raw_ext = {0, 0, d->ns_nbytes};
+	struct ds_extent *extents = &raw_ext;
+	uint32_t extent_count = 1;
+	if (!op->h->raw && !__atomic_load_n(&d->xal, __ATOMIC_ACQUIRE)) {
+		op->err = OPENDS_FS_SETUP_ERROR;
+		return;
+	}
+	if (!op->h->raw &&
+	    resolve_extents(d, op->h->fd, &extents, &extent_count) < 0) {
 		op->err = OPENDS_FS_SETUP_ERROR;
 		return;
 	}
@@ -962,16 +997,16 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		size_t tail_bytes = remaining & lba_mask;
 		uint64_t middle_lbas = (remaining - tail_bytes) >> lba_shift;
 		if (middle_lbas) {
-			struct read_cursor c = {
+			struct io_cursor c = {
 			        .queue = w->queue,
 			        .cur_slba = cur_slba,
-			        .abs_dst = abs_dst,
+			        .abs_buf = abs_dst,
 			        .remaining = remaining,
 			};
-			if (submit_read_middle(d, &c, op, middle_lbas) < 0)
+			if (submit_middle(d, &c, op, middle_lbas) < 0)
 				goto out;
 			cur_slba = c.cur_slba;
-			abs_dst = c.abs_dst;
+			abs_dst = c.abs_buf;
 			remaining = c.remaining;
 		}
 
@@ -982,7 +1017,8 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		}
 	}
 out:
-	free(extents);
+	if (extents != &raw_ext)
+		free(extents);
 }
 
 static void
@@ -1039,11 +1075,19 @@ complete_read_op(struct file_op *op)
 /*  Writes                                                            */
 /* ------------------------------------------------------------------ */
 
+/* A write to a file is staged through the file system; one to a raw handle
+ * goes to the device as a read does. */
+static inline bool
+write_is_staged(bool is_write, const struct registered_file *h)
+{
+	return is_write && !h->raw;
+}
+
 /* Start a PENDING op. Returns true when it has to stay pending. */
 static bool
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
-	if (op->is_write) {
+	if (write_is_staged(op->is_write, op->h)) {
 		return ds_dispatch_write(w, op);
 	}
 	op->chunks_remaining = 0;
@@ -1052,14 +1096,14 @@ dispatch_pending(struct io_worker *w, struct file_op *op)
 	op->err = 0;
 	op->n_bounces = 0;
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
-	start_read_op(w, op);
+	start_io_op(w, op);
 	return false;
 }
 
 static void
 reap_in_flight(struct io_worker *w, struct file_op *op)
 {
-	if (op->is_write) {
+	if (write_is_staged(op->is_write, op->h)) {
 		ds_write_poll(w, op);
 		return;
 	}
@@ -1082,7 +1126,7 @@ poll_stream_pending(struct io_worker *w, struct file_op *op)
 {
 	uint32_t gate;
 
-	if (op->is_write && op->wr.rounds) {
+	if (write_is_staged(op->is_write, op->h) && op->wr.rounds) {
 		if (!op->err &&
 		    __atomic_load_n(op->wr.landed, __ATOMIC_ACQUIRE) < 1)
 			return true;
@@ -1378,23 +1422,46 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 /*
  * Attach to the index xal-server publishes. -ENOENT (not yet published),
  * -EAGAIN (still being set up) and -ESTALE (first index not finished) all
- * mean "not yet" for a server starting alongside us, so retry on them.
+ * mean "not yet" for a server starting alongside us, so retry on them. An I/O
+ * thread may test d->xal meanwhile, so it is published whole.
  */
 static int
 xal_attach(struct driver *d)
 {
 	const char *shm = d->cfg.xal_shm;
+	struct xal *xal = NULL;
 
 	int rc = -ENOENT;
 	for (int i = 0; i < ATTACH_RETRIES; i++) {
-		rc = xal_from_shm(shm, &d->xal);
+		rc = xal_from_shm(shm, &xal);
 		if (rc != -ENOENT && rc != -EAGAIN && rc != -ESTALE)
 			break;
 		usleep(ATTACH_BACKOFF_US);
 	}
-	if (rc < 0)
+	if (rc < 0) {
 		fprintf(stderr, "aisio: xal_from_shm(%s) failed; err(%d)\n",
 		        shm, rc);
+		return rc;
+	}
+	__atomic_store_n(&d->xal, xal, __ATOMIC_RELEASE);
+	return 0;
+}
+
+/* Attach to the extent index, once. In raw block mode that is at the first
+ * registration of a regular file, since a raw handle needs no index; otherwise
+ * at driver open. It has its own lock because xal_attach can wait a minute for
+ * xal-server, and every op takes reg_lock. A failed attach is final until the
+ * driver is reopened. */
+static int
+index_attach(struct driver *d)
+{
+	int rc;
+
+	pthread_mutex_lock(&d->attach_lock);
+	if (!d->xal && !d->attach_rc)
+		d->attach_rc = xal_attach(d);
+	rc = d->attach_rc;
+	pthread_mutex_unlock(&d->attach_lock);
 	return rc;
 }
 
@@ -1455,9 +1522,13 @@ opends_driver_open(void)
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 	pthread_mutex_init(&d->write_buf_lock, NULL);
+	pthread_mutex_init(&d->attach_lock, NULL);
 
-	int rc = xal_attach(d);
+	int rc = 0;
+	if (!d->cfg.raw_block_enabled)
+		rc = index_attach(d);
 	if (rc < 0) {
+		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
@@ -1470,7 +1541,9 @@ opends_driver_open(void)
 
 	int orc = open_device(d);
 	if (orc < 0) {
-		xal_close(d->xal);
+		if (d->xal)
+			xal_close(d->xal);
+		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
@@ -1483,7 +1556,9 @@ opends_driver_open(void)
 	if (arc != 0) {
 		fprintf(stderr, "aisio: workers_setup failed\n");
 		xnvme_dev_close(d->xdev);
-		xal_close(d->xal);
+		if (d->xal)
+			xal_close(d->xal);
+		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
 		pthread_mutex_destroy(&d->submit_lock);
@@ -1514,9 +1589,10 @@ opends_driver_close(void)
 
 	if (drv->xdev)
 		xnvme_dev_close(drv->xdev);
+	if (drv->xal)
+		xal_close(drv->xal);
 
-	xal_close(drv->xal);
-
+	pthread_mutex_destroy(&drv->attach_lock);
 	pthread_mutex_destroy(&drv->write_buf_lock);
 	pthread_mutex_destroy(&drv->alloc_lock);
 	pthread_mutex_destroy(&drv->submit_lock);
@@ -1570,6 +1646,25 @@ opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 /*  Handle registration                                               */
 /* ------------------------------------------------------------------ */
 
+/* True when fd is a character device that answers for the controller this
+ * driver opened, as homi's /dev/xnvme/<bdf> does: its NVMe identify returns
+ * that controller's serial number. */
+static bool
+chardev_is_ours(const struct driver *d, int fd)
+{
+	const struct xnvme_spec_idfy_ctrlr *ours = xnvme_dev_get_ctrlr(d->xdev);
+	struct xnvme_spec_idfy_ctrlr theirs;
+	struct nvme_admin_cmd cmd = {
+	        .opcode = XNVME_SPEC_ADM_OPC_IDFY,
+	        .addr = (uintptr_t)&theirs,
+	        .data_len = sizeof(theirs),
+	        .cdw10 = XNVME_SPEC_IDFY_CTRLR,
+	};
+
+	return ours && ioctl(fd, NVME_IOCTL_ADMIN_CMD, &cmd) == 0 &&
+	       memcmp(theirs.sn, ours->sn, sizeof(ours->sn)) == 0;
+}
+
 opends_error_t
 opends_handle_register(opends_handle_t *fh, int fd)
 {
@@ -1579,10 +1674,27 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		return opends_err(OPENDS_INVALID_VALUE);
 
 	int oflags = fcntl(fd, F_GETFL);
-	if (oflags < 0)
+	struct stat st;
+	if (oflags < 0 || fstat(fd, &st) < 0)
 		return opends_err(OPENDS_INVALID_VALUE);
-	if (!(oflags & O_DIRECT))
-		return opends_err(OPENDS_DIO_NOT_SET);
+
+	bool raw = drv->cfg.raw_block_enabled && S_ISCHR(st.st_mode);
+	if (raw) {
+		if (!chardev_is_ours(drv, fd)) {
+			fprintf(stderr,
+			        "aisio: fd %d is a character device that "
+			        "does not answer for %s\n",
+			        fd, drv->dev_uri);
+			return opends_err(OPENDS_INVALID_VALUE);
+		}
+	} else {
+		/* a character device has no page cache to bypass */
+		if (!(oflags & O_DIRECT))
+			return opends_err(OPENDS_DIO_NOT_SET);
+		int rc = index_attach(drv);
+		if (rc < 0)
+			return opends_err(OPENDS_FS_SETUP_ERROR);
+	}
 
 	struct registered_file *h = calloc(1, sizeof(*h));
 	if (!h)
@@ -1590,6 +1702,8 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	h->fd = fd;
 	h->oflags = oflags;
 	h->readable = (oflags & O_ACCMODE) != O_WRONLY;
+	h->writable = (oflags & O_ACCMODE) != O_RDONLY;
+	h->raw = raw;
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
@@ -1735,8 +1849,9 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	/* A write's buffer, while the pool can give one; the I/O thread takes
 	 * one later otherwise. Pinning is an accelerator call, so it is this
 	 * thread's. */
+	bool staged = write_is_staged(is_write, fh);
 	struct write_buf *buf = NULL;
-	if (is_write && size) {
+	if (staged && size) {
 		int buf_rc = ds_write_buf_take_or_grow(d, &buf);
 
 		if (buf_rc != 0) {
@@ -1754,7 +1869,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->h = (struct registered_file *)fh;
 	op->buf_base = buf_base;
 	op->err = 0;
-	if (is_write) {
+	if (staged) {
 		ds_write_init(&op->wr, (const uint8_t *)buf_base + buf_offset,
 		              size, file_offset, buf_offset);
 		op->wr.buf = buf;
@@ -1862,10 +1977,11 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	off_t wboff = 0;
 	struct write_buf *buf = NULL;
 	opends_op_error_t werr = OPENDS_SUCCESS;
-	bool deferred = is_write && !opends_stream->fixed;
+	bool staged = write_is_staged(is_write, fh);
+	bool deferred = staged && !opends_stream->fixed;
 	struct opends_direct_geom geom;
 	int buf_rc = 0;
-	if (is_write && !deferred) {
+	if (staged && !deferred) {
 		/* a write of more rounds than a call can queue goes through
 		 * the resident kernel, which reads the same values later */
 		opends_direct_span(*file_offset_p, *size_p, &geom);
@@ -1878,7 +1994,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 			sched_yield();
 			buf = ds_write_buf_take(d);
 		}
-	} else if (is_write) {
+	} else if (staged) {
 		wsize = *size_p;
 		wfoff = *file_offset_p;
 		wboff = *buf_offset_p;
@@ -1913,7 +2029,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.stream.bytes_read_p = bytes_p;
 	op->u.stream.opends_stream = opends_stream;
 	op->u.stream.seq = seq;
-	if (is_write) {
+	if (staged) {
 		ds_write_init(&op->wr, (const uint8_t *)buf_base + wboff, wsize,
 		              wfoff, wboff);
 		op->wr.deferred = deferred;
@@ -1927,10 +2043,11 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * gate word (strictly monotonic, two phases per op): the submitter
 	 * publishes 2*seq on arrival and parks, and the I/O thread's store of
 	 * 2*seq+1 releases it once the I/O is done (a read's DMA landed, or a
-	 * write's source was staged). A staged write publishes nothing: its
-	 * first landed round says the stream has arrived, and it parks at the
-	 * release. Do not roll back seq on failure: a reused seq would let the
-	 * I/O thread's gate check pass before the stream is ready.
+	 * write's source was staged or, on a raw handle, written). A staged
+	 * write publishes nothing: its first landed round says the stream has
+	 * arrived, and it parks at the release. Do not roll back seq on
+	 * failure: a reused seq would let the I/O thread's gate check pass
+	 * before the stream is ready.
 	 *
 	 * launch_host_func is faster when no copy kernel is enqueued per op.
 	 * Otherwise stream_write/stream_wait is. The gate ops are commands the
@@ -1955,7 +2072,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 		if (accel_rc != 0) {
 			op->err = OPENDS_INTERNAL_ERROR;
 		}
-	} else if (is_write && op->wr.rounds) {
+	} else if (staged && op->wr.rounds) {
 		accel_rc = ds_stream_write_enqueue(d, op, cus);
 		if (accel_rc != 0) {
 			/* the rounds already queued run: the I/O thread drains
