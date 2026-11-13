@@ -4,28 +4,6 @@ Open source accelerator direct storage. Vendor-neutral API modeled on
 NVIDIA's cuFile (GDS), powered by AiSIO for high-throughput PCIe P2P DMA from
 NVMe straight into GPU memory.
 
-## Quick start
-
-1. Provision a target machine by following the
-   [AiSIO](https://github.com/xnvme/aisio) guide.
-
-2. Create the configs and fill in the target details:
-
-   ```sh
-   cp configs/transport.toml.example configs/transport.toml  # hostname, ssh key
-   cp configs/test.toml.example configs/test.toml            # NVMe BDF, mount point
-   ```
-
-3. Sync the tree, install the pinned dependencies (xNVMe, xal, fil, first
-   run only), build, and run the test suites:
-
-   ```sh
-   python scripts/rsync.py
-   python scripts/setup_deps.py
-   python scripts/build.py
-   python scripts/run_tests.py
-   ```
-
 ## Basic example
 
 ```c
@@ -66,6 +44,156 @@ int main(void)
 file and checks the bytes against a kernel read, `async_read.c` reads two
 files at once with the async API, and `stream_read.cu` enqueues a read, a
 kernel over the bytes and a copy back on one CUDA stream.
+
+## Getting started
+
+### Requirements
+
+NOTE: The [AiSIO](https://github.com/xnvme/aisio) guide sets all of this up on a
+fresh Ubuntu installation.
+
+- An NVIDIA GPU with the NVIDIA driver and the CUDA toolkit, `nvcc` on the
+  `PATH`.
+- In the BIOS setup:
+  - Resizable BAR enabled, so that the GPU's BAR1 window covers all of its
+    memory. Check with `nvidia-smi -q -d memory`.
+  - ACS disabled.
+- An NVMe drive that is not the boot disk, with an XFS file system that holds
+  the files to read.
+- The two kernel modules of [uPCIe](https://github.com/safl/upcie), from its
+  `upcie-experimental-dkms` package in the version of the uPCIe that the
+  pinned xNVMe builds, 0.10.4. `dmabuf_import` resolves the DMA addresses of
+  GPU memory, and `iommu_map_pa` maps GPU memory for a drive behind the
+  IOMMU.
+- One of the two ways to attach the drive:
+  - The IOMMU on, and the drive bound to `vfio-pci`. Where xNVMe's default
+    vfio mode is refused, as on a 6.8 kernel, set
+    `XNVME_UPCIE_VFIO_MODE=type1`.
+  - The IOMMU off or in passthrough mode (`iommu=pt`), and the drive bound to
+    `uio_pci_generic`.
+- The `ublk_drv` kernel module.
+- 1024 hugepages of 2 MiB, which are enough for the default settings.
+- Meson, Ninja, a C11 compiler, Git and liburing, to build the dependencies.
+
+### Build
+
+xNVMe (for-aisio-02112026), xal (v0.3.4) and OpenDS:
+
+```sh
+git clone https://github.com/xnvme/xnvme
+cd xnvme
+git checkout for-aisio-02112026
+git submodule update --init --recursive
+meson setup build
+meson compile -C build
+meson install -C build
+cd ..
+
+git clone https://github.com/xnvme/xal
+cd xal
+git checkout v0.3.4
+git submodule update --init --recursive
+meson setup build -Dxal-server=enabled
+meson compile -C build
+meson install -C build
+cd ..
+
+git clone https://github.com/xnvme/opends
+cd opends
+meson setup build
+meson compile -C build
+meson install -C build
+ldconfig
+```
+
+xNVMe brings the `homi` and `qublk` tools, and xal brings `xal-server`.
+
+### Run
+
+As root, in one terminal. Name the drive, its mount point and the driver that
+will hold it:
+
+```sh
+export BDF=<pci-address>   # of the drive, as lspci -D prints it: 0000:01:00.0
+export MNT=<mount-point>   # where its file system is mounted
+export DRIVER=vfio-pci     # uio_pci_generic with the IOMMU off or in passthrough mode
+```
+
+Check the address twice. The next block takes that drive away from the
+kernel, and it must not be the one the system runs from.
+
+Take the drive from the kernel's NVMe driver and bind it to that driver, so
+that xNVMe can open it:
+
+```sh
+umount $MNT
+echo $BDF > /sys/bus/pci/drivers/nvme/unbind
+echo 1 > /sys/bus/pci/devices/$BDF/reset
+modprobe $DRIVER
+modprobe ublk_drv
+echo $DRIVER > /sys/bus/pci/devices/$BDF/driver_override
+echo $BDF > /sys/bus/pci/drivers/$DRIVER/bind
+```
+
+Start `homi`, which holds the controller, and wait until it prints
+`HOMI started successfully`:
+
+```sh
+# 512 MiB of host memory: room for qublk and for OpenDS
+homi serve $BDF --homi-id 1 --be upcie --host-heap-size $((512 * 1024 * 1024)) &
+```
+
+Start `qublk`, which exports the drive as a block device for the file system,
+and wait until it prints `/dev/ublkb0 ... ready`:
+
+```sh
+qublk serve $BDF --homi-id 1 --be upcie --nqueues 1 &
+```
+
+`xal-server` publishes where the files are on the drive. Create its
+configuration, `xal-server.conf`, with the mount point of the drive:
+
+```toml
+devices = [
+  { uri = "/dev/ublkb0", shm_name = "/xal_dev0", mountpoint = "<mount-point>" },
+]
+```
+
+Mount the file system and start it, and wait until it prints `published`,
+which is when its first index is ready:
+
+```sh
+mount /dev/ublkb0 $MNT
+xal-server --config xal-server.conf &
+```
+
+Run your OpenDS application, with the two variables that tell OpenDS where
+the index and the mount are. For example, from the OpenDS checkout, the
+example that reads a file into GPU memory:
+
+```sh
+export OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT=$MNT
+build/sync_read_example $MNT/<file>
+```
+
+A file has to be on the drive before `xal-server` starts (see
+[Writes and the extent index](#writes-and-the-extent-index)).
+
+Stop the three in reverse order, and give the drive back to the kernel:
+
+```sh
+kill %xal-server; wait %xal-server
+umount $MNT
+kill %qublk; wait %qublk
+kill %homi; wait %homi
+echo $BDF > /sys/bus/pci/drivers/$DRIVER/unbind
+echo > /sys/bus/pci/devices/$BDF/driver_override
+echo $BDF > /sys/bus/pci/drivers/nvme/bind
+```
+
+`tasks/steps/homi_stack_up.sh` and `homi_stack_down.sh` do the same in one
+call, with waits and checks. They bind the driver that fits the IOMMU's mode,
+or the one `HOMI_NVME_DRIVER` names.
 
 ## Backends
 
@@ -235,6 +363,10 @@ _Commit `93fd019` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
 
 ## OpenDS API
 
+C programs find OpenDS through `pkg-config --cflags --libs opends` or meson's
+`dependency('opends')`. Python bindings are in `python/`; see
+`python/README.md`.
+
 | OpenDS family     | cuFile equivalent                    |
 |-------------------|--------------------------------------|
 | `opends_async_*`  | none                                 |
@@ -297,23 +429,27 @@ if (n < 0) {
 }
 ```
 
-## Building and installing locally
+## Testing on a target machine
 
-Requires [Meson](https://mesonbuild.com) and a C11 compiler. The cuFile backend
-additionally requires the CUDA toolkit and cuFile library.
+The test suites and the benchmarks run from a workstation against a target
+machine over ssh, through [cijoe](https://github.com/refenv/cijoe)
+(`pipx install cijoe`). Create the configs and fill in the target details:
 
 ```sh
-meson setup build
-meson compile -C build
-meson install -C build
+cp configs/transport.toml.example configs/transport.toml  # hostname, ssh key
+cp configs/test.toml.example configs/test.toml            # NVMe BDF, mount point
 ```
 
-`meson install` installs headers, libraries, and a pkg-config file so other
-projects can find OpenDS via `pkg-config --cflags --libs opends` or meson's
-`dependency('opends')`.
+Then sync the tree, install the pinned dependencies (xNVMe, xal, fil, first
+run only), build, and run the suites. They attach the drive through
+`uio_pci_generic`:
 
-Python bindings live in `python/` and load the library from `build/` without
-installation; see `python/README.md`.
+```sh
+python scripts/rsync.py
+python scripts/setup_deps.py
+python scripts/build.py
+python scripts/run_tests.py
+```
 
 ## Benchmarking with filperf
 
@@ -322,7 +458,7 @@ against four reference datasets. The AiSIO guide's `setup_dataset.yaml`
 writes `filesize8gib`, `tiktokish` and `imagenetish` during provisioning.
 `scripts/bench/setup_dataset.py` writes `lmcacheish` once.
 
-With the quick start done and the datasets in place:
+With OpenDS installed and the datasets in place:
 
 ```sh
 python scripts/bench/run.py          # --full-sweep measures the whole grid
@@ -364,7 +500,7 @@ setup and their teardown.
 
 ### Try it
 
-With OpenDS installed as in the quick start, build the `opends-loader`
+With OpenDS installed as in [Getting started](#getting-started), build the `opends-loader`
 branch of the fork, bring the stack up over the drive that holds the
 model, and load. `$OPENDS` is this repository, `$BDF` the drive and `$MNT`
 its mount point:

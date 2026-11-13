@@ -84,7 +84,7 @@ One-time GitHub configuration on the repository the workflow runs in:
 
 One-time setup on the hardware machine, as an unprivileged user:
 
-1. Provision the machine as the quick start in the README says.
+1. Provision the machine as "Getting started" in the README says.
    Populate the reference datasets for bench.
 2. Install the GitHub Actions runner under `~/actions-runner`.
    Register it with an extra `nvme-cuda` label. Install it as a
