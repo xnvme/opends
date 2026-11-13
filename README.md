@@ -342,24 +342,22 @@ itself. `test_raw_block_aisio` runs that way in the test suite.
 
 ## Performance
 
-_Commit `93fd019` (kernel `6.8.12-dmabuf`, NVMe `Samsung S4LV008[Pascal]`, GPU
-`NVIDIA RTX 2000 Ada Generation`). `OPENDS_AISIO_IO_THREADS=2` and
-`OPENDS_AISIO_QUEUE_DEPTH=8`._
+_From the [`bench-cufile` run of 2026-11-13](https://github.com/xnvme/opends/tree/artifacts/snapshots/20261113-716da9c-bench-cufile-43436905149)._
 
 | Dataset       | mode   | cuFile (MiB/s) | OpenDS (MiB/s) |
 |---------------|--------|----------------|----------------|
-| filesize8gib  | sync   |           6520 |           6794 |
-| filesize8gib  | stream |           2599 |           7036 |
-| filesize8gib  | async  |              - |           7065 |
-| tiktokish     | sync   |           4614 |           5869 |
-| tiktokish     | stream |           5101 |           4957 |
-| tiktokish     | async  |              - |           5005 |
-| imagenetish   | sync   |            343 |            583 |
-| imagenetish   | stream |            875 |           2787 |
-| imagenetish   | async  |              - |           3073 |
-| lmcacheish    | sync   |           5533 |           6151 |
-| lmcacheish    | stream |           4991 |           5368 |
-| lmcacheish    | async  |              - |           5384 |
+| filesize8gib  | sync   |           6456 |           7079 |
+| filesize8gib  | stream |           1734 |           7052 |
+| filesize8gib  | async  |              - |           6970 |
+| tiktokish     | sync   |           2957 |           5818 |
+| tiktokish     | stream |           5096 |           4981 |
+| tiktokish     | async  |              - |           4994 |
+| imagenetish   | sync   |            657 |            553 |
+| imagenetish   | stream |            867 |           2794 |
+| imagenetish   | async  |              - |           3086 |
+| lmcacheish    | sync   |           4350 |           6182 |
+| lmcacheish    | stream |           4977 |           5462 |
+| lmcacheish    | async  |              - |           5415 |
 
 ## OpenDS API
 
