@@ -63,6 +63,18 @@ jobs:
       report: true
       timeout-minutes: 1500
 
+  bench-model-load-llama-cpp:
+    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-model-load-llama-cpp')"
+    needs: [lint, test-ref, test-full]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: bench-model-load-llama-cpp
+      run: benchmarks/model-load-llama-cpp/run.py
+      teardown: -c benchmarks/model-load-llama-cpp/deps.toml benchmarks/model-load-llama-cpp/bench.yaml unstage_model homi_stack_down gpu_persistence_restore
+      report: true
+      report-run: benchmarks/model-load-llama-cpp/report.py
+      timeout-minutes: 1500
+
   bench-sweep:
     if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-sweep')"
     needs: [lint, test-ref, test-full]
