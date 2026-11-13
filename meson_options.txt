@@ -3,5 +3,10 @@ option('accel_backend',
   type : 'combo',
   choices : ['cuda', 'rocm'],
   value : 'cuda',
-  description : 'Accelerator vendor runtime for the aisio backend. Only cuda is implemented; rocm is reserved for the future ROCm/HIP port (see docs/vendor-port.md).',
+  description : 'Accelerator vendor runtime for the aisio backend: cuda, or rocm for AMD GPUs under HIP (see docs/vendor-port.md).',
+)
+option('rocm_arch',
+  type : 'string',
+  value : 'native',
+  description : 'The GPU hipcc compiles the aisio kernels for with accel_backend=rocm, as an --offload-arch value (native, or e.g. gfx1250).',
 )
