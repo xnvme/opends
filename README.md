@@ -12,6 +12,9 @@ filperf logs, and `report.md`, the rendered report.
 
 | snapshot | job | run |
 | --- | --- | --- |
+| [`20261113-7a71839-bench-43399744314`](snapshots/20261113-7a71839-bench-43399744314/report.md) | bench | [43399744314](https://github.com/xnvme/opends/actions/runs/43399744314) |
+| [`20261113-716da9c-bench-cufile-43436905149`](snapshots/20261113-716da9c-bench-cufile-43436905149/report.md) | bench-cufile | [43436905149](https://github.com/xnvme/opends/actions/runs/43436905149) |
+| [`20261113-023b918-bench-43395510017`](snapshots/20261113-023b918-bench-43395510017/report.md) | bench | [43395510017](https://github.com/xnvme/opends/actions/runs/43395510017) |
 | [`20261112-e122034-bench-43044459328`](snapshots/20261112-e122034-bench-43044459328/report.md) | bench | [43044459328](https://github.com/xnvme/opends/actions/runs/43044459328) |
 | [`20261112-8c4cdae-bench-sweep-43242456241`](snapshots/20261112-8c4cdae-bench-sweep-43242456241/report.md) | bench-sweep | [43242456241](https://github.com/xnvme/opends/actions/runs/43242456241) |
 | [`20261112-8c4cdae-bench-43242456241`](snapshots/20261112-8c4cdae-bench-43242456241/report.md) | bench | [43242456241](https://github.com/xnvme/opends/actions/runs/43242456241) |
