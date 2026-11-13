@@ -20,6 +20,10 @@ on:
         description: Render the bench report before uploading
         type: boolean
         default: false
+      report-run:
+        description: The command that renders report.md into cijoe-output-bench
+        type: string
+        default: scripts/bench/report.py
       timeout-minutes:
         description: Run budget plus a day of waiting for the machine
         required: true
@@ -55,7 +59,7 @@ jobs:
       - run: ${{ inputs.run }}
       - name: Render the report
         if: inputs.report
-        run: scripts/bench/report.py
+        run: ${{ inputs.report-run }}
       - name: Bundle the results
         if: inputs.report
         run: scripts/bench/results.py
