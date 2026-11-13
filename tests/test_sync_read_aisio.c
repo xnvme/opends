@@ -7,13 +7,16 @@
 
 #include <cuda.h>
 
+#include <stdbool.h>
 #include <stdio.h>
 
 int
 main(int argc, char **argv)
 {
-	if (argc != 2) {
-		fprintf(stderr, "usage: %s <pattern-file-on-mount>\n", argv[0]);
+	if (argc != 2 && argc != 3) {
+		fprintf(stderr,
+		        "usage: %s <pattern-file-on-mount> [<homi-chardev>]\n",
+		        argv[0]);
 		return 1;
 	}
 
@@ -96,6 +99,69 @@ main(int argc, char **argv)
 		cuda_alloc_release(wo_buf);
 	if (wo_fd >= 0)
 		close(wo_fd);
+
+	/* homi's character device is a raw handle in raw block mode, and no
+	 * handle at all without it: it is not opened with O_DIRECT. */
+	const char *raw = getenv("OPENDS_AISIO_RAW_BLOCK");
+	bool raw_mode = raw && raw[0] == '1';
+	if (argc == 3) {
+		opends_op_error_t want =
+		        raw_mode ? OPENDS_SUCCESS : OPENDS_DIO_NOT_SET;
+		int cfd = open(argv[2], O_RDWR);
+		opends_handle_t cfh = NULL;
+		opends_op_error_t got =
+		        cfd < 0 ? OPENDS_INVALID_VALUE
+		                : opends_handle_register(&cfh, cfd).err;
+		fprintf(stderr, "%s: register %s: %s\n",
+		        got == want ? "PASS" : "FAIL", argv[2],
+		        opends_op_status_error(got));
+		failed += got != want;
+		if (cfh)
+			opends_handle_deregister(cfh);
+		if (cfd >= 0)
+			close(cfd);
+	}
+
+	/* A handle outlives the driver. In raw block mode the reopened driver
+	 * has no extent index until a regular file is registered: a read
+	 * through the kept handle fails before that and works after it. */
+	opends_driver_close();
+	opends_error_t err = opends_driver_open();
+	if (err.err != OPENDS_SUCCESS) {
+		fprintf(stderr, "FAIL: driver reopen: %s\n",
+		        opends_op_status_error(err.err));
+		failed++;
+	} else {
+		void *buf = cuda_alloc_acquire(PAGE);
+		int bad = !buf;
+		if (buf && raw_mode) {
+			int fd2 = open(argv[1], O_RDONLY | O_DIRECT);
+			opends_handle_t fh2 = NULL;
+
+			bad = opends_sync_read(a.fh, buf, PAGE, 0, 0) !=
+			              -(ssize_t)OPENDS_FS_SETUP_ERROR ||
+			      fd2 < 0 ||
+			      opends_handle_register(&fh2, fd2).err !=
+			              OPENDS_SUCCESS;
+			fprintf(stderr,
+			        "%s: no index after a driver reopen until a "
+			        "file is registered\n",
+			        bad ? "FAIL" : "PASS");
+			if (fh2)
+				opends_handle_deregister(fh2);
+			if (fd2 >= 0)
+				close(fd2);
+		}
+		bad = bad || verify_read(&env_alloc, buf, PAGE, PAGE, 0, 0,
+		                         "read after driver reopen");
+		fprintf(stderr,
+		        "%s: read through a handle kept across a "
+		        "driver reopen\n",
+		        bad ? "FAIL" : "PASS");
+		failed += bad;
+		if (buf)
+			cuda_alloc_release(buf);
+	}
 
 	aisio_homi_teardown(&a);
 

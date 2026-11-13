@@ -13,8 +13,11 @@ doc: |
   and remounts the same XFS over it, so the sync-read pattern written
   during prep is still present. The aisio tests join HOMI's
   multi-process group and read that pattern file. clean_test_dir removes
-  the files the suite wrote, then homi_stack_down tears the stack down
-  and rebinds nvme so iterative runs leave the target usable.
+  the files the suite wrote. The raw block test then runs with the stack
+  reduced to homi (homi_stack_bare), against the blocks of a pattern file.
+  Finally homi_stack_down tears the stack down and rebinds nvme so
+  iterative runs leave the target usable, and raw_block_clean removes
+  that file.
 
   Prerequisites:
     - setup_opends.yaml has been run (sync_and_build.py does this).
@@ -95,7 +98,20 @@ steps:
         OPENDS_XAL_SHM=/xal_dev0 \
         OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
         '{{ config.test.build_dir }}/test_sync_read_aisio' \
-          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' \
+          '/dev/xnvme/{{ config.test.nvme_bdf }}'
+
+  - name: test_sync_read_raw_mode_aisio
+    run: |
+      # Files in raw block mode: the driver attaches to the index at the
+      # first registration, and homi's character device registers.
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        OPENDS_XAL_SHM=/xal_dev0 \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        OPENDS_AISIO_RAW_BLOCK=1 \
+        '{{ config.test.build_dir }}/test_sync_read_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' \
+          '/dev/xnvme/{{ config.test.nvme_bdf }}'
 
   - name: test_mt_read_aisio
     run: |
@@ -200,10 +216,46 @@ steps:
         OPENDS_LIBRARY='{{ config.test.build_dir }}/libopends_aisio.so' \
         PYTHONPATH=. python3 tests/test_aisio_cuda.py
 
+  - name: raw_block_prep
+    run: |
+      # A file for the raw block test: one allocation, so one extent, with
+      # the pattern at its start and room behind it for a large write. Where
+      # its blocks are and the size of the namespace go to the test. The file
+      # stays until raw_block_clean, so the file system keeps the blocks
+      # allocated to it meanwhile.
+      cd '{{ config.test.mount_point }}/opends_tests' && \
+        dd if=/dev/zero of=raw_block_pattern.bin bs=5M count=1 conv=fsync status=none && \
+        dd if=sync_read_pattern.bin of=raw_block_pattern.bin conv=notrunc,fsync status=none && \
+        range=$(python3 '{{ config.test.repo_path }}/tasks/steps/first_extent.py' raw_block_pattern.bin) && \
+        ns_nbytes=$(blockdev --getsize64 "$(cat /run/homi/ublk_dev)") && \
+        echo "$range $ns_nbytes" > /run/homi/raw_range && \
+        cat /run/homi/raw_range
+
   - name: clean_test_dir
     run: |
       rm -f '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' '{{ config.test.mount_point }}/opends_tests/coherency_large.bin' '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
 
+  - name: homi_stack_bare
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_bare.sh' '{{ config.test.mount_point }}'
+
+  - name: test_raw_block_aisio
+    run: |
+      # homi alone: no qublk, no file system, no xal-server.
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        '{{ config.test.build_dir }}/test_raw_block_aisio' \
+          '/dev/xnvme/{{ config.test.nvme_bdf }}' $(cat /run/homi/raw_range)
+
   - name: homi_stack_down
     run: |
       '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: raw_block_clean
+    run: |
+      # The raw block test's pattern file had to outlive the unmount. Remove
+      # it now that nvme is rebound, and leave the namespace unmounted, as
+      # homi_stack_down does.
+      rm -f /run/homi/raw_range && \
+        '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}' && \
+        rm -f '{{ config.test.mount_point }}/opends_tests/raw_block_pattern.bin' && \
+        umount '{{ config.test.mount_point }}'

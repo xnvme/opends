@@ -49,7 +49,7 @@ jobs:
     with:
       name: test-full
       run: scripts/run_tests.py
-      teardown: tasks/test.yaml clean_test_dir homi_stack_down
+      teardown: tasks/test.yaml clean_test_dir homi_stack_down raw_block_clean
       timeout-minutes: 1560
 
   bench:
