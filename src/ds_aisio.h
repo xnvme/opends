@@ -75,6 +75,8 @@ struct registered_file {
 	int fd;
 	int oflags;
 	bool readable;
+	bool writable;
+	bool raw;
 };
 
 struct opends_stream {
@@ -173,10 +175,10 @@ struct file_op {
 	} u;
 };
 
-struct read_cursor {
+struct io_cursor {
 	struct xnvme_queue *queue;
 	uint64_t cur_slba;
-	uint8_t *abs_dst;
+	uint8_t *abs_buf;
 	size_t remaining;
 };
 
@@ -214,12 +216,14 @@ struct io_worker {
 struct driver {
 	char dev_uri[XNVME_IDENT_URI_LEN]; ///< NVMe device the HOMI server owns
 	struct aisio_config cfg;           ///< From the environment at open
-	struct xal *xal; ///< Attach to the index xal-server publishes
+	struct xal *xal; ///< The index xal-server publishes (index_attach)
+	int attach_rc;   ///< Why the attach failed; it is tried only once
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
+	uint64_t ns_nbytes;
 	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
 	int buf_count;
 	size_t chunk_nbytes; ///< Allocation granularity registrations round to
@@ -247,6 +251,7 @@ struct driver {
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
+	pthread_mutex_t attach_lock;
 	bool stop;
 };
 

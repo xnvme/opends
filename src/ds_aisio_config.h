@@ -23,6 +23,7 @@ struct aisio_config {
 	bool busy_spin;
 	uint64_t cpu_mask;
 	bool assume_aligned_only;
+	bool raw_block_enabled;
 	size_t host_heap_nbytes;
 	size_t device_heap_nbytes;
 	size_t write_buf_nbytes; ///< Pinned host buf a write is staged

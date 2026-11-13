@@ -84,7 +84,9 @@ kernel over the bytes and a copy back on one CUDA stream.
   controller up. The driver joins that group as a secondary and allocates its
   own I/O queues. File extents come from the index xal-server publishes over
   POSIX shared memory, built over the qublk-exported block device. Reads and
-  writes are supported. Requires xNVMe, xal, and the CUDA toolkit.
+  writes are supported. A handle can also be the drive itself (raw block
+  mode, below), with reads and writes as P2P DMA at namespace offsets.
+  Requires xNVMe, xal, and the CUDA toolkit.
 
 ## OpenDS AiSIO configuration
 
@@ -119,6 +121,8 @@ the open.
   every process in the group shares, so xNVMe's 1 GiB default is too large.
 - `OPENDS_AISIO_DEVICE_HEAP_MB`: GPU device heap for this process. Default 0,
   which leaves it at the xNVMe default.
+- `OPENDS_AISIO_RAW_BLOCK`: `1` turns raw block mode on (below). Default off,
+  which changes nothing for a process that uses files only.
 - `OPENDS_AISIO_WRITE_BUF_MB`: Size of one pinned host buffer a write is staged
   through, in MiB. Default 16. A larger write goes through its buffer in
   rounds.
@@ -169,6 +173,44 @@ old index: its next read fails with `OPENDS_FS_SETUP_ERROR` after five seconds,
 and it must call `opends_driver_close()` and `opends_driver_open()` to attach to
 the new index. This restriction is temporary: a re-index on request is being
 pursued in xal-server, and the restriction goes when it lands.
+
+### Raw block mode
+
+With `OPENDS_AISIO_RAW_BLOCK=1`, `opends_handle_register` accepts a character
+device that answers for the controller, such as the one homi serves
+(`/dev/xnvme/<bdf>`), opened without `O_DIRECT`. On such a handle
+`file_offset` is the byte offset on the namespace: `file_offset / lba_size` is
+the LBA, with no filesystem or extent lookup in the path. All I/O families
+work: sync, async, stream and batch.
+
+In this mode the driver opens without an index and attaches to it when the
+first regular file is registered, with the wait and the error the open has
+otherwise; a failed attach is final until the driver is closed and opened
+again. A read that needs the index, through a file handle kept across
+`opends_driver_close()` and `opends_driver_open()`, fails with
+`OPENDS_FS_SETUP_ERROR` until a regular file is registered again.
+
+A raw handle needs no index, so the stack for raw block mode is `homi serve`
+alone: no qublk, no file system and no xal-server. This is the uGDS-style use,
+a KV cache for instance, where the process owns the drive and lays it out
+itself. `test_raw_block_aisio` runs that way in the test suite.
+
+- Reads and writes go between GPU memory and the NVMe as P2P DMA, and are
+  short when they cross the end of the namespace.
+- A read may start and end anywhere, but its whole LBAs must land on a 4-byte
+  boundary in GPU memory: a raw handle has no kernel path to fall back to. A
+  stream read must start on an LBA boundary, as on a file.
+- A write, unless empty, must start and end on an LBA boundary, come from a
+  GPU address on a 4-byte boundary and start before the end of the namespace.
+- I/O that breaks these rules fails with `OPENDS_INVALID_VALUE`, I/O against
+  the access mode of the fd with `OPENDS_INVALID_FILE_OPEN_FLAG`. A refused
+  write writes nothing.
+- Only a character device that answers for the controller this driver opened
+  is accepted, told by its serial number. homi serves one when xNVMe is built
+  with CUSE, the `cuse` module is loaded and `--no-cuse` is not given.
+- The process must own the drive: do not run qublk or mount a file system on
+  a drive used in raw block mode. Raw writes bypass them, and they would not
+  see the change.
 
 ## Performance
 

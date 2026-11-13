@@ -58,6 +58,12 @@
  *   tail may be partial; a violation fails with OPENDS_INVALID_VALUE.
  *   With OPENDS_AISIO_ASSUME_ALIGNED_ONLY set, every read must be
  *   fully LBA-aligned.
+ *   A raw handle (see opends_handle_register) has no kernel path: a
+ *   read whose whole LBAs would land off a 4-byte boundary fails with
+ *   OPENDS_INVALID_VALUE, and so does a write, unless empty, that
+ *   does not start and end on an LBA boundary, come from a 4-byte
+ *   boundary and start before the end of the namespace. A refused
+ *   write writes nothing.
  */
 #ifndef OPENDS_H_
 #define OPENDS_H_
@@ -167,6 +173,15 @@ opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
  * before it can be used for I/O in any mode. The file must be
  * opened with O_DIRECT. Registration fails with OPENDS_DIO_NOT_SET
  * otherwise. Linux only.
+ *
+ * Raw block mode: with OPENDS_AISIO_RAW_BLOCK=1 the aisio backend also
+ * accepts a character device that answers for the controller the
+ * driver opened, such as the one homi serves (/dev/xnvme/<bdf>);
+ * O_DIRECT is not required. file_offset is then the byte offset on the
+ * NVMe namespace, and no file system or xal-server is involved: nothing
+ * else may use the drive meanwhile. Any other character device fails
+ * with OPENDS_INVALID_VALUE. A raw handle addresses the namespace the
+ * driver opened, whatever the controller has.
  */
 opends_error_t opends_handle_register(opends_handle_t *fh, int fd);
 void opends_handle_deregister(opends_handle_t fh);
