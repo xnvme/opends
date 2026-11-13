@@ -76,6 +76,27 @@ main(int argc, char **argv)
 		cuda_register_release(small);
 	}
 
+	/* A read goes to the device without passing the kernel, so the driver
+	 * has to honour the access mode of the fd itself. */
+	int wo_fd = open(argv[1], O_WRONLY | O_DIRECT);
+	opends_handle_t wo_fh = NULL;
+	void *wo_buf = cuda_alloc_acquire(PAGE);
+	if (wo_fd < 0 || !wo_buf ||
+	    opends_handle_register(&wo_fh, wo_fd).err != OPENDS_SUCCESS ||
+	    opends_sync_read(wo_fh, wo_buf, PAGE, 0, 0) !=
+	            -(ssize_t)OPENDS_INVALID_FILE_OPEN_FLAG) {
+		fprintf(stderr, "FAIL: read through a write-only fd\n");
+		failed++;
+	} else {
+		fprintf(stderr, "PASS: read through a write-only fd refused\n");
+	}
+	if (wo_fh)
+		opends_handle_deregister(wo_fh);
+	if (wo_buf)
+		cuda_alloc_release(wo_buf);
+	if (wo_fd >= 0)
+		close(wo_fd);
+
 	aisio_homi_teardown(&a);
 
 	if (failed)

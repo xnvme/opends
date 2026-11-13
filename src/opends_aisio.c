@@ -892,6 +892,10 @@ start_read_op(struct io_worker *w, struct file_op *op)
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
+	if (!op->h->readable) {
+		op->err = OPENDS_INVALID_FILE_OPEN_FLAG;
+		return;
+	}
 	if (needs_kernel_read(d, dst_base, size, req_start)) {
 		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM) {
 			op->err = OPENDS_INVALID_VALUE;
@@ -1585,6 +1589,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 	h->fd = fd;
 	h->oflags = oflags;
+	h->readable = (oflags & O_ACCMODE) != O_WRONLY;
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
