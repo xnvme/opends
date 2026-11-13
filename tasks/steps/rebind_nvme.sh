@@ -15,7 +15,7 @@ if [ "$CUR" = nvme ]; then
 	exit 0
 fi
 
-# Release the function from the owner path's uio_pci_generic binding and clear
+# Release the function from the driver unbind_nvme.sh bound and clear
 # the driver_override, otherwise the override pins it away from nvme.
 if [ -n "$CUR" ]; then
 	echo "$BDF" > "/sys/bus/pci/drivers/$CUR/unbind"
