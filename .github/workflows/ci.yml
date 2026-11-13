@@ -63,6 +63,17 @@ jobs:
       report: true
       timeout-minutes: 1500
 
+  bench-cufile:
+    if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-cufile')"
+    needs: [lint, test-ref, test-full]
+    uses: ./.github/workflows/run-on-nvme-cuda.yml
+    with:
+      name: bench-cufile
+      run: scripts/bench/run.py --suite cufile --suite opends --io-threads 2
+      teardown: tasks/bench_opends.yaml homi_stack_down cpu_governor_restore
+      report: true
+      timeout-minutes: 1500
+
   bench-sweep:
     if: "!cancelled() && needs.lint.result == 'success' && needs.test-ref.result == 'success' && needs.test-full.result != 'failure' && contains(github.event.pull_request.labels.*.name, 'bench-sweep')"
     needs: [lint, test-ref, test-full]
