@@ -74,6 +74,7 @@ struct map_run {
 struct registered_file {
 	int fd;
 	int oflags;
+	bool readable;
 };
 
 struct opends_stream {
