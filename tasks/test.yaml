@@ -67,6 +67,14 @@ steps:
         of='{{ config.test.mount_point }}/opends_tests/coherency_large.bin' \
         bs=1M count=64 status=none conv=fsync
 
+  - name: test_sparse_read_prep
+    run: |
+      f='{{ config.test.mount_point }}/opends_tests/sparse_read.bin' && rm -f "$f" && \
+        dd if=/dev/urandom of="$f" bs=1M count=1 status=none conv=fsync && \
+        dd if=/dev/urandom of="$f" bs=1M count=1 seek=2 status=none conv=notrunc,fsync && \
+        dd if=/dev/urandom of="$f" bs=1M count=1 seek=3 status=none conv=notrunc,fsync && \
+        fallocate -z -o 3M -l 1M "$f" && truncate -s 5M "$f" && sync "$f"
+
   - name: test_sync_read_ref
     run: |
       '{{ config.test.build_dir }}/test_sync_read_ref' '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin'
@@ -174,6 +182,14 @@ steps:
         '{{ config.test.build_dir }}/test_coherency_aisio' \
           '{{ config.test.mount_point }}/opends_tests/coherency_large.bin'
 
+  - name: test_sparse_read_aisio
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        OPENDS_XAL_SHM=/xal_dev0 \
+        OPENDS_HOMI_MNT='{{ config.test.mount_point }}' \
+        '{{ config.test.build_dir }}/test_sparse_read_aisio' \
+          '{{ config.test.mount_point }}/opends_tests/sparse_read.bin'
+
   - name: test_stream_read_aisio
     run: |
       . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
@@ -233,7 +249,7 @@ steps:
 
   - name: clean_test_dir
     run: |
-      rm -f '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' '{{ config.test.mount_point }}/opends_tests/coherency_large.bin' '{{ config.test.mount_point }}/opends_tests/write_scratch.bin'
+      rm -f '{{ config.test.mount_point }}/opends_tests/sync_read_pattern.bin' '{{ config.test.mount_point }}/opends_tests/coherency_large.bin' '{{ config.test.mount_point }}/opends_tests/write_scratch.bin' '{{ config.test.mount_point }}/opends_tests/sparse_read.bin'
 
   - name: homi_stack_bare
     run: |
