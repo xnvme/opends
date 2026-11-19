@@ -76,6 +76,10 @@ accel_kernel_lang = 'cuda'
 # toolkit, so the first kernel launch fails with CUDA error 222.
 accel_kernel_args = ['-arch=native']
 accel_sys_inc_dirs = []
+accel_c_args = []
+accel_kernel_src = []
+accel_kernel_objs = []
+accel_lib_kwargs = {}
 
 if accel_backend == 'cuda'
   cuda_drv_dep = cc.find_library('cuda',
@@ -103,10 +107,40 @@ if accel_backend == 'cuda'
   have_cuda_h = accel_sys_inc_dirs.length() > 0 or cc.has_header('cuda.h')
 
   accel_deps = [cuda_dep, cuda_drv_dep]
-  accel_kernel_src = 'src/ds_bounce_kernel_cuda.cu'
+  accel_kernel_src = ['src/ds_bounce_kernel_cuda.cu']
+  accel_lib_kwargs = {'cuda_args' : accel_kernel_args}
   accel_runtime_found = cuda_dep.found() and cuda_drv_dep.found() and have_cuda_h
+elif accel_backend == 'rocm'
+  # ROCm ships HIP under /opt/rocm, and Ubuntu's packages put it on the
+  # system paths. The runtime API header serves C with the platform set.
+  hipcc = find_program('hipcc', dirs : ['/opt/rocm/bin'], required : false)
+  hip_dep = cc.find_library('amdhip64', dirs : ['/opt/rocm/lib'], required : false)
+  accel_c_args = ['-D__HIP_PLATFORM_AMD__']
+  foreach p : ['/opt/rocm/include']
+    if accel_sys_inc_dirs.length() == 0 and \
+        run_command('test', '-f', p / 'hip/hip_runtime_api.h', check : false).returncode() == 0
+      accel_sys_inc_dirs += p
+    endif
+  endforeach
+  have_hip_h = accel_sys_inc_dirs.length() > 0 or \
+      cc.has_header('hip/hip_runtime_api.h', args : accel_c_args)
+
+  # Meson has no HIP language: hipcc compiles the kernel TU into an object
+  # that links like any other source.
+  if hipcc.found()
+    accel_kernel_objs = [custom_target('ds_bounce_kernel_rocm',
+      input : 'src/ds_bounce_kernel_rocm.hip',
+      output : 'ds_bounce_kernel_rocm.o',
+      command : [hipcc, '-O2', '-fPIC',
+        '--offload-arch=' + get_option('rocm_arch'),
+        '-I', meson.current_source_dir() / 'src',
+        '-c', '@INPUT@', '-o', '@OUTPUT@'],
+    )]
+  endif
+  accel_deps = [hip_dep]
+  accel_runtime_found = hipcc.found() and hip_dep.found() and have_hip_h
 else
-  error('accel_backend=@0@ has no ds_accel implementation; only cuda is wired up (see docs/vendor-port.md).'.format(accel_backend))
+  error('accel_backend=@0@ has no ds_accel implementation (see docs/vendor-port.md).'.format(accel_backend))
 endif
 
 accel_inc = []
@@ -119,8 +153,11 @@ aisio_enabled = xnvme_dep.found() and accel_runtime_found and xal_dep.found()
 if aisio_enabled
   # The async path links a tiny D2D copy kernel compiled from
   # src/ds_bounce_kernel_cuda.cu. Adding the kernel language only when aisio is
-  # actually built keeps ref-only builds free of an nvcc dependency.
-  add_languages(accel_kernel_lang, required : true, native : false)
+  # actually built keeps ref-only builds free of an nvcc dependency. HIP has
+  # no meson language; its kernel TU comes as an object.
+  if accel_backend == 'cuda'
+    add_languages(accel_kernel_lang, required : true, native : false)
+  endif
 
   aisio_inc_dirs = [opends_inc, opends_internal_inc] + accel_inc
 
@@ -133,9 +170,11 @@ if aisio_enabled
     'src/opends_batch_async.c',
     accel_src,
     accel_kernel_src,
+    accel_kernel_objs,
     include_directories : aisio_inc_dirs,
     dependencies : [xnvme_dep, xal_dep] + accel_deps,
-    cuda_args : accel_kernel_args,
+    c_args : accel_c_args,
+    kwargs : accel_lib_kwargs,
     install : true,
   )
 
