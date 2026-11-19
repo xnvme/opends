@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: BSD-3-Clause
+doc: |
+  Model loading with llama.cpp
+  ============================
+
+  Loads one GGUF model with llama-completion in each of llama.cpp's load
+  modes and records the process's wall time and llama.cpp's own load time.
+  dio, none and mmap run while the kernel nvme driver owns the drive, opends
+  runs on the HOMI stack, where the index name is the one homi_stack_up.sh
+  starts xal-server with and the small device heap leaves the VRAM to
+  llama.cpp. See README.md beside this file.
+
+  Prerequisites: scripts/setup_deps.py and scripts/build.py have run, and the
+  XFS filesystem on the test namespace exists. run.py beside this file passes
+  the configs and brings the stack down afterwards.
+
+steps:
+  - name: check_stack_down
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/check_stack_down.sh' '{{ config.test.nvme_bdf }}'
+
+  - name: meta
+    uses: bench_meta
+
+  - name: build
+    run: |
+      '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/build.sh' '{{ config.llama_cpp.repository.remote }}' '{{ config.llama_cpp.repository.ref }}' '{{ config.deps.src_root }}/llama.cpp' '{{ config.deps.build_root }}/llama-cpp-build' '{{ config.deps.install_prefix | default("/usr/local") }}'
+
+  - name: fetch_model
+    run: |
+      '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/fetch_model.sh' '{{ config.llama_cpp.model.url }}' '{{ config.llama_cpp.model.sha256 }}' '{{ config.test.model_cache | default("/var/cache/opends-bench") }}' '{{ config.llama_cpp.model.name }}'
+
+  - name: bind_nvme
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/bind_nvme.sh' '{{ config.test.nvme_bdf }}'
+
+  - name: mount
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/mount_nvme.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: stage_model
+    run: |
+      mkdir -p '{{ config.test.mount_point }}/opends_tests'
+      cp '{{ config.test.model_cache | default("/var/cache/opends-bench") }}/{{ config.llama_cpp.model.name }}' '{{ config.test.mount_point }}/opends_tests/{{ config.llama_cpp.model.name }}'
+
+  - name: gpu_persistence
+    run: |
+      '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/gpu_persistence.sh'
+
+  - name: load_dio
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/load.sh' '{{ config.deps.build_root }}/llama-cpp-build/bin/llama-completion' '{{ config.test.mount_point }}/opends_tests/{{ config.llama_cpp.model.name }}' dio 5
+
+  - name: load_none
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/load.sh' '{{ config.deps.build_root }}/llama-cpp-build/bin/llama-completion' '{{ config.test.mount_point }}/opends_tests/{{ config.llama_cpp.model.name }}' none 5
+
+  - name: load_mmap
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/load.sh' '{{ config.deps.build_root }}/llama-cpp-build/bin/llama-completion' '{{ config.test.mount_point }}/opends_tests/{{ config.llama_cpp.model.name }}' mmap 5
+
+  - name: homi_stack_up
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        '{{ config.test.repo_path }}/tasks/steps/homi_stack_up.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: load_opends
+    run: |
+      . '{{ config.test.repo_path }}/tasks/steps/install_prefix.sh' '{{ config.deps.install_prefix | default("/usr/local") }}' && \
+        OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT='{{ config.test.mount_point }}' OPENDS_AISIO_DEVICE_HEAP_MB=64 '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/load.sh' '{{ config.deps.build_root }}/llama-cpp-build/bin/llama-completion' '{{ config.test.mount_point }}/opends_tests/{{ config.llama_cpp.model.name }}' opends 5
+
+  - name: unstage_model
+    run: |
+      rm -f '{{ config.test.mount_point }}/opends_tests/{{ config.llama_cpp.model.name }}'
+
+  - name: homi_stack_down
+    run: |
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+
+  - name: gpu_persistence_restore
+    run: |
+      '{{ config.test.repo_path }}/benchmarks/model-load-llama-cpp/steps/gpu_persistence.sh' restore

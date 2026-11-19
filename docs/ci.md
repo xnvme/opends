@@ -59,7 +59,10 @@ The bench labels work the same way, except that a bench job waits for
 `test-full` and is skipped when that one fails; without the `test-full`
 label it runs on its own. `bench` runs one leg at the default knobs,
 `bench-sweep` runs the standard sweep (`scripts/bench/sweep.toml`), and
-`bench-full-sweep` runs the whole knob cross product. Every job uploads its cijoe output as a workflow
+`bench-full-sweep` runs the whole knob cross product.
+`bench-model-load-llama-cpp` runs the benchmark in
+`benchmarks/model-load-llama-cpp`, which builds llama.cpp and downloads its
+model on first use. Every job uploads its cijoe output as a workflow
 artifact on the run. A bench job that ran its legs also uploads
 `results-<job>`: `results.json` with the run's provenance, every
 record, the raw filperf logs and the report, and `report.md` beside it,
@@ -73,10 +76,11 @@ crashes it.
 
 One-time GitHub configuration on the repository the workflow runs in:
 
-1. Create the `test-full`, `bench`, `bench-sweep`, and
-   `bench-full-sweep` labels.
-2. Add the four checks, `test-full / nvme-cuda`, `bench / nvme-cuda`,
-   `bench-sweep / nvme-cuda` and `bench-full-sweep / nvme-cuda`, to the
+1. Create the `test-full`, `bench`, `bench-sweep`, `bench-full-sweep` and
+   `bench-model-load-llama-cpp` labels.
+2. Add the five checks, `test-full / nvme-cuda`, `bench / nvme-cuda`,
+   `bench-sweep / nvme-cuda`, `bench-full-sweep / nvme-cuda` and
+   `bench-model-load-llama-cpp / nvme-cuda`, to the
    required status checks. A skipped check satisfies the requirement,
    so unlabeled PRs are unaffected.
 
