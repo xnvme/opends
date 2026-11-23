@@ -1,33 +1,15 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 #define _GNU_SOURCE
 
+#include "test_ref_common.h"
 #include "test_sync_read.h"
 
-#include <fcntl.h>
 #include <stdlib.h>
-
-static void *
-ref_buf_to_host(void *dst, const void *src, size_t n)
-{
-	return memcpy(dst, src, n);
-}
 
 static void
 ref_buf_zero(void *buf, size_t n)
 {
 	memset(buf, 0, n);
-}
-
-static void *
-ref_alloc_acquire(size_t size)
-{
-	return opends_alloc(size);
-}
-
-static void
-ref_alloc_release(void *buf)
-{
-	opends_free(buf);
 }
 
 #define PAGE_ALIGN(x) (((x) + 4095) & ~((size_t)4095))
@@ -66,28 +48,10 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	int fd = open(argv[1], O_RDONLY | O_DIRECT);
-	if (fd < 0) {
-		perror("open");
-		return 1;
-	}
-
-	opends_error_t err = opends_driver_open();
-	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "driver_open: %s\n",
-		        opends_op_status_error(err.err));
-		close(fd);
-		return 1;
-	}
-
+	int fd;
 	opends_handle_t fh;
-	err = opends_handle_register(&fh, fd);
-	if (err.err != OPENDS_SUCCESS) {
-		fprintf(stderr, "handle_register: %s\n",
-		        opends_op_status_error(err.err));
-		close(fd);
+	if (ref_setup(argv[1], &fd, &fh) < 0)
 		return 1;
-	}
 
 	fprintf(stderr, "opends_sync_read sync tests (ref backend)\n");
 
@@ -111,9 +75,7 @@ main(int argc, char **argv)
 	};
 	failed += run_sync_read_tests(&env_register);
 
-	opends_handle_deregister(fh);
-	close(fd);
-	opends_driver_close();
+	ref_teardown(fd, fh);
 
 	if (failed)
 		fprintf(stderr, "%d test(s) failed\n", failed);
