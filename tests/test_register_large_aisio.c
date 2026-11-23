@@ -5,7 +5,7 @@
  * device buffer sized to the dataset's max file (8 GiB for the
  * filesize8gib dataset) and hands it to opends_buf_register.
  *
- * Catches regressions in the cudaMalloc → xnvme_buf_register →
+ * Catches regressions in the cudaMalloc -> xnvme_buf_register ->
  * cuMemGetHandleForAddressRange path at scale (LUT capacity,
  * alloc_granularity handling) that small-buffer tests
  * don't exercise.

@@ -855,8 +855,8 @@ out_free_arrays:
  *   2) cuMemcpyDtoHAsync(pinned, buf, ...) on the same stream
  * and only sync after both are queued. The memcpy is stream-ordered
  * behind the read's cuStreamWaitValue32(done_seq) gate. If that gate
- * releases early — or if done_seq advances before the NVMe DMA bytes
- * are visible to the GPU — the memcpy snapshots zeros, not the
+ * releases early, or if done_seq advances before the NVMe DMA bytes
+ * are visible to the GPU, the memcpy snapshots zeros, not the
  * expected pattern. Loops to make any race observable across runs.
  */
 static int
