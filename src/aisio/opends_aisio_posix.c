@@ -2,10 +2,12 @@
 /*
  * opends_aisio_posix.c - the aisio backend's path through the mounted file
  * system: writes, staged out of GPU memory into pinned host buffers and
- * pwritten through the fd. The copies are queued, on the user's stream
- * ahead of its gate for a stream write and on the default stream for the
- * rest, and an I/O thread only polls for them. An I/O thread never makes
- * an accelerator call that waits: a stream can be waiting for it.
+ * pwritten through the fd, and the reads that cannot go by DMA, pread into
+ * a pinned buffer and copied to the device. The copies are queued, on the
+ * user's stream ahead of its gate for a stream write and on the default
+ * stream for the rest, and an I/O thread only polls for them. An I/O thread
+ * never makes an accelerator call that waits: a stream can be waiting for
+ * it.
  */
 
 #define _GNU_SOURCE
@@ -664,4 +666,129 @@ opends_write_words_setup(struct driver *d, struct io_worker *w, int idx)
 		                (size_t)s * sizeof(struct opends_stage_copy);
 	}
 	return 0;
+}
+
+/* Read the next chunk into the pinned buffer and queue its copy on the
+ * default stream, with the write of the word behind it. An I/O thread must
+ * not wait for the accelerator: a stream can wait for this thread. */
+static void
+kernel_read_chunk(struct io_worker *w)
+{
+	struct kernel_read *k = &w->kread;
+	struct file_op *op = k->op;
+	off_t start = (off_t)k->off & ~(off_t)(OPENDS_DIRECT_ALIGN - 1);
+	size_t head = (size_t)((off_t)k->off - start);
+	size_t n = k->buf_nbytes - head;
+	size_t span;
+	ssize_t got;
+	int err;
+
+	if (n > k->remaining) {
+		n = k->remaining;
+	}
+	span = (head + n + OPENDS_DIRECT_ALIGN - 1) &
+	       ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+	got = opends_direct_pread_span(op->h->fd, k->buf, span, start);
+	if (got < 0) {
+		op->err = (got == -(ssize_t)EINVAL)
+		                  ? OPENDS_INVALID_VALUE
+		                  : OPENDS_DEVICE_DRIVER_ERROR;
+		goto done;
+	}
+	if ((size_t)got <= head) {
+		goto done;
+	}
+	if ((size_t)got - head < n) {
+		n = (size_t)got - head;
+		k->last = true;
+	}
+
+	err = opends_accel->copy_to_dev_async(k->dst, (uint8_t *)k->buf + head,
+	                                      n);
+	if (err != 0) {
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		goto done;
+	}
+	k->seq++;
+	err = opends_accel->stream_write_value32(NULL, k->word_dptr, k->seq);
+	if (err != 0) {
+		/* nothing tells when the queued copy has run, so the buffer
+		 * cannot be used again */
+		k->broken = true;
+		op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		goto done;
+	}
+	op->bytes_acc += n;
+	k->dst += n;
+	k->off += n;
+	k->remaining -= n;
+	return;
+done:
+	op->chunks_remaining = 0;
+	k->op = NULL;
+}
+
+void
+opends_kernel_read_poll(struct io_worker *w)
+{
+	struct kernel_read *k = &w->kread;
+
+	if (__atomic_load_n(k->word, __ATOMIC_ACQUIRE) != k->seq) {
+		return;
+	}
+	if (k->remaining == 0 || k->last) {
+		k->op->chunks_remaining = 0;
+		k->op = NULL;
+		return;
+	}
+	kernel_read_chunk(w);
+}
+
+void
+opends_kernel_read_start(struct io_worker *w, struct file_op *op, uint8_t *dst,
+                         size_t size, uint64_t req_start)
+{
+	struct kernel_read *k = &w->kread;
+
+	k->op = op;
+	k->dst = dst;
+	k->off = req_start;
+	k->remaining = size;
+	k->last = false;
+	op->chunks_remaining = 1;
+	kernel_read_chunk(w);
+}
+
+int
+opends_kernel_read_setup(struct driver *d, struct io_worker *w)
+{
+	struct kernel_read *k = &w->kread;
+	int err;
+
+	/* the same chunk size as on the direct path */
+	k->buf_nbytes = ((size_t)d->mdts_nbytes + OPENDS_DIRECT_ALIGN - 1) &
+	                ~(size_t)(OPENDS_DIRECT_ALIGN - 1);
+	err = posix_memalign(&k->buf, OPENDS_DIRECT_ALIGN, k->buf_nbytes);
+	if (err != 0) {
+		k->buf = NULL;
+		return -1;
+	}
+	err = opends_accel->host_pin(k->buf, k->buf_nbytes, NULL);
+	if (err != 0) {
+		free(k->buf);
+		k->buf = NULL;
+		return -1;
+	}
+	return 0;
+}
+
+void
+opends_kernel_read_teardown(struct io_worker *w)
+{
+	if (!w->kread.buf) {
+		return;
+	}
+	opends_accel->host_unpin(w->kread.buf);
+	free(w->kread.buf);
+	w->kread.buf = NULL;
 }
