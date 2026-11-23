@@ -8,7 +8,7 @@
  *
  * The test expects a 16-page (65536-byte) pattern file already
  * written by test_sync_read_prep. Expected read results are computed
- * in memory via expected_bytes(), so the test binary never needs to
+ * in memory via pattern_expected(), so the test binary never needs to
  * read the file outside the backend.
  */
 #ifndef TEST_SYNC_READ_H_
@@ -37,25 +37,6 @@ struct test_env {
 	const char *mode_label;
 };
 
-/*
- * Fill dst with the bytes that a read at (offset, size) should return.
- * Size is clamped to FILE_SIZE. Returns the number of bytes written.
- */
-static ssize_t
-expected_bytes(char *dst, off_t offset, size_t size)
-{
-	if (offset < 0 || (size_t)offset >= FILE_SIZE)
-		return 0;
-
-	size_t avail = FILE_SIZE - (size_t)offset;
-	if (size > avail)
-		size = avail;
-
-	for (size_t i = 0; i < size; i++)
-		dst[i] = (char)pattern_byte(offset + (off_t)i);
-	return (ssize_t)size;
-}
-
 static int
 verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
             off_t file_offset, off_t buf_offset, const char *label)
@@ -82,7 +63,7 @@ verify_read(struct test_env *env, void *buf, size_t alloc_size, size_t size,
 
 	env->buf_to_host(host, buf, alloc_size);
 
-	ssize_t expected_n = expected_bytes(expected, file_offset, size);
+	ssize_t expected_n = pattern_expected(expected, file_offset, size);
 	if (n != expected_n) {
 		fprintf(stderr, "  %s: got %zd bytes, expected %zd\n", label, n,
 		        expected_n);

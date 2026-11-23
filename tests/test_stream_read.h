@@ -78,21 +78,6 @@ struct stream_test_env {
 	bool sub_lba_unsupported;
 };
 
-static ssize_t
-stream_expected_bytes(char *dst, off_t offset, size_t size)
-{
-	if (offset < 0 || (size_t)offset >= FILE_SIZE)
-		return 0;
-
-	size_t avail = FILE_SIZE - (size_t)offset;
-	if (size > avail)
-		size = avail;
-
-	for (size_t i = 0; i < size; i++)
-		dst[i] = (char)pattern_byte(offset + (off_t)i);
-	return (ssize_t)size;
-}
-
 static int
 verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
                    size_t size, off_t file_offset, off_t buf_offset,
@@ -137,7 +122,7 @@ verify_stream_read(struct stream_test_env *env, void *buf, size_t alloc_size,
 
 	env->buf_to_host(host, buf, alloc_size);
 
-	ssize_t expected_n = stream_expected_bytes(expected, file_offset, size);
+	ssize_t expected_n = pattern_expected(expected, file_offset, size);
 	if (bytes_read != expected_n) {
 		fprintf(stderr, "  %s: got %zd bytes, expected %zd\n", label,
 		        bytes_read, expected_n);
@@ -342,8 +327,8 @@ stream_test_stream_ordering(struct stream_test_env *env)
 
 	env->buf_to_host(host_a, buf_a, PAGE);
 	env->buf_to_host(host_b, buf_b, PAGE);
-	stream_expected_bytes(exp_a, 0, PAGE);
-	stream_expected_bytes(exp_b, 4 * PAGE, PAGE);
+	pattern_expected(exp_a, 0, PAGE);
+	pattern_expected(exp_b, 4 * PAGE, PAGE);
 
 	if (memcmp(host_a, exp_a, PAGE) != 0) {
 		fprintf(stderr, "  ordering: read A mismatch\n");
@@ -430,7 +415,7 @@ stream_test_concurrent_streams(struct stream_test_env *env)
 			goto out_free_bufs;
 		}
 		env->buf_to_host(host, bufs[i], PAGE);
-		stream_expected_bytes(exp, foffs[i], PAGE);
+		pattern_expected(exp, foffs[i], PAGE);
 		int mm = memcmp(host, exp, PAGE);
 		free(host);
 		free(exp);
@@ -526,7 +511,7 @@ stream_test_concurrent_short_reads(struct stream_test_env *env)
 			goto out_free_bufs;
 		}
 		env->buf_to_host(host, bufs[i], short_size);
-		stream_expected_bytes(exp, foffs[i], short_size);
+		pattern_expected(exp, foffs[i], short_size);
 		int mm = memcmp(host, exp, short_size);
 		free(host);
 		free(exp);
@@ -601,7 +586,7 @@ stream_test_burst_single_stream(struct stream_test_env *env)
 			goto out;
 		}
 		env->buf_to_host(host, bufs[i], PAGE);
-		stream_expected_bytes(exp, foffs[i], PAGE);
+		pattern_expected(exp, foffs[i], PAGE);
 		int mm = memcmp(host, exp, PAGE);
 		free(host);
 		free(exp);
@@ -699,7 +684,7 @@ stream_test_deferred_eval(struct stream_test_env *env)
 		goto out;
 	}
 	env->buf_to_host(host, buf, alloc);
-	stream_expected_bytes(exp, mut.target_file_offset, PAGE);
+	pattern_expected(exp, mut.target_file_offset, PAGE);
 	int mm = memcmp(host + mut.target_buf_offset, exp, PAGE);
 	free(host);
 	free(exp);
@@ -803,7 +788,7 @@ stream_test_multi_stream_burst(struct stream_test_env *env)
 				        s, j, brs[i]);
 				goto out_free_host;
 			}
-			stream_expected_bytes(exp, foffs[i], PAGE);
+			pattern_expected(exp, foffs[i], PAGE);
 			if (memcmp(host + boffs[i], exp, PAGE) != 0) {
 				fprintf(stderr,
 				        "  multi_burst[s=%d j=%d]: "
@@ -898,7 +883,7 @@ stream_test_stream_consumer(struct stream_test_env *env)
 			        br);
 			goto out;
 		}
-		stream_expected_bytes(expected, foff, PAGE);
+		pattern_expected(expected, foff, PAGE);
 		if (memcmp(host_pinned, expected, PAGE) != 0) {
 			fprintf(stderr,
 			        "  stream_consumer[%d]: consumer observed "
@@ -1254,7 +1239,7 @@ drain:
 	}
 
 	env->buf_to_host(host, kbuf, ksize);
-	stream_expected_bytes(expected, 1, ksize);
+	pattern_expected(expected, 1, ksize);
 	if (memcmp(host, expected, ksize) != 0) {
 		fprintf(stderr, "  kernel_read_blocking: data mismatch\n");
 		goto out;

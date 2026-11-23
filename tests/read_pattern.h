@@ -27,4 +27,21 @@ pattern_byte(off_t abs_offset)
 	return (unsigned char)((o + p) & 0xff);
 }
 
+/* The bytes a read of size at offset returns, cut at the end of the file.
+ * Returns their number. */
+static inline ssize_t
+pattern_expected(char *dst, off_t offset, size_t size)
+{
+	if (offset < 0 || (size_t)offset >= FILE_SIZE)
+		return 0;
+
+	size_t avail = FILE_SIZE - (size_t)offset;
+	if (size > avail)
+		size = avail;
+
+	for (size_t i = 0; i < size; i++)
+		dst[i] = (char)pattern_byte(offset + (off_t)i);
+	return (ssize_t)size;
+}
+
 #endif /* READ_PATTERN_H_ */
