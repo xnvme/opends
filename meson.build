@@ -205,7 +205,7 @@ aisio_tests = [
 ]
 
 if aisio_test_enabled
-  aisio_test_inc_dirs = [opends_internal_inc, tests_inc] + accel_inc
+  aisio_test_inc_dirs = [tests_inc] + accel_inc
   aisio_test_deps = [opends_aisio_dep, cuda_dep, cuda_drv_dep, threads_dep]
 endif
 
