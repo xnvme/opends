@@ -65,6 +65,11 @@ if cufile_enabled
     include_directories : opends_inc,
     link_with : libopends_cufile,
   )
+
+  pkg.generate(libopends_cufile,
+    name : 'opends_cufile',
+    description : 'OpenDS cuFile backend (NVIDIA GPUDirect Storage)',
+  )
 endif
 
 xnvme_dep = dependency('xnvme', version : '>=0.8.0', required : false)
