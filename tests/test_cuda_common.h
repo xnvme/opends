@@ -7,8 +7,8 @@
  * device memory.
  */
 
-#ifndef OPENDS_TEST_CUDA_COMMON_H
-#define OPENDS_TEST_CUDA_COMMON_H
+#ifndef TEST_CUDA_COMMON_H_
+#define TEST_CUDA_COMMON_H_
 
 #include "opends.h"
 
@@ -146,4 +146,4 @@ cuda_register_packed_release(void *buf)
 	}
 }
 
-#endif /* OPENDS_TEST_CUDA_COMMON_H */
+#endif /* TEST_CUDA_COMMON_H_ */

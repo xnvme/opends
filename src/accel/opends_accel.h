@@ -14,8 +14,8 @@
  * Each vendor converts to and from its native pointer at the boundary (identity
  * for CUDA's CUdeviceptr; a cast for HIP's void *).
  */
-#ifndef OPENDS_ACCEL_H
-#define OPENDS_ACCEL_H
+#ifndef OPENDS_ACCEL_H_
+#define OPENDS_ACCEL_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -114,4 +114,4 @@ struct opends_accel_ops {
  * compiled into the backend. */
 extern const struct opends_accel_ops *const opends_accel;
 
-#endif /* OPENDS_ACCEL_H */
+#endif /* OPENDS_ACCEL_H_ */

@@ -6,8 +6,8 @@
  * gate, then enqueues the copy that closes out the misaligned tail span.
  */
 
-#ifndef OPENDS_BOUNCE_KERNEL_H
-#define OPENDS_BOUNCE_KERNEL_H
+#ifndef OPENDS_BOUNCE_KERNEL_H_
+#define OPENDS_BOUNCE_KERNEL_H_
 
 #include <stdint.h>
 
