@@ -77,6 +77,9 @@ extern "C" {
 #include <sys/types.h>
 #include <time.h>
 
+/* Marks what a library exports; its other symbols stay inside it. */
+#define OPENDS_API __attribute__((visibility("default")))
+
 typedef int opends_result_t;
 
 /* clang-format off */
@@ -135,7 +138,7 @@ typedef struct opends_error {
 #define IS_OPENDS_ERR(err) (abs((err)) > OPENDS_BASE_ERR)
 #define OPENDS_ERRSTR(err) opends_op_status_error((opends_op_error_t)abs((err)))
 
-const char *opends_op_status_error(opends_op_error_t status);
+OPENDS_API const char *opends_op_status_error(opends_op_error_t status);
 
 typedef struct opends_drv_props {
 	unsigned int major_version;
@@ -161,13 +164,15 @@ typedef void *opends_handle_t;
  * opends_driver_set_max_direct_io_size is forwarded to cuFile by the
  * gds backend and ignored by ref and aisio.
  */
-opends_error_t opends_driver_open(void);
-opends_error_t opends_driver_close(void);
-long opends_use_count(void);
-opends_error_t opends_get_version(unsigned *major, unsigned *minor,
-                                  unsigned *patch);
-opends_error_t opends_driver_get_properties(opends_drv_props_t *props);
-opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
+OPENDS_API opends_error_t opends_driver_open(void);
+OPENDS_API opends_error_t opends_driver_close(void);
+OPENDS_API long opends_use_count(void);
+OPENDS_API opends_error_t opends_get_version(unsigned *major, unsigned *minor,
+                                             unsigned *patch);
+OPENDS_API opends_error_t
+opends_driver_get_properties(opends_drv_props_t *props);
+OPENDS_API opends_error_t
+opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
 
 /*
  * File handle registration. Each file descriptor must be registered
@@ -184,16 +189,16 @@ opends_error_t opends_driver_set_max_direct_io_size(size_t max_direct_io_size);
  * with OPENDS_INVALID_VALUE. A raw handle addresses the namespace the
  * driver opened, whatever the controller has.
  */
-opends_error_t opends_handle_register(opends_handle_t *fh, int fd);
-void opends_handle_deregister(opends_handle_t fh);
+OPENDS_API opends_error_t opends_handle_register(opends_handle_t *fh, int fd);
+OPENDS_API void opends_handle_deregister(opends_handle_t fh);
 
 /*
  * Buffer allocation. Buffers used for I/O must be either allocated
  * through opends_alloc or registered with opends_buf_register so the
  * backend can set up DMA mappings.
  */
-void *opends_alloc(size_t size);
-void opends_free(void *buf);
+OPENDS_API void *opends_alloc(size_t size);
+OPENDS_API void opends_free(void *buf);
 
 /*
  * Register an externally allocated buffer for use in I/O calls. The
@@ -204,9 +209,9 @@ void opends_free(void *buf);
  * size work and buffers in one chunk share its mapping; I/O outside
  * the registered range is refused with OPENDS_MEMORY_NOT_REGISTERED.
  */
-opends_error_t opends_buf_register(const void *buf_base, size_t size,
-                                   int flags);
-opends_error_t opends_buf_deregister(const void *buf_base);
+OPENDS_API opends_error_t opends_buf_register(const void *buf_base, size_t size,
+                                              int flags);
+OPENDS_API opends_error_t opends_buf_deregister(const void *buf_base);
 
 /*
  * Asynchronous I/O. The primitive per-operation form:
@@ -233,15 +238,16 @@ typedef struct opends_async_future {
 	ssize_t result;
 } opends_async_future_t;
 
-opends_error_t opends_async_read(opends_handle_t fh, void *buf_base,
-                                 size_t size, off_t file_offset,
-                                 off_t buf_offset,
-                                 opends_async_future_t *future);
-opends_error_t opends_async_write(opends_handle_t fh, const void *buf_base,
-                                  size_t size, off_t file_offset,
-                                  off_t buf_offset,
-                                  opends_async_future_t *future);
-ssize_t opends_async_await(opends_async_future_t *future);
+OPENDS_API opends_error_t opends_async_read(opends_handle_t fh, void *buf_base,
+                                            size_t size, off_t file_offset,
+                                            off_t buf_offset,
+                                            opends_async_future_t *future);
+OPENDS_API opends_error_t opends_async_write(opends_handle_t fh,
+                                             const void *buf_base, size_t size,
+                                             off_t file_offset,
+                                             off_t buf_offset,
+                                             opends_async_future_t *future);
+OPENDS_API ssize_t opends_async_await(opends_async_future_t *future);
 
 /*
  * Synchronous I/O. Returns byte count on success or a negated
@@ -249,10 +255,12 @@ ssize_t opends_async_await(opends_async_future_t *future);
  * into the buffer at an offset, useful for scatter reads into a
  * single allocation.
  */
-ssize_t opends_sync_read(opends_handle_t fh, void *buf_base, size_t size,
-                         off_t file_offset, off_t buf_offset);
-ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base, size_t size,
-                          off_t file_offset, off_t buf_offset);
+OPENDS_API ssize_t opends_sync_read(opends_handle_t fh, void *buf_base,
+                                    size_t size, off_t file_offset,
+                                    off_t buf_offset);
+OPENDS_API ssize_t opends_sync_write(opends_handle_t fh, const void *buf_base,
+                                     size_t size, off_t file_offset,
+                                     off_t buf_offset);
 
 /*
  * Stream-ordered I/O (cuFileReadAsync/WriteAsync). Operations are
@@ -284,17 +292,21 @@ typedef void *opends_stream_t;
 #define OPENDS_STREAM_FIXED_FILE_SIZE 4
 #define OPENDS_STREAM_PAGE_ALIGNED_INPUTS 8
 
-opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
-                                  size_t *size_p, off_t *file_offset_p,
-                                  off_t *buf_offset_p, ssize_t *bytes_read_p,
-                                  opends_stream_t stream);
-opends_error_t opends_stream_write(opends_handle_t fh, void *buf_base,
-                                   size_t *size_p, off_t *file_offset_p,
-                                   off_t *buf_offset_p,
-                                   ssize_t *bytes_written_p,
-                                   opends_stream_t stream);
-opends_error_t opends_stream_register(opends_stream_t stream, unsigned flags);
-opends_error_t opends_stream_deregister(opends_stream_t stream);
+OPENDS_API opends_error_t opends_stream_read(opends_handle_t fh, void *buf_base,
+                                             size_t *size_p,
+                                             off_t *file_offset_p,
+                                             off_t *buf_offset_p,
+                                             ssize_t *bytes_read_p,
+                                             opends_stream_t stream);
+OPENDS_API opends_error_t opends_stream_write(opends_handle_t fh,
+                                              void *buf_base, size_t *size_p,
+                                              off_t *file_offset_p,
+                                              off_t *buf_offset_p,
+                                              ssize_t *bytes_written_p,
+                                              opends_stream_t stream);
+OPENDS_API opends_error_t opends_stream_register(opends_stream_t stream,
+                                                 unsigned flags);
+OPENDS_API opends_error_t opends_stream_deregister(opends_stream_t stream);
 
 /*
  * Batch I/O. Submit multiple operations in a single call and poll for
@@ -359,18 +371,18 @@ typedef struct opends_io_events {
 
 typedef void *opends_batch_handle_t;
 
-opends_error_t opends_batch_setup(opends_batch_handle_t *batch_idp,
-                                  unsigned nr);
-opends_error_t opends_batch_submit(opends_batch_handle_t batch_idp, unsigned nr,
-                                   opends_io_params_t *iocbp,
-                                   unsigned int flags);
+OPENDS_API opends_error_t opends_batch_setup(opends_batch_handle_t *batch_idp,
+                                             unsigned nr);
+OPENDS_API opends_error_t opends_batch_submit(opends_batch_handle_t batch_idp,
+                                              unsigned nr,
+                                              opends_io_params_t *iocbp,
+                                              unsigned int flags);
 /* Poll for at least min_nr completions, returning up to *nr events. */
-opends_error_t opends_batch_get_status(opends_batch_handle_t batch_idp,
-                                       unsigned min_nr, unsigned *nr,
-                                       opends_io_events_t *iocbp,
-                                       struct timespec *timeout);
-opends_error_t opends_batch_cancel(opends_batch_handle_t batch_idp);
-void opends_batch_destroy(opends_batch_handle_t batch_idp);
+OPENDS_API opends_error_t opends_batch_get_status(
+        opends_batch_handle_t batch_idp, unsigned min_nr, unsigned *nr,
+        opends_io_events_t *iocbp, struct timespec *timeout);
+OPENDS_API opends_error_t opends_batch_cancel(opends_batch_handle_t batch_idp);
+OPENDS_API void opends_batch_destroy(opends_batch_handle_t batch_idp);
 
 #ifdef __cplusplus
 }
