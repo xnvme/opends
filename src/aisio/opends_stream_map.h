@@ -17,8 +17,8 @@
  * stream) included.
  */
 
-#ifndef OPENDS_DS_STREAM_MAP_H
-#define OPENDS_DS_STREAM_MAP_H
+#ifndef OPENDS_STREAM_MAP_H_
+#define OPENDS_STREAM_MAP_H_
 
 #include "accel/opends_accel.h"
 
@@ -86,4 +86,4 @@ opends_stream_map_put(struct opends_stream_map_entry *e, uint32_t mask,
 	return -1;
 }
 
-#endif /* OPENDS_DS_STREAM_MAP_H */
+#endif /* OPENDS_STREAM_MAP_H_ */
