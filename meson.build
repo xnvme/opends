@@ -157,35 +157,26 @@ endif
 # Test binaries
 threads_dep = dependency('threads')
 
-executable('test_smoke_ref',
-  'tests/test_smoke_ref.c',
-  dependencies : [opends_ref_dep],
-)
+ref_tests = [
+  'smoke',
+  'sync_read',
+  'mt_read',
+  'async_read',
+  'batch_read',
+]
+
+foreach t : ref_tests
+  name = 'test_@0@_ref'.format(t)
+  executable(name,
+    'tests/@0@.c'.format(name),
+    dependencies : [opends_ref_dep, threads_dep],
+  )
+endforeach
 
 # Prep binary: writes the shared pattern file consumed by every
 # backend's test_sync_read_X.
 executable('test_sync_read_prep',
   'tests/test_sync_read_prep.c',
-)
-
-executable('test_sync_read_ref',
-  'tests/test_sync_read_ref.c',
-  dependencies : [opends_ref_dep],
-)
-
-executable('test_mt_read_ref',
-  'tests/test_mt_read_ref.c',
-  dependencies : [opends_ref_dep, threads_dep],
-)
-
-executable('test_async_read_ref',
-  'tests/test_async_read_ref.c',
-  dependencies : [opends_ref_dep],
-)
-
-executable('test_batch_read_ref',
-  'tests/test_batch_read_ref.c',
-  dependencies : [opends_ref_dep],
 )
 
 if cufile_enabled
@@ -199,93 +190,58 @@ endif
 
 aisio_test_enabled = aisio_enabled and cuda_dep.found()
 
+aisio_tests = [
+  'sync_read',
+  'mt_read',
+  'async_read',
+  'batch_read',
+  'register_large',
+  'coherency',
+  'sparse_read',
+  'stream_read',
+  'sync_write',
+  'stream_write',
+  'raw_block',
+]
+
 if aisio_test_enabled
   aisio_test_inc_dirs = [opends_internal_inc, tests_inc] + accel_inc
+  aisio_test_deps = [opends_aisio_dep, cuda_dep, cuda_drv_dep, threads_dep]
+endif
 
-  executable('test_sync_read_aisio',
-    'tests/test_sync_read_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep],
-  )
-  executable('test_mt_read_aisio',
-    'tests/test_mt_read_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep, threads_dep],
-  )
-  executable('test_async_read_aisio',
-    'tests/test_async_read_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
-  executable('test_batch_read_aisio',
-    'tests/test_batch_read_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
-  executable('test_register_large_aisio',
-    'tests/test_register_large_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep],
-  )
-  executable('test_coherency_aisio',
-    'tests/test_coherency_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep],
-  )
-  executable('test_sparse_read_aisio',
-    'tests/test_sparse_read_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
-  executable('test_stream_read_aisio',
-    'tests/test_stream_read_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
-  executable('test_sync_write_aisio',
-    'tests/test_sync_write_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
-  executable('test_stream_write_aisio',
-    'tests/test_stream_write_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
-  executable('test_raw_block_aisio',
-    'tests/test_raw_block_aisio.c',
-    include_directories : aisio_test_inc_dirs,
-    dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
-  )
+# The test of a backend that is not built is a stub that passes
+foreach t : aisio_tests
+  name = 'test_@0@_aisio'.format(t)
+  if aisio_test_enabled
+    executable(name,
+      'tests/@0@.c'.format(name),
+      include_directories : aisio_test_inc_dirs,
+      dependencies : aisio_test_deps,
+    )
+  else
+    executable(name, 'tests/skip.c')
+  endif
+endforeach
 
+if aisio_test_enabled
   executable('sync_read_example',
     'examples/sync_read.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep, cuda_drv_dep],
   )
+
   executable('async_read_example',
     'examples/async_read.c',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
   )
+
   executable('stream_read_example',
     'examples/stream_read.cu',
     include_directories : aisio_test_inc_dirs,
     dependencies : [opends_aisio_dep, cuda_dep],
     cuda_args : accel_kernel_args,
   )
-else
-  executable('test_sync_read_aisio', 'tests/skip.c')
-  executable('test_mt_read_aisio', 'tests/skip.c')
-  executable('test_async_read_aisio', 'tests/skip.c')
-  executable('test_batch_read_aisio', 'tests/skip.c')
-  executable('test_register_large_aisio', 'tests/skip.c')
-  executable('test_coherency_aisio', 'tests/skip.c')
-  executable('test_sparse_read_aisio', 'tests/skip.c')
-  executable('test_stream_read_aisio', 'tests/skip.c')
-  executable('test_sync_write_aisio', 'tests/skip.c')
-  executable('test_stream_write_aisio', 'tests/skip.c')
-  executable('test_raw_block_aisio', 'tests/skip.c')
 endif
 
 summary({
