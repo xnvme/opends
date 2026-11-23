@@ -278,7 +278,7 @@ bool opends_aisio_range_registered(struct driver *d, const void *ptr,
 void opends_aisio_future_complete(opends_async_future_t *fut, ssize_t result);
 
 /* opends_aisio_posix.c: writes through the file system, staged in pinned
- * buffers an I/O thread only polls for. */
+ * buffers an I/O thread only polls for, and reads through the kernel. */
 struct write_buf *opends_write_buf_take(struct driver *d);
 int opends_write_buf_take_or_grow(struct driver *d, struct write_buf **out);
 void opends_write_buf_put(struct driver *d, struct write_buf *s);
@@ -293,5 +293,10 @@ int opends_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
                                          opends_accel_stream_t cus);
 bool opends_dispatch_write(struct io_worker *w, struct file_op *op);
 void opends_write_poll(struct io_worker *w, struct file_op *op);
+void opends_kernel_read_start(struct io_worker *w, struct file_op *op,
+                              uint8_t *dst, size_t size, uint64_t req_start);
+void opends_kernel_read_poll(struct io_worker *w);
+int opends_kernel_read_setup(struct driver *d, struct io_worker *w);
+void opends_kernel_read_teardown(struct io_worker *w);
 
 #endif /* OPENDS_AISIO_H_ */
