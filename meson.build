@@ -27,6 +27,7 @@ libopends_ref = shared_library('opends_ref',
   'src/opends_sync_async.c',
   'src/opends_batch_async.c',
   include_directories : [opends_inc, opends_internal_inc],
+  gnu_symbol_visibility : 'hidden',
   install : true,
 )
 
@@ -56,6 +57,7 @@ if cufile_enabled
     'src/cufile/opends_cufile.c',
     include_directories : [opends_inc, opends_internal_inc],
     dependencies : [cuda_dep, cufile_dep],
+    gnu_symbol_visibility : 'hidden',
     install : true,
   )
 
@@ -136,6 +138,7 @@ if aisio_enabled
     include_directories : aisio_inc_dirs,
     dependencies : [xnvme_dep, xal_dep] + accel_deps,
     cuda_args : accel_kernel_args,
+    gnu_symbol_visibility : 'hidden',
     install : true,
   )
 
