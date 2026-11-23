@@ -162,7 +162,7 @@ typedef void *opends_handle_t;
  *
  * opends_use_count returns the number of registered file handles.
  * opends_driver_set_max_direct_io_size is forwarded to cuFile by the
- * gds backend and ignored by ref and aisio.
+ * cufile backend and ignored by ref and aisio.
  */
 OPENDS_API opends_error_t opends_driver_open(void);
 OPENDS_API opends_error_t opends_driver_close(void);
