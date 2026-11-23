@@ -223,20 +223,21 @@ struct io_worker {
 };
 
 struct driver {
-	char dev_uri[XNVME_IDENT_URI_LEN]; ///< NVMe device the HOMI server owns
-	struct aisio_config cfg;           ///< From the environment at open
-	struct xal *xal; ///< The index xal-server publishes (index_attach)
-	int attach_rc;   ///< Why the attach failed; it is tried only once
+	/* NVMe device the HOMI server owns */
+	char dev_uri[XNVME_IDENT_URI_LEN];
+	struct aisio_config cfg; /* from the environment at open */
+	struct xal *xal; /* the index xal-server publishes (index_attach) */
+	int attach_rc;   /* why the attach failed; it is tried only once */
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
 	uint32_t lba_shift;
 	uint32_t mdts_nbytes;
 	uint64_t ns_nbytes;
-	struct buf_entry bufs[MAX_BUF_ENTRIES]; ///< Sorted by base
+	struct buf_entry bufs[MAX_BUF_ENTRIES]; /* sorted by base */
 	int buf_count;
-	size_t chunk_nbytes; ///< Allocation granularity registrations round to
-	struct map_run runs[MAX_MAP_RUNS]; ///< Disjoint, sorted by base
+	size_t chunk_nbytes; /* allocation granularity registrations round to */
+	struct map_run runs[MAX_MAP_RUNS]; /* disjoint, sorted by base */
 	int run_count;
 
 	bool workers_ready;
@@ -252,7 +253,7 @@ struct driver {
 	struct write_buf *write_bufs_free;
 	struct write_buf *write_bufs_all;
 	int write_buf_count;
-	int write_buf_live; ///< Made or being made, not kept out of the pool
+	int write_buf_live; /* made or being made, not kept out of the pool */
 	pthread_mutex_t write_buf_lock;
 
 	struct io_worker *workers;
