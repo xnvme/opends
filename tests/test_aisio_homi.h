@@ -13,6 +13,7 @@
 #define TEST_AISIO_HOMI_H_
 
 #include "opends.h"
+#include "test_cuda_common.h"
 
 #include <cuda.h>
 
@@ -43,22 +44,11 @@ struct aisio_homi {
 static inline int
 aisio_homi_setup_flags(const char *path, int flags, struct aisio_homi *out)
 {
-	CUdevice cudev;
-	CUresult cres;
-
 	out->cuctx = NULL;
 	out->fd = -1;
 	out->fh = NULL;
 
-	cuInit(0);
-	cuDeviceGet(&cudev, 0);
-	/* CUDA 13 maps cuCtxCreate to the 4-argument _v4 form. */
-#if CUDA_VERSION >= 13000
-	cres = cuCtxCreate(&out->cuctx, NULL, 0, cudev);
-#else
-	cres = cuCtxCreate(&out->cuctx, 0, cudev);
-#endif
-	if (cres != CUDA_SUCCESS) {
+	if (cuda_ctx_create(&out->cuctx) < 0) {
 		fprintf(stderr, "cuCtxCreate failed\n");
 		return -1;
 	}

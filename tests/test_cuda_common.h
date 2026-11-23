@@ -12,10 +12,26 @@
 
 #include "opends.h"
 
+#include <cuda.h>
 #include <cuda_runtime.h>
 
 #include <stdio.h>
 #include <stdlib.h>
+
+/* A context on device 0, made current. Returns 0 or -1. */
+static inline int
+cuda_ctx_create(CUcontext *ctx)
+{
+	CUdevice dev;
+	cuInit(0);
+	cuDeviceGet(&dev, 0);
+	/* CUDA 13 maps cuCtxCreate to the 4-argument _v4 form. */
+#if CUDA_VERSION >= 13000
+	return cuCtxCreate(ctx, NULL, 0, dev) == CUDA_SUCCESS ? 0 : -1;
+#else
+	return cuCtxCreate(ctx, 0, dev) == CUDA_SUCCESS ? 0 : -1;
+#endif
+}
 
 static inline void *
 cuda_buf_to_host(void *dst, const void *src, size_t n)
