@@ -46,20 +46,6 @@
 #define BAD_INDEX "/opends_raw_block_bad_index"
 #define ENV_RAW_BLOCK "OPENDS_AISIO_RAW_BLOCK"
 
-static int
-cuda_ctx_create(CUcontext *ctx)
-{
-	CUdevice dev;
-	cuInit(0);
-	cuDeviceGet(&dev, 0);
-	/* CUDA 13 maps cuCtxCreate to the 4-argument _v4 form. */
-#if CUDA_VERSION >= 13000
-	return cuCtxCreate(ctx, NULL, 0, dev) == CUDA_SUCCESS ? 0 : -1;
-#else
-	return cuCtxCreate(ctx, 0, dev) == CUDA_SUCCESS ? 0 : -1;
-#endif
-}
-
 /* Returns the number of bytes that differ from the pattern at off. */
 static size_t
 check_pattern(const unsigned char *host, uint64_t off, size_t n)
