@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 #define _GNU_SOURCE
 
 #include "test_mt_read.h"

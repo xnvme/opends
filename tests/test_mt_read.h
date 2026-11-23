@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * test_mt_read.h - Backend-agnostic multithreaded opends_sync_read test.
  *
