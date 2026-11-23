@@ -362,7 +362,8 @@ _From the [`bench-cufile` run of 2026-11-13](https://github.com/xnvme/opends/tre
 ## OpenDS API
 
 C programs find OpenDS through `pkg-config --cflags --libs opends` or meson's
-`dependency('opends')`. Python bindings are in `python/`; see
+`dependency('opends')`. That name is the reference backend; `opends_aisio`
+and `opends_cufile` are the other two. Python bindings are in `python/`; see
 `python/README.md`.
 
 | OpenDS family     | cuFile equivalent                    |
