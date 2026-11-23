@@ -4,13 +4,14 @@
 # kernel driver. clear_homi_stack.sh stops the stack; this rebinds nvme after it.
 set -e
 
-if [ $# -ne 2 ]; then
-	echo "usage: homi_stack_down.sh BDF MOUNT" >&2
+# A second argument is accepted and ignored, for callers that pass the mount:
+# clear_homi_stack.sh unmounts whatever is on a ublk device.
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+	echo "usage: homi_stack_down.sh BDF" >&2
 	exit 1
 fi
 
 BDF=$1
-MOUNT=$2
 HERE=$(dirname "$0")
 
 "$HERE/clear_homi_stack.sh"

@@ -263,7 +263,7 @@ steps:
 
   - name: homi_stack_down
     run: |
-      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}' '{{ config.test.mount_point }}'
+      '{{ config.test.repo_path }}/tasks/steps/homi_stack_down.sh' '{{ config.test.nvme_bdf }}'
 
   - name: raw_block_clean
     run: |
