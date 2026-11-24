@@ -3,10 +3,8 @@ doc: |
   Setup fil
   =========
 
-  Clones the fil repository on the target afresh, checks out the
-  configured ref (branch, tag, or commit), then builds and installs
-  fil so the filperf binary is available for benchmarking. The remote
-  and ref are read from [fil.repository] in deps.toml.
+  Builds and installs fil at the ref of [fil.repository] in deps.toml,
+  for the filperf binary the benchmarks run.
 
   fil depends on xnvme, xal, CUDA cuFile and the OpenDS aisio library;
   run setup_xnvme, setup_xal and setup_opends first (setup_deps.py

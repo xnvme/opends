@@ -16,20 +16,7 @@ doc: |
   straight to GPU memory. homi_stack_down tears the stack down and
   rebinds nvme.
 
-  Prerequisites:
-    * scripts/setup_deps.py has installed xnvme, xal, OpenDS, and fil
-      on the target.
-    * scripts/build.py has built OpenDS on the target.
-    * aisio's tasks/setup_dataset.yaml has run on the target, formatting
-      the NVMe with XFS and populating the first three reference datasets
-      (filesize8gib, tiktokish, imagenetish) under config.test.mount_point.
-    * OpenDS's tasks/setup_dataset.yaml (scripts/bench/setup_dataset.py) has
-      populated lmcacheish.
-
-  bench_meta records the build commit + target platform to
-  artifacts/meta.json; each bench_run stashes filperf's verbatim
-  stdout to artifacts/<backend>_<data_dir>_<mode>.log for downstream
-  parsing by scripts/bench/report.py.
+  Prerequisites and artifacts: as in bench_cufile.yaml.
 
 steps:
   - name: check_stack_down

@@ -26,9 +26,8 @@ from _helpers import ROOT, iter_history, ok
 SHIPPED_KNOBS = {"assume_aligned_only": 0, "idle_spin_us": 200,
                  "busy_spin": 0}
 
-# Ordinal blue ramp endpoints (light -> dark = fewest -> most threads),
-# validated for the light surface. Chrome tokens from the reference
-# palette.
+# The lines run from light for the fewest threads to dark for the most.
+# The other colors are the plot's background, text and grid.
 RAMP_LIGHT = (0x86, 0xb6, 0xef)
 RAMP_DARK = (0x0d, 0x36, 0x6b)
 SURFACE = "#fcfcfb"

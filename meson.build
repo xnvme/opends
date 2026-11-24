@@ -119,9 +119,9 @@ endif
 aisio_enabled = xnvme_dep.found() and accel_runtime_found and xal_dep.found()
 
 if aisio_enabled
-  # The async path links a tiny D2D copy kernel compiled from
-  # src/accel/opends_bounce_kernel_cuda.cu. Adding the kernel language only when aisio is
-  # actually built keeps ref-only builds free of an nvcc dependency.
+  # The backend links device code compiled from
+  # src/accel/opends_bounce_kernel_cuda.cu. Adding its language only here
+  # keeps a build without aisio free of nvcc.
   add_languages(accel_kernel_lang, required : true, native : false)
 
   aisio_inc_dirs = [opends_inc, opends_internal_inc] + accel_inc
