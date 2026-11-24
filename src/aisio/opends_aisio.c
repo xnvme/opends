@@ -1918,7 +1918,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	/* A write is staged by copies queued below, ahead of the gate, so it
 	 * takes the parameters of the call and its buffer now; a full pool
 	 * waits for the I/O threads. A source the thread would refuse stages
-	 * nothing and fails at the gate, as before. */
+	 * nothing and fails at the gate. */
 	size_t wsize = 0;
 	off_t wfoff = 0;
 	off_t wboff = 0;

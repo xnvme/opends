@@ -3,8 +3,9 @@
  * opends_cufile.c - cuFile backend for NVIDIA GPUDirect Storage.
  *
  * Thin wrapper around the cuFile API. Buffers are allocated on the GPU
- * with cudaMalloc and registered with cuFileBufRegister for DMA. Batch
- * and async operations delegate directly to cuFile.
+ * with cudaMalloc and registered with cuFileBufRegister for DMA. The sync,
+ * stream and batch calls go straight to cuFile. The async calls have no
+ * cuFile counterpart and fail with OPENDS_ASYNC_NOT_SUPPORTED.
  *
  * Requires: NVIDIA CUDA toolkit and cuFile (GDS) library.
  * Tested against cuFile API 1.x (GDS 1.4+).
