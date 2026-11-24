@@ -2,15 +2,15 @@
 
 The aisio backend reads NVMe straight into GPU memory over xNVMe P2P DMA.
 Its only GPU dependency is a narrow runtime surface, `struct ds_accel_ops`
-in `src/ds_accel.h`: context capture and binding, pinned-mapped host
+in `src/accel/opends_accel.h`: context capture and binding, pinned-mapped host
 allocation, a host/device copy, a stream-ordered host callback, and a
 deferred stream-ordered copy. The NVMe and extent code calls only through
 the active-ops pointer `ds_accel`, never a vendor symbol.
 
-A port is one implementation file, `src/ds_accel_<backend>.c`, that fills in
+A port is one implementation file, `src/accel/opends_accel_<backend>.c`, that fills in
 `struct ds_accel_ops` and binds `ds_accel` to it, plus a `meson.build`
 branch (keyed on the `accel_backend` option) that selects it and links the
-vendor runtime. Read `ds_accel.h` for the contract and `ds_accel_cuda.c` for
+vendor runtime. Read `opends_accel.h` for the contract and `opends_accel_cuda.c` for
 a worked example; only CUDA is implemented today. Device buffers are not in
 the table: allocation is delegated to xNVMe (`xnvme_buf_alloc`).
 
@@ -29,7 +29,7 @@ validating on real hardware before trusting a port:
 `copy_stream` closes out a sub-LBA tail on the user's stream: its parameters
 are published after it is enqueued, by host stores the I/O thread makes
 while the stream is parked in the callback. CUDA needs a kernel for that,
-shipped in `ds_bounce_kernel_cuda.cu`; a vendor whose runtime can defer a
+shipped in `opends_bounce_kernel_cuda.cu`; a vendor whose runtime can defer a
 stream copy may not need a separate kernel translation unit at all. Setting
 `OPENDS_AISIO_ASSUME_ALIGNED_ONLY=1` drops the bounce path entirely
 (unaligned reads then fail with `OPENDS_INVALID_VALUE`).

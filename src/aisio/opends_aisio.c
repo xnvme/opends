@@ -24,7 +24,7 @@
 
 #define _GNU_SOURCE
 
-#include "ds_aisio.h"
+#include "opends_aisio.h"
 
 #include <sys/ioctl.h>
 

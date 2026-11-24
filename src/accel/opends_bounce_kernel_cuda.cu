@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * CUDA bounce copy kernel for the aisio async path. The host enqueues it
- * behind the stream wait-value gate (see ds_bounce_kernel.h), so by launch
+ * behind the stream wait-value gate (see opends_bounce_kernel.h), so by launch
  * time NVMe has filled the bounce slot and the descriptor is published.
  * Threads stride bytes within the single copy; n_bytes == 0 falls through,
  * so the launch is safe for a no-op op.
  *
- * Compiled by nvcc; does not include the host ds_accel.h shim.
+ * Compiled by nvcc; does not include the host opends_accel.h shim.
  */
 
-#include "ds_bounce_kernel.h"
+#include "opends_bounce_kernel.h"
 
 #include <cuda_runtime.h>
 #include <stdint.h>

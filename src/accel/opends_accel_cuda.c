@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_accel_cuda.c - CUDA implementation of the ds_accel.h interface.
+ * opends_accel_cuda.c - CUDA implementation of the opends_accel.h interface.
  *
  * Defines the ds_accel_ops instance for CUDA and binds the active-ops
- * pointer ds_accel to it. The bounce launch lives in ds_bounce_kernel_cuda.cu
- * (the device translation unit); every other op maps onto the CUDA driver
- * API (cu*).
+ * pointer ds_accel to it. The bounce launch lives in
+ * opends_bounce_kernel_cuda.cu (the device translation unit); every other op
+ * maps onto the CUDA driver API (cu*).
  */
 
-#include "ds_accel.h"
+#include "opends_accel.h"
 
 #include <cuda.h>
 
 /* The copy_stream kernel launcher, defined in the nvcc TU
- * (ds_bounce_kernel_cuda.cu). */
+ * (opends_bounce_kernel_cuda.cu). */
 int cuda_copy_stream(uint64_t desc_dev, void *stream);
 int cuda_stage_stream(uint64_t desc_dev, uint64_t turn_dev, uint64_t landed_dev,
                       void *stream);

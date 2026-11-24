@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-patterns = ("src/*.c", "src/*.h", "src/*.cu", "include/*.h", "tests/*.c", "tests/*.h")
+patterns = ("src/**/*.c", "src/**/*.h", "src/**/*.cu", "include/*.h", "tests/*.c", "tests/*.h")
 sources = sorted(p for pat in patterns for p in root.glob(pat))
 
 for src in sources:

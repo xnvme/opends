@@ -23,10 +23,10 @@ install_headers(public_headers)
 
 libopends_ref = shared_library('opends_ref',
   'src/opends_common.c',
-  'src/opends_ref.c',
+  'src/ref/opends_ref.c',
   'src/opends_sync_async.c',
   'src/opends_batch_async.c',
-  include_directories : opends_inc,
+  include_directories : [opends_inc, opends_internal_inc],
   install : true,
 )
 
@@ -53,8 +53,8 @@ cufile_enabled = cuda_dep.found() and cufile_dep.found()
 if cufile_enabled
   libopends_cufile = shared_library('opends_cufile',
     'src/opends_common.c',
-    'src/opends_cufile.c',
-    include_directories : opends_inc,
+    'src/cufile/opends_cufile.c',
+    include_directories : [opends_inc, opends_internal_inc],
     dependencies : [cuda_dep, cufile_dep],
     install : true,
   )
@@ -69,7 +69,7 @@ xnvme_dep = dependency('xnvme', version : '>=0.8.0', required : false)
 xal_dep = dependency('xal', version : '>=0.4.0', required : false)
 
 accel_backend = get_option('accel_backend')
-accel_src = 'src/ds_accel_@0@.c'.format(accel_backend)
+accel_src = 'src/accel/opends_accel_@0@.c'.format(accel_backend)
 accel_kernel_lang = 'cuda'
 # Compile device code for the GPU present at build time. The nvcc default
 # arch has no SASS for newer GPUs, and the driver rejects PTX from a newer
@@ -103,7 +103,7 @@ if accel_backend == 'cuda'
   have_cuda_h = accel_sys_inc_dirs.length() > 0 or cc.has_header('cuda.h')
 
   accel_deps = [cuda_dep, cuda_drv_dep]
-  accel_kernel_src = 'src/ds_bounce_kernel_cuda.cu'
+  accel_kernel_src = 'src/accel/opends_bounce_kernel_cuda.cu'
   accel_runtime_found = cuda_dep.found() and cuda_drv_dep.found() and have_cuda_h
 else
   error('accel_backend=@0@ has no ds_accel implementation; only cuda is wired up (see docs/vendor-port.md).'.format(accel_backend))
@@ -118,7 +118,7 @@ aisio_enabled = xnvme_dep.found() and accel_runtime_found and xal_dep.found()
 
 if aisio_enabled
   # The async path links a tiny D2D copy kernel compiled from
-  # src/ds_bounce_kernel_cuda.cu. Adding the kernel language only when aisio is
+  # src/accel/opends_bounce_kernel_cuda.cu. Adding the kernel language only when aisio is
   # actually built keeps ref-only builds free of an nvcc dependency.
   add_languages(accel_kernel_lang, required : true, native : false)
 
@@ -126,9 +126,9 @@ if aisio_enabled
 
   libopends_aisio = shared_library('opends_aisio',
     'src/opends_common.c',
-    'src/opends_aisio.c',
-    'src/ds_aisio_posix.c',
-    'src/ds_aisio_config.c',
+    'src/aisio/opends_aisio.c',
+    'src/aisio/opends_aisio_posix.c',
+    'src/aisio/opends_aisio_config.c',
     'src/opends_sync_async.c',
     'src/opends_batch_async.c',
     accel_src,

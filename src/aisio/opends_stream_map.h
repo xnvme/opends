@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_stream_map.h - tiny open-addressing map keyed on a GPU stream.
+ * opends_stream_map.h - tiny open-addressing map keyed on a GPU stream.
  *
  * Backs opends_aisio's stream -> stream_state lookup. The driver
  * registers up to MAX_STREAMS streams and then performs an
@@ -20,7 +20,7 @@
 #ifndef OPENDS_DS_STREAM_MAP_H
 #define OPENDS_DS_STREAM_MAP_H
 
-#include "ds_accel.h"
+#include "accel/opends_accel.h"
 
 #include <stdint.h>
 
