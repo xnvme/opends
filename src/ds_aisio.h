@@ -58,11 +58,12 @@ enum file_op_state {
 struct buf_entry {
 	const void *base;
 	size_t length;
-	bool owned; /* true: xnvme_buf_alloc; false: xnvme_mem_map. */
+	bool owned; /* true: xnvme_buf_alloc; false: xnvme_buf_register. */
 };
 
-/* One xnvme_mem_map of whole allocation chunks. A registered buffer references
- * every run its chunks fall in; the run is unmapped when the last one leaves.
+/* One xnvme_buf_register of whole allocation chunks. A registered buffer
+ * references every run its chunks fall in; the run is unmapped when the last
+ * one leaves.
  */
 struct map_run {
 	uintptr_t base;

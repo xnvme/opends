@@ -188,9 +188,10 @@ struct run_gap {
 	size_t nbytes;
 };
 
-/* Map the chunks of [lo, hi) no run covers yet, one xnvme_mem_map per gap, and
- * reference every run the range touches. A gap never overlaps a live mapping,
- * which is what xnvme's registry refuses. Returns 0 or a negative errno. */
+/* Map the chunks of [lo, hi) no run covers yet, one xnvme_buf_register per gap,
+ * and reference every run the range touches. A gap never overlaps a live
+ * mapping, which is what xnvme's registry refuses. Returns 0 or a negative
+ * errno. */
 static int
 runs_acquire(struct driver *d, uintptr_t lo, uintptr_t hi)
 {
@@ -230,12 +231,12 @@ runs_acquire(struct driver *d, uintptr_t lo, uintptr_t hi)
 	}
 
 	for (mapped = 0; mapped < ngaps; mapped++) {
-		err = xnvme_mem_map(d->xdev, (void *)gaps[mapped].base,
-		                    gaps[mapped].nbytes);
+		err = xnvme_buf_register(d->xdev, (void *)gaps[mapped].base,
+		                         gaps[mapped].nbytes);
 		if (err < 0) {
 			fprintf(stderr,
-			        "opends_buf_register: xnvme_mem_map(%p, %zu) "
-			        "rc=%d\n",
+			        "opends_buf_register: "
+			        "xnvme_buf_register(%p, %zu) rc=%d\n",
 			        (void *)gaps[mapped].base, gaps[mapped].nbytes,
 			        err);
 			break;
@@ -243,7 +244,7 @@ runs_acquire(struct driver *d, uintptr_t lo, uintptr_t hi)
 	}
 	if (err < 0) {
 		for (int i = 0; i < mapped; i++)
-			xnvme_mem_unmap(d->xdev, (void *)gaps[i].base);
+			xnvme_buf_unregister(d->xdev, (void *)gaps[i].base);
 		free(gaps);
 		return err;
 	}
@@ -267,7 +268,7 @@ runs_release(struct driver *d, uintptr_t lo, uintptr_t hi)
 			i++;
 			continue;
 		}
-		xnvme_mem_unmap(d->xdev, (void *)d->runs[i].base);
+		xnvme_buf_unregister(d->xdev, (void *)d->runs[i].base);
 		run_remove(d, i);
 	}
 }
@@ -276,7 +277,7 @@ static void
 runs_clear(struct driver *d)
 {
 	for (int i = 0; i < d->run_count; i++)
-		xnvme_mem_unmap(d->xdev, (void *)d->runs[i].base);
+		xnvme_buf_unregister(d->xdev, (void *)d->runs[i].base);
 	d->run_count = 0;
 }
 

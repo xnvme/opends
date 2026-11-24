@@ -65,7 +65,7 @@ if cufile_enabled
   )
 endif
 
-xnvme_dep = dependency('xnvme', required : false)
+xnvme_dep = dependency('xnvme', version : '>=0.8.0', required : false)
 xal_dep = dependency('xal', required : false)
 
 accel_backend = get_option('accel_backend')
