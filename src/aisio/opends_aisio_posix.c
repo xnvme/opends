@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_aisio_posix.c - the aisio backend's path through the mounted file
+ * opends_aisio_posix.c - the aisio backend's path through the mounted file
  * system: writes, staged out of GPU memory into pinned host buffers and
  * pwritten through the fd. The copies are queued, on the user's stream
  * ahead of its gate for a stream write and on the default stream for the
@@ -10,7 +10,7 @@
 
 #define _GNU_SOURCE
 
-#include "ds_aisio.h"
+#include "opends_aisio.h"
 
 struct write_buf *
 ds_write_buf_take(struct driver *d)

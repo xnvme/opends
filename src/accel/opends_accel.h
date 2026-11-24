@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_accel.h - vendor-neutral accelerator runtime interface for the aisio
+ * opends_accel.h - vendor-neutral accelerator runtime interface for the aisio
  * backend.
  *
  * A vendor supports the backend by defining one struct ds_accel_ops instance
- * and binding the active-ops pointer ds_accel to it (see ds_accel_cuda.c). The
- * NVMe and extent code calls only through ds_accel, never a vendor symbol.
+ * and binding the active-ops pointer ds_accel to it (see opends_accel_cuda.c).
+ * The NVMe and extent code calls only through ds_accel, never a vendor symbol.
  *
  * Interface types are vendor-uniform so the ops ABI is fixed:
  *   - ds_accel_devptr_t is a 64-bit device address.
@@ -100,12 +100,12 @@ struct ds_accel_ops {
 	/* Start the resident copy of a stream write whose parameters are read
 	 * late (a ds_stage_copy at desc, the turn word, DS_STAGE_BLOCKS landed
 	 * words), ordered on the stream. It must hold the stream until it has
-	 * copied the round marked last; see ds_bounce_kernel.h. */
+	 * copied the round marked last; see opends_bounce_kernel.h. */
 	int (*stage_stream)(ds_accel_devptr_t desc, ds_accel_devptr_t turn,
 	                    ds_accel_devptr_t landed, ds_accel_stream_t stream);
 };
 
-/* The active vendor, bound at link time by the one ds_accel_<vendor>.c
+/* The active vendor, bound at link time by the one opends_accel_<vendor>.c
  * compiled into the backend. */
 extern const struct ds_accel_ops *const ds_accel;
 

@@ -3,8 +3,8 @@
  * Environment parsing for the aisio backend. Every variable is read here,
  * checked against its bounds, and handed over as a struct aisio_config.
  */
-#include "ds_aisio_config.h"
-#include "ds_accel.h"
+#include "opends_aisio_config.h"
+#include "accel/opends_accel.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -160,9 +160,9 @@ aisio_config_read(struct aisio_config *cfg)
 	}
 
 	/* The tail mode picks the async gate mechanism, and the vendor ops it
-	 * drives are required only for that mode (see ds_accel.h). A partial
-	 * port may leave the other mode's ops NULL; fail open instead of
-	 * crashing on the first submission. */
+	 * drives are required only for that mode (see opends_accel.h). A
+	 * partial port may leave the other mode's ops NULL; fail open instead
+	 * of crashing on the first submission. */
 	if (cfg->assume_aligned_only && !ds_accel->launch_host_func) {
 		fprintf(stderr,
 		        "aisio: %s=1 needs launch_host_func, which the vendor "

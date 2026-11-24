@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * ds_aisio.h - the aisio backend's own types and the calls its source
+ * opends_aisio.h - the aisio backend's own types and the calls its source
  * files share. opends_aisio.c holds the P2P paths and the driver;
- * ds_aisio_posix.c the path through the mounted file system.
+ * opends_aisio_posix.c the path through the mounted file system.
  */
 #ifndef DS_AISIO_H_
 #define DS_AISIO_H_
 
-#include "ds_accel.h"
-#include "ds_aisio_config.h"
-#include "ds_stream_map.h"
-#include "ds_bounce_kernel.h"
+#include "accel/opends_accel.h"
+#include "opends_aisio_config.h"
+#include "opends_stream_map.h"
+#include "accel/opends_bounce_kernel.h"
 #include "opends_internal.h"
 
 #include <errno.h>
@@ -136,7 +136,7 @@ struct write_buf {
  * landed behind it. The I/O thread pwrites a landed round and, for a stream
  * op, lets the stream copy the next one with turn. A deferred stream op
  * (a stream without the FIXED flags) is copied by the resident kernel of
- * ds_bounce_kernel.h instead, from a descriptor the thread fills for each
+ * opends_bounce_kernel.h instead, from a descriptor the thread fills for each
  * round, and every block of the kernel has a landed word. */
 struct file_op_write {
 	struct write_buf *buf;
@@ -280,7 +280,7 @@ DS_HIDDEN bool ds_aisio_range_registered(struct driver *d, const void *ptr,
 DS_HIDDEN void ds_aisio_future_complete(opends_async_future_t *fut,
                                         ssize_t result);
 
-/* ds_aisio_posix.c: writes through the file system, staged in pinned
+/* opends_aisio_posix.c: writes through the file system, staged in pinned
  * buffers an I/O thread only polls for. */
 DS_HIDDEN struct write_buf *ds_write_buf_take(struct driver *d);
 DS_HIDDEN int ds_write_buf_take_or_grow(struct driver *d,
