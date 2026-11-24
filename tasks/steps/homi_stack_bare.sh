@@ -31,9 +31,9 @@ if mountpoint -q "$MOUNT"; then
 fi
 
 # SIGTERM lets qublk delete its ublk device; never kill it
-pkill -TERM -x qublk 2>/dev/null || true
-wait_gone qublk 60
+pkill -TERM -x xnvme-qublk 2>/dev/null || true
+wait_gone xnvme-qublk 60
 rm -f /run/homi/ublk_dev
 
-pgrep -x homi > /dev/null || { echo "error: homi is not running" >&2; exit 1; }
+pgrep -x xnvme-homi > /dev/null || { echo "error: homi is not running" >&2; exit 1; }
 echo "bare stack: homi alone, nothing mounted, no index"

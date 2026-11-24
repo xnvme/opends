@@ -43,17 +43,17 @@ if [ -n "$mnts" ]; then
 fi
 
 # 3. qublk; SIGTERM lets it run STOP_DEV/DEL_DEV, never SIGKILL it
-pkill -TERM -x qublk 2>/dev/null
-if ! wait_gone qublk 60; then
+pkill -TERM -x xnvme-qublk 2>/dev/null
+if ! wait_gone xnvme-qublk 60; then
 	echo "error: qublk did not exit within 60 s of SIGTERM; not killing it" >&2
 	exit 1
 fi
 
 # 4. homi, and homid of the old stack
-pkill -TERM -x homi 2>/dev/null
+pkill -TERM -x xnvme-homi 2>/dev/null
 pkill -TERM -x homid 2>/dev/null
-if ! wait_gone homi 30 || ! wait_gone homid 5; then
-	pkill -KILL -x homi 2>/dev/null
+if ! wait_gone xnvme-homi 30 || ! wait_gone homid 5; then
+	pkill -KILL -x xnvme-homi 2>/dev/null
 	pkill -KILL -x homid 2>/dev/null
 fi
 
