@@ -66,7 +66,7 @@ if cufile_enabled
 endif
 
 xnvme_dep = dependency('xnvme', version : '>=0.8.0', required : false)
-xal_dep = dependency('xal', required : false)
+xal_dep = dependency('xal', version : '>=0.4.0', required : false)
 
 accel_backend = get_option('accel_backend')
 accel_src = 'src/ds_accel_@0@.c'.format(accel_backend)

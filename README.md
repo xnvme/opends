@@ -77,7 +77,7 @@ fresh Ubuntu installation.
 
 ### Build
 
-xNVMe (v0.8.0), xal (v0.3.4) and OpenDS:
+xNVMe (v0.8.0), xal (v0.4.0) and OpenDS:
 
 ```sh
 git clone https://github.com/xnvme/xnvme
@@ -91,7 +91,7 @@ cd ..
 
 git clone https://github.com/xnvme/xal
 cd xal
-git checkout v0.3.4
+git checkout v0.4.0
 git submodule update --init --recursive
 meson setup build -Dxal-server=enabled
 meson compile -C build
