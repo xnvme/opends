@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 project('OpenDS', 'c',
-  version : '0.3.0',
+  version : '0.4.0',
   default_options : ['c_std=c11', 'buildtype=release'],
 )
 
