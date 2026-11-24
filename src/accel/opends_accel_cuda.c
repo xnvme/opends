@@ -2,8 +2,8 @@
 /*
  * opends_accel_cuda.c - CUDA implementation of the opends_accel.h interface.
  *
- * Defines the ds_accel_ops instance for CUDA and binds the active-ops
- * pointer ds_accel to it. The bounce launch lives in
+ * Defines the opends_accel_ops instance for CUDA and binds the active-ops
+ * pointer opends_accel to it. The bounce launch lives in
  * opends_bounce_kernel_cuda.cu (the device translation unit); every other op
  * maps onto the CUDA driver API (cu*).
  */
@@ -20,7 +20,7 @@ int cuda_stage_stream(uint64_t desc_dev, uint64_t turn_dev, uint64_t landed_dev,
 int cuda_kernels_load(void);
 
 static int
-cuda_ctx_get(ds_accel_ctx_t *out)
+cuda_ctx_get(opends_accel_ctx_t *out)
 {
 	CUcontext ctx;
 	CUresult rc = cuCtxGetCurrent(&ctx);
@@ -33,7 +33,7 @@ cuda_ctx_get(ds_accel_ctx_t *out)
 }
 
 static void
-cuda_ctx_set(ds_accel_ctx_t ctx)
+cuda_ctx_set(opends_accel_ctx_t ctx)
 {
 	cuCtxSetCurrent((CUcontext)ctx);
 }
@@ -55,7 +55,7 @@ cuda_alloc_granularity(size_t *out)
 }
 
 static int
-cuda_host_alloc_mapped(size_t bytes, void **host, ds_accel_devptr_t *dptr)
+cuda_host_alloc_mapped(size_t bytes, void **host, opends_accel_devptr_t *dptr)
 {
 	CUresult rc = cuMemHostAlloc(host, bytes,
 	                             CU_MEMHOSTALLOC_DEVICEMAP |
@@ -69,7 +69,7 @@ cuda_host_alloc_mapped(size_t bytes, void **host, ds_accel_devptr_t *dptr)
 		*host = NULL;
 		return (int)rc;
 	}
-	*dptr = (ds_accel_devptr_t)d;
+	*dptr = (opends_accel_devptr_t)d;
 	return 0;
 }
 
@@ -80,7 +80,7 @@ cuda_host_free(void *host)
 }
 
 static int
-cuda_host_pin(void *host, size_t bytes, ds_accel_devptr_t *dptr)
+cuda_host_pin(void *host, size_t bytes, opends_accel_devptr_t *dptr)
 {
 	CUdeviceptr d = 0;
 	CUresult rc;
@@ -95,7 +95,7 @@ cuda_host_pin(void *host, size_t bytes, ds_accel_devptr_t *dptr)
 			cuMemHostUnregister(host);
 			return (int)rc;
 		}
-		*dptr = (ds_accel_devptr_t)d;
+		*dptr = (opends_accel_devptr_t)d;
 	}
 	return 0;
 }
@@ -126,14 +126,14 @@ cuda_fill_dev_async(void *dst, size_t bytes)
 
 static int
 cuda_copy_from_dev_async(void *dst, const void *src, size_t bytes,
-                         ds_accel_stream_t s)
+                         opends_accel_stream_t s)
 {
 	return (int)cuMemcpyDtoHAsync(dst, (CUdeviceptr)src, bytes,
 	                              (CUstream)s);
 }
 
 static int
-cuda_stream_write_value32(ds_accel_stream_t s, ds_accel_devptr_t addr,
+cuda_stream_write_value32(opends_accel_stream_t s, opends_accel_devptr_t addr,
                           uint32_t value)
 {
 	return (int)cuStreamWriteValue32((CUstream)s, (CUdeviceptr)addr, value,
@@ -141,20 +141,20 @@ cuda_stream_write_value32(ds_accel_stream_t s, ds_accel_devptr_t addr,
 }
 
 static int
-cuda_stream_wait_value32_geq(ds_accel_stream_t s, ds_accel_devptr_t addr,
-                             uint32_t value)
+cuda_stream_wait_value32_geq(opends_accel_stream_t s,
+                             opends_accel_devptr_t addr, uint32_t value)
 {
 	return (int)cuStreamWaitValue32((CUstream)s, (CUdeviceptr)addr, value,
 	                                CU_STREAM_WAIT_VALUE_GEQ);
 }
 
 static int
-cuda_launch_host_func(ds_accel_stream_t s, void (*fn)(void *), void *arg)
+cuda_launch_host_func(opends_accel_stream_t s, void (*fn)(void *), void *arg)
 {
 	return (int)cuLaunchHostFunc((CUstream)s, (CUhostFn)fn, arg);
 }
 
-static const struct ds_accel_ops cuda_ops = {
+static const struct opends_accel_ops cuda_ops = {
         .xnvme_be = "upcie-cuda",
         .load = cuda_kernels_load,
         .ctx_get = cuda_ctx_get,
@@ -175,4 +175,4 @@ static const struct ds_accel_ops cuda_ops = {
         .stage_stream = cuda_stage_stream,
 };
 
-const struct ds_accel_ops *const ds_accel = &cuda_ops;
+const struct opends_accel_ops *const opends_accel = &cuda_ops;

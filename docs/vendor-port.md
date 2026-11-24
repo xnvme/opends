@@ -1,14 +1,14 @@
 # Adding a GPU vendor to the aisio backend
 
 The aisio backend reads NVMe straight into GPU memory over xNVMe P2P DMA.
-Its only GPU dependency is a narrow runtime surface, `struct ds_accel_ops`
+Its only GPU dependency is a narrow runtime surface, `struct opends_accel_ops`
 in `src/accel/opends_accel.h`: context capture and binding, pinned-mapped host
 allocation, a host/device copy, a stream-ordered host callback, and a
 deferred stream-ordered copy. The NVMe and extent code calls only through
-the active-ops pointer `ds_accel`, never a vendor symbol.
+the active-ops pointer `opends_accel`, never a vendor symbol.
 
 A port is one implementation file, `src/accel/opends_accel_<backend>.c`, that fills in
-`struct ds_accel_ops` and binds `ds_accel` to it, plus a `meson.build`
+`struct opends_accel_ops` and binds `opends_accel` to it, plus a `meson.build`
 branch (keyed on the `accel_backend` option) that selects it and links the
 vendor runtime. Read `opends_accel.h` for the contract and `opends_accel_cuda.c` for
 a worked example; only CUDA is implemented today. Device buffers are not in

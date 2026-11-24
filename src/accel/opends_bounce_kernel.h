@@ -6,8 +6,8 @@
  * gate, then enqueues the copy that closes out the misaligned tail span.
  */
 
-#ifndef DS_BOUNCE_KERNEL_H
-#define DS_BOUNCE_KERNEL_H
+#ifndef OPENDS_BOUNCE_KERNEL_H
+#define OPENDS_BOUNCE_KERNEL_H
 
 #include <stdint.h>
 
@@ -15,7 +15,7 @@
  * user's stream. The I/O thread fills it (devicemapped: host stores, GPU
  * reads) before raising the DMA-done gate; the kernel reads it once the
  * gate clears. n_bytes == 0 no-ops, so a zero-init descriptor is safe. */
-struct ds_bounce_copy {
+struct opends_bounce_copy {
 	uint64_t dst;
 	uint64_t src;     /* device pointer (bounce slot). */
 	uint32_t n_bytes; /* 0 = no-op. */
@@ -29,10 +29,10 @@ struct ds_bounce_copy {
  * exits after the round marked last. The I/O thread fills the descriptor
  * before it grants a turn and reads it back only after every block has
  * landed. */
-#define DS_STAGE_BLOCKS 8
-#define DS_STAGE_THREADS 512
+#define OPENDS_STAGE_BLOCKS 8
+#define OPENDS_STAGE_THREADS 512
 
-struct ds_stage_copy {
+struct opends_stage_copy {
 	uint64_t src;
 	uint64_t dst;
 	uint64_t n_bytes;

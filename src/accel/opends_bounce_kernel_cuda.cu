@@ -15,7 +15,7 @@
 #include <stdint.h>
 
 static __global__ void
-cuda_bounce_kernel(const struct ds_bounce_copy *desc)
+cuda_bounce_kernel(const struct opends_bounce_copy *desc)
 {
 	uint8_t *dst = (uint8_t *)(uintptr_t)desc->dst;
 	const uint8_t *src = (const uint8_t *)(uintptr_t)desc->src;
@@ -29,7 +29,7 @@ extern "C" int
 cuda_copy_stream(uint64_t desc_dev, void *stream)
 {
 	cuda_bounce_kernel<<<1, 128, 0, (cudaStream_t)stream>>>(
-	        (const struct ds_bounce_copy *)(uintptr_t)desc_dev);
+	        (const struct opends_bounce_copy *)(uintptr_t)desc_dev);
 	return (int)cudaGetLastError();
 }
 
@@ -68,7 +68,7 @@ stage_copy(uint64_t dst, uint64_t src, uint64_t n)
  * them through turn. Every word it polls or writes is in mapped host memory,
  * so the thread sees a landed round as a plain load. */
 static __global__ void
-cuda_stage_kernel(const volatile struct ds_stage_copy *desc,
+cuda_stage_kernel(const volatile struct opends_stage_copy *desc,
                   const volatile uint32_t *turn, volatile uint32_t *landed)
 {
 	__shared__ uint64_t s_src;
@@ -121,9 +121,9 @@ extern "C" int
 cuda_stage_stream(uint64_t desc_dev, uint64_t turn_dev, uint64_t landed_dev,
                   void *stream)
 {
-	cuda_stage_kernel<<<DS_STAGE_BLOCKS, DS_STAGE_THREADS, 0,
+	cuda_stage_kernel<<<OPENDS_STAGE_BLOCKS, OPENDS_STAGE_THREADS, 0,
 	                    (cudaStream_t)stream>>>(
-	        (const volatile struct ds_stage_copy *)(uintptr_t)desc_dev,
+	        (const volatile struct opends_stage_copy *)(uintptr_t)desc_dev,
 	        (const volatile uint32_t *)(uintptr_t)turn_dev,
 	        (volatile uint32_t *)(uintptr_t)landed_dev);
 	return (int)cudaGetLastError();

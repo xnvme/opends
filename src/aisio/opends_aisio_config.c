@@ -68,7 +68,7 @@ env_int(const char *name, int def, int lo, int hi, int *out)
 }
 
 int
-aisio_config_read(struct aisio_config *cfg)
+opends_aisio_config_read(struct aisio_config *cfg)
 {
 	int n;
 
@@ -152,8 +152,9 @@ aisio_config_read(struct aisio_config *cfg)
 
 	/* Every write stages through pinned buffers with async copies, and a
 	 * stream write with late parameters through the resident kernel. */
-	if (!ds_accel->load || !ds_accel->host_pin || !ds_accel->host_unpin ||
-	    !ds_accel->copy_from_dev_async || !ds_accel->stage_stream) {
+	if (!opends_accel->load || !opends_accel->host_pin ||
+	    !opends_accel->host_unpin || !opends_accel->copy_from_dev_async ||
+	    !opends_accel->stage_stream) {
 		fprintf(stderr, "aisio: the vendor ops table does not provide "
 		                "the copy ops writes stage through\n");
 		return -EINVAL;
@@ -163,16 +164,17 @@ aisio_config_read(struct aisio_config *cfg)
 	 * drives are required only for that mode (see opends_accel.h). A
 	 * partial port may leave the other mode's ops NULL; fail open instead
 	 * of crashing on the first submission. */
-	if (cfg->assume_aligned_only && !ds_accel->launch_host_func) {
+	if (cfg->assume_aligned_only && !opends_accel->launch_host_func) {
 		fprintf(stderr,
 		        "aisio: %s=1 needs launch_host_func, which the vendor "
 		        "ops table does not provide\n",
 		        ENV_ASSUME_ALIGNED_ONLY);
 		return -EINVAL;
 	}
-	if (!cfg->assume_aligned_only && (!ds_accel->stream_write_value32 ||
-	                                  !ds_accel->stream_wait_value32_geq ||
-	                                  !ds_accel->copy_to_dev_async)) {
+	if (!cfg->assume_aligned_only &&
+	    (!opends_accel->stream_write_value32 ||
+	     !opends_accel->stream_wait_value32_geq ||
+	     !opends_accel->copy_to_dev_async)) {
 		fprintf(stderr,
 		        "aisio: the vendor ops table does not provide the "
 		        "stream gate and pinned copy ops; set %s=1 to gate "
