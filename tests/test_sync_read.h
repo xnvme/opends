@@ -186,10 +186,7 @@ test_read_last_block(struct test_env *env)
 	return rc;
 }
 
-/*
- * Request more bytes than remain at EOF. One page remains; request
- * two. Verify the return count and content of the short read.
- */
+/* One page remains and two are requested. */
 static int
 test_read_short_at_eof(struct test_env *env)
 {
@@ -205,7 +202,6 @@ test_read_short_at_eof(struct test_env *env)
 	return rc;
 }
 
-/* Read at exact end of file; expect 0 bytes returned. */
 static int
 test_read_at_eof(struct test_env *env)
 {
@@ -230,7 +226,6 @@ test_read_at_eof(struct test_env *env)
 	return 0;
 }
 
-/* File offset past end of file; expect 0 bytes returned. */
 static int
 test_read_beyond_eof(struct test_env *env)
 {
@@ -358,10 +353,7 @@ test_read_sequential_regions(struct test_env *env)
 	return rc;
 }
 
-/*
- * Read two overlapping regions (pages 0-1 and pages 1-2) and verify
- * the shared page is identical in both reads.
- */
+/* Pages 0-1 and pages 1-2: the shared page must be the same in both. */
 static int
 test_read_overlapping_regions(struct test_env *env)
 {
@@ -414,7 +406,6 @@ test_read_overlapping_regions(struct test_env *env)
 	return rc;
 }
 
-/* Read the same block twice; both reads must return identical data. */
 static int
 test_read_repeated(struct test_env *env)
 {

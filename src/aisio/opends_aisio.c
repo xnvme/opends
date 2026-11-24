@@ -13,13 +13,8 @@
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
  *
- * Writes go through the kernel-mounted filesystem: the source is staged
- * through a pinned host buffer and pwritten via the fd, so XFS over qublk
- * allocates blocks and writes the data; the file's extents are then
- * re-resolved for later P2P reads. The copies into the buffer are queued, on
- * the user's stream ahead of its gate for a stream write and on the default
- * stream for the rest, and an I/O thread only polls for them. An I/O thread
- * never makes an accelerator call that waits: a stream can be waiting for it.
+ * Writes to a file go through the mounted file system; see
+ * opends_aisio_posix.c.
  */
 
 #define _GNU_SOURCE

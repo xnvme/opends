@@ -113,7 +113,6 @@ async_await_verify(struct async_read_env *env, struct async_read_slot *slot,
 	return 0;
 }
 
-/* Submit a full window, then await in reverse submission order. */
 static int
 run_async_reverse_test(struct async_read_env *env,
                        struct async_read_slot *slots, char *host)

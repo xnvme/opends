@@ -4,12 +4,8 @@
  * independent async operations whose futures live in the batch object,
  * so any backend that provides opends_async_read/write/await gets the
  * batch family from this file. Backends with a native batch engine
- * (cufile) provide their own and do not compile it.
- *
- * Operations in a batch are unordered. opends_batch_cancel cannot stop
- * I/O the backend already accepted: it awaits outstanding operations
- * and reports their undelivered completions as canceled. A batch is
- * not thread-safe; guard shared batches externally.
+ * (cufile) provide their own and do not compile it. opends.h has the
+ * contract.
  */
 #define _GNU_SOURCE
 

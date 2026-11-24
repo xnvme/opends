@@ -3,10 +3,7 @@ doc: |
   Setup xNVMe
   ============
 
-  Clones the xNVMe repository on the target afresh, checks out the
-  configured ref (branch, tag, or commit), then builds and installs
-  xNVMe so its pkg-config file becomes discoverable when building
-  OpenDS. The remote and ref are read from [xnvme.repository] in
+  Builds and installs xNVMe at the ref of [xnvme.repository] in
   deps.toml, which pins the build dependency for the whole project.
 
   The homi and qublk tools install with the library into the same

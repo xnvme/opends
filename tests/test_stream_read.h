@@ -293,10 +293,7 @@ stream_test_offset_size_sweep(struct stream_test_env *env)
 	return rc;
 }
 
-/*
- * Stream ordering: submit two reads back-to-back on the same stream
- * before syncing. Both must complete and contain the right data.
- */
+/* Two reads on one stream before the first sync. */
 static int
 stream_test_stream_ordering(struct stream_test_env *env)
 {
@@ -622,12 +619,9 @@ out:
 }
 
 /*
- * Deferred-evaluation semantics: opends_stream_read must dereference
- * size_p / file_offset_p / buf_offset_p when the stream actually runs
- * the op, not when the call is posted. Submit a host fn that mutates
- * those values, then submit the read on the same stream with the
- * caller-side values still pointing at sentinels. The read must see
- * the post-mutation values.
+ * Deferred evaluation: opends_stream_read must read size_p,
+ * file_offset_p and buf_offset_p when the stream runs the op, not at
+ * the call. A host function queued ahead of the read changes them.
  */
 struct deferred_mutate_args {
 	size_t *size_p;
@@ -838,17 +832,11 @@ out_free_arrays:
 }
 
 /*
- * Stream-ordered consumer: an op enqueued on the user's stream right
- * after opends_stream_read must observe the bytes written by the
- * read, without any host-side sync between them. We zero the GPU buf
- * first (under a full device sync), then submit:
- *   1) opends_stream_read on stream
- *   2) cuMemcpyDtoHAsync(pinned, buf, ...) on the same stream
- * and only sync after both are queued. The memcpy is stream-ordered
- * behind the read's cuStreamWaitValue32(done_seq) gate. If that gate
- * releases early, or if done_seq advances before the NVMe DMA bytes
- * are visible to the GPU, the memcpy snapshots zeros, not the
- * expected pattern. Loops to make any race observable across runs.
+ * Stream-ordered consumer: a copy queued on the user's stream right
+ * after opends_stream_read, with no host sync between them, must see
+ * the bytes of the read. If the read's gate opens before the DMA has
+ * landed, the copy takes the zeros the buffer was cleared to. Loops to
+ * give a race a chance to show.
  */
 static int
 stream_test_stream_consumer(struct stream_test_env *env)

@@ -12,8 +12,6 @@
  *   cuFileReadAsync/WriteAsync -> opends_stream_read/write
  *   cuFileBatchIO*             -> opends_batch_*
  *
- * NOTE: cuFile "Async" is NOT the same as opends "async".
- *
  * Deviations from cuFile:
  *
  *   - Linux only. File handles are plain file descriptors; the
@@ -221,9 +219,8 @@ OPENDS_API opends_error_t opends_buf_deregister(const void *buf_base);
  * and returns its byte count (or a negated opends_op_error_t on
  * failure).
  *
- * NOTE: this is not the cuFile async API. cuFile's ReadAsync/WriteAsync
- * are stream-ordered; opends_stream_* below is the family that maps to
- * them.
+ * cuFile's ReadAsync/WriteAsync are not this family: they are
+ * stream-ordered and map to opends_stream_* below.
  *
  * The caller owns the future storage. The backend writes the
  * completion through it, so it must stay valid at the same address

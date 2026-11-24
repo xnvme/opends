@@ -60,8 +60,7 @@ cuda_ctx_create(CUcontext *ctx)
 #endif
 }
 
-/* Compare n bytes of host memory with the pattern starting at offset off.
- * Returns the number of mismatching bytes. */
+/* Returns the number of bytes that differ from the pattern at off. */
 static size_t
 check_pattern(const unsigned char *host, uint64_t off, size_t n)
 {
@@ -72,8 +71,7 @@ check_pattern(const unsigned char *host, uint64_t off, size_t n)
 	return bad;
 }
 
-/* Raw read of n bytes at device offset dev_off into gpu, copied to host.
- * Returns the backend's result (bytes or -error). */
+/* Reads into gpu and copies to host. Returns the backend's result. */
 static ssize_t
 raw_read(opends_handle_t fh, void *gpu, unsigned char *host, size_t n,
          uint64_t dev_off)
@@ -123,9 +121,8 @@ raw_stream_wait(CUstream stream, double timeout_s, const char *label)
 	}
 }
 
-/* Stream read of n bytes at device offset dev_off into gpu, waited for on
- * the stream, then copied to host. Returns the backend's result (bytes or
- * -error), or -OPENDS_INTERNAL_ERROR when the submit or the wait failed. */
+/* As raw_read, on a stream that is waited for. -OPENDS_INTERNAL_ERROR when
+ * the submit or the wait failed. */
 static ssize_t
 raw_stream_read(opends_handle_t fh, CUstream stream, void *gpu,
                 unsigned char *host, size_t n, uint64_t dev_off)
@@ -196,7 +193,7 @@ is_inverse(const unsigned char *host, uint64_t off, size_t n)
 	return true;
 }
 
-/* Register path opened with flags; NULL when either step fails. */
+/* NULL when the open or the registration fails. */
 static opends_handle_t
 register_path(const char *path, int flags, int *fd, opends_op_error_t *err)
 {

@@ -123,14 +123,12 @@ main(int argc, char **argv)
 		}
 	}
 
-	/* Device-true kernel read of the same file for the reference bytes. */
 	int kfd = open(path, O_RDONLY | O_DIRECT);
 	if (kfd < 0) {
 		fprintf(stderr, "open(%s, O_DIRECT) for verify failed\n", path);
 		failed = 1;
 		goto out;
 	}
-	/* Chunk the reference read into 1 MiB preads. */
 	size_t done = 0;
 	while (done < size) {
 		size_t want_n = size - done;
