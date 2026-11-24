@@ -2,16 +2,12 @@
 /*
  * test_aisio_homi.h - Shared setup for aisio tests against a live HOMI stack.
  *
- * The aisio backend no longer owns the controller or takes injected
- * extents: it joins the multi-process group of a running homi server and
- * resolves a file's extents from the index xal-server publishes over shared
- * memory. These tests therefore run while the homi/qublk/xal-server stack
+ * The aisio backend joins the multi-process group of a running homi server
+ * and resolves a file's extents from the index xal-server publishes over
+ * shared memory. So these tests run while the homi/qublk/xal-server stack
  * is up and the test filesystem is mounted (over /dev/ublkbN). The harness
  * (tasks/test.yaml) brings the stack up, exports OPENDS_XAL_SHM /
- * OPENDS_HOMI_MNT, and passes the path of a real file on the mount.
- *
- * Each test opens that file, registers it (which resolves its extents from
- * the shared index), and runs the backend-agnostic test logic.
+ * OPENDS_HOMI_MNT, and passes the path of a file on the mount.
  */
 #ifndef TEST_AISIO_HOMI_H_
 #define TEST_AISIO_HOMI_H_

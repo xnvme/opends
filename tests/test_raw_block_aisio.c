@@ -252,10 +252,10 @@ batch_two_pages(opends_handle_t fh, void *gpu, uint64_t dev_off,
 }
 
 /* Open the driver with no index published. Without OPENDS_AISIO_RAW_BLOCK
- * that fails, as it always has. With it the driver opens, and a regular file
- * (this binary) is refused for the lack of an index. That failure is final:
- * with the malformed index gone, a second registration that tried again would
- * wait a minute. Returns 0 with the driver open in raw block mode. */
+ * that fails. With it the driver opens, and a regular file (this binary) is
+ * refused for the lack of an index. That failure is final: with the malformed
+ * index gone, a second registration that tried again would wait a minute.
+ * Returns 0 with the driver open in raw block mode. */
 static int
 open_without_index(const char *file_path)
 {

@@ -371,11 +371,7 @@ fail:
 	return 1;
 }
 
-/*
- * Submit one read per extra stream concurrently, then sync each.
- * Verifies that the orchestrator handles many streams in flight at the
- * same time.
- */
+/* One read on each extra stream, all in flight before the first sync. */
 static int
 stream_test_concurrent_streams(struct stream_test_env *env)
 {
@@ -559,11 +555,7 @@ out_free_arrays:
 	return rc;
 }
 
-/*
- * Submit many reads on a single stream to exceed casual queue depth.
- * All must complete with the right data, demonstrating that the
- * orchestrator drains a backlog correctly.
- */
+/* 32 reads queued on one stream before the first sync. */
 static int
 stream_test_burst_single_stream(struct stream_test_env *env)
 {
@@ -730,14 +722,13 @@ out:
 
 /*
  * Multi-stream burst: each of N streams gets a backlog of M reads
- * before any are synced. Exercises orchestrator throughput, the xnvme
- * cmd_ctx pool under pressure, and CUDA's host-fn worker pool with
- * many simultaneously-blocked host fns from distinct streams.
+ * before any are synced. Loads the I/O threads, xnvme's command
+ * contexts and, in aligned-only mode, the runtime's host callbacks,
+ * with many streams held at their gates at once.
  *
  * Each stream owns one buffer of size per*PAGE; op j on stream s
  * writes a single page at buf_offset j*PAGE. This keeps the backend's
- * registered-buffer table from filling up and mirrors the realistic
- * pattern of one DMA-eligible buffer per worker stream.
+ * registered-buffer table from filling up.
  */
 static int
 stream_test_multi_stream_burst(struct stream_test_env *env)
@@ -773,8 +764,8 @@ stream_test_multi_stream_burst(struct stream_test_env *env)
 		boffs[i] = (off_t)((size_t)j * PAGE);
 	}
 
-	/* Submit per-stream backlog interleaved across streams to maximise
-	 * orchestrator-side fan-in. */
+	/* Round-robin over the streams, so an I/O thread has reads of many
+	 * streams pending at once. */
 	for (int j = 0; j < per; j++) {
 		for (int s = 0; s < n; s++) {
 			int i = s * per + j;
