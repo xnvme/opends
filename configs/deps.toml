@@ -6,7 +6,7 @@ ref = "v0.8.0"
 
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
-ref = "v0.3.4"
+ref = "v0.4.0"
 
 [fil.repository]
 remote = "https://github.com/xnvme/fil"
