@@ -13,7 +13,7 @@
 #include "opends_aisio.h"
 
 struct write_buf *
-ds_write_buf_take(struct driver *d)
+opends_write_buf_take(struct driver *d)
 {
 	struct write_buf *s;
 
@@ -27,7 +27,7 @@ ds_write_buf_take(struct driver *d)
 }
 
 void
-ds_write_buf_put(struct driver *d, struct write_buf *s)
+opends_write_buf_put(struct driver *d, struct write_buf *s)
 {
 	pthread_mutex_lock(&d->write_buf_lock);
 	s->next = d->write_bufs_free;
@@ -41,11 +41,11 @@ ds_write_buf_put(struct driver *d, struct write_buf *s)
  * not end. Pinning is an accelerator call, so only a submitting thread comes
  * here; it pins in the driver's context, whatever context the caller has. */
 int
-ds_write_buf_take_or_grow(struct driver *d, struct write_buf **out)
+opends_write_buf_take_or_grow(struct driver *d, struct write_buf **out)
 {
 	size_t nbytes = d->cfg.write_buf_nbytes;
-	struct write_buf *s = ds_write_buf_take(d);
-	ds_accel_ctx_t cur = NULL;
+	struct write_buf *s = opends_write_buf_take(d);
+	opends_accel_ctx_t cur = NULL;
 	bool bound;
 	int err;
 
@@ -72,14 +72,14 @@ ds_write_buf_take_or_grow(struct driver *d, struct write_buf **out)
 		}
 	}
 	if (err == 0) {
-		err = ds_accel->ctx_get(&cur);
+		err = opends_accel->ctx_get(&cur);
 		bound = err == 0 && cur == d->accel_ctx;
 		if (!bound) {
-			ds_accel->ctx_set(d->accel_ctx);
+			opends_accel->ctx_set(d->accel_ctx);
 		}
-		err = ds_accel->host_pin(s->host, nbytes, &s->dptr);
+		err = opends_accel->host_pin(s->host, nbytes, &s->dptr);
 		if (!bound) {
-			ds_accel->ctx_set(cur);
+			opends_accel->ctx_set(cur);
 		}
 		if (err != 0) {
 			free(s->host);
@@ -104,14 +104,14 @@ ds_write_buf_take_or_grow(struct driver *d, struct write_buf **out)
 }
 
 void
-ds_write_buf_teardown(struct driver *d)
+opends_write_buf_teardown(struct driver *d)
 {
 	struct write_buf *s = d->write_bufs_all;
 	struct write_buf *next;
 
 	while (s) {
 		next = s->all_next;
-		ds_accel->host_unpin(s->host);
+		opends_accel->host_unpin(s->host);
 		free(s->host);
 		free(s);
 		s = next;
@@ -123,8 +123,8 @@ ds_write_buf_teardown(struct driver *d)
 }
 
 void
-ds_write_init(struct file_op_write *wr, const uint8_t *src, size_t size,
-              off_t file_offset, off_t buf_offset)
+opends_write_init(struct file_op_write *wr, const uint8_t *src, size_t size,
+                  off_t file_offset, off_t buf_offset)
 {
 	wr->buf = NULL;
 	wr->deferred = false;
@@ -151,7 +151,7 @@ write_landed(const struct file_op_write *wr)
 	uint32_t n = __atomic_load_n(&wr->landed[0], __ATOMIC_ACQUIRE);
 
 	if (wr->deferred) {
-		for (int b = 1; b < DS_STAGE_BLOCKS; b++) {
+		for (int b = 1; b < OPENDS_STAGE_BLOCKS; b++) {
 			uint32_t v = __atomic_load_n(&wr->landed[b],
 			                             __ATOMIC_ACQUIRE);
 
@@ -164,7 +164,7 @@ write_landed(const struct file_op_write *wr)
 }
 
 void
-ds_write_geometry(struct driver *d, struct file_op_write *wr)
+opends_write_geometry(struct driver *d, struct file_op_write *wr)
 {
 	size_t nbytes = d->cfg.write_buf_nbytes;
 	struct opends_direct_geom g;
@@ -262,7 +262,7 @@ static void
 write_grant(struct driver *d, struct file_op *op, uint32_t k)
 {
 	struct file_op_write *wr = &op->wr;
-	struct ds_stage_copy *desc = wr->desc;
+	struct opends_stage_copy *desc = wr->desc;
 	size_t rs, rl, ds, n;
 
 	if (!wr->deferred) {
@@ -283,8 +283,8 @@ write_grant(struct driver *d, struct file_op *op, uint32_t k)
  * until the thread has read the parameters and filled the first round, the
  * resident kernel, and the gate. */
 int
-ds_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
-                                 ds_accel_stream_t cus)
+opends_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
+                                     opends_accel_stream_t cus)
 {
 	struct file_op_write *wr = &op->wr;
 	struct opends_stream *s = op->u.stream.opends_stream;
@@ -292,19 +292,20 @@ ds_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
 	int rc;
 
 	if (d->cfg.assume_aligned_only) {
-		rc = ds_accel->launch_host_func(cus, claim_turn_cb, op);
+		rc = opends_accel->launch_host_func(cus, claim_turn_cb, op);
 	} else {
-		rc = ds_accel->stream_write_value32(cus, s->gate_dptr, 2 * seq);
+		rc = opends_accel->stream_write_value32(cus, s->gate_dptr,
+		                                        2 * seq);
 		if (rc == 0) {
-			rc = ds_accel->stream_wait_value32_geq(
+			rc = opends_accel->stream_wait_value32_geq(
 			        cus, wr->turn_dptr, 1);
 		}
 	}
 	if (rc != 0) {
 		return rc;
 	}
-	rc = ds_accel->stage_stream(wr->desc_dptr, wr->turn_dptr,
-	                            wr->landed_dptr, cus);
+	rc = opends_accel->stage_stream(wr->desc_dptr, wr->turn_dptr,
+	                                wr->landed_dptr, cus);
 	if (rc != 0) {
 		return rc;
 	}
@@ -312,17 +313,17 @@ ds_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
 	wr->copies = 1;
 	wr->enqueued = 1;
 	if (d->cfg.assume_aligned_only) {
-		return ds_accel->launch_host_func(cus, park_release_cb, op);
+		return opends_accel->launch_host_func(cus, park_release_cb, op);
 	}
-	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
-	                                         2 * seq + 1);
+	return opends_accel->stream_wait_value32_geq(cus, s->gate_dptr,
+	                                             2 * seq + 1);
 }
 
 /* Queue round k of a stream write on the user's stream: the thread's turn
  * (not before the first round), the copy, and the landed signal. */
 static int
 stream_write_enqueue_round(struct driver *d, struct file_op *op,
-                           ds_accel_stream_t cus, uint32_t k)
+                           opends_accel_stream_t cus, uint32_t k)
 {
 	struct file_op_write *wr = &op->wr;
 	size_t rs, rl, ds, n;
@@ -330,22 +331,24 @@ stream_write_enqueue_round(struct driver *d, struct file_op *op,
 
 	write_round(wr, d->cfg.write_buf_nbytes, k, &rs, &rl, &ds, &n);
 	if (k > 0 && !d->cfg.assume_aligned_only) {
-		rc = ds_accel->stream_wait_value32_geq(cus, wr->turn_dptr, k);
+		rc = opends_accel->stream_wait_value32_geq(cus, wr->turn_dptr,
+		                                           k);
 		if (rc != 0) {
 			return rc;
 		}
 	}
-	rc = ds_accel->copy_from_dev_async((uint8_t *)wr->buf->host + (ds - rs),
-	                                   wr->src + (ds - wr->head), n, cus);
+	rc = opends_accel->copy_from_dev_async(
+	        (uint8_t *)wr->buf->host + (ds - rs), wr->src + (ds - wr->head),
+	        n, cus);
 	if (rc != 0) {
 		return rc;
 	}
 	wr->copies = k + 1;
 	if (d->cfg.assume_aligned_only) {
-		rc = ds_accel->launch_host_func(cus, stage_round_cb, op);
+		rc = opends_accel->launch_host_func(cus, stage_round_cb, op);
 	} else {
-		rc = ds_accel->stream_write_value32(cus, wr->landed_dptr,
-		                                    k + 1);
+		rc = opends_accel->stream_write_value32(cus, wr->landed_dptr,
+		                                        k + 1);
 	}
 	if (rc != 0) {
 		return rc;
@@ -358,8 +361,8 @@ stream_write_enqueue_round(struct driver *d, struct file_op *op,
  * order ahead of the gate, so the stream has reached the write when the
  * first round lands, and the parameters are the values of the call. */
 int
-ds_stream_write_enqueue(struct driver *d, struct file_op *op,
-                        ds_accel_stream_t cus)
+opends_stream_write_enqueue(struct driver *d, struct file_op *op,
+                            opends_accel_stream_t cus)
 {
 	struct file_op_write *wr = &op->wr;
 	struct opends_stream *s = op->u.stream.opends_stream;
@@ -375,8 +378,8 @@ ds_stream_write_enqueue(struct driver *d, struct file_op *op,
 		/* the last round's callback holds the stream at the gate */
 		return 0;
 	}
-	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
-	                                         2 * op->u.stream.seq + 1);
+	return opends_accel->stream_wait_value32_geq(cus, s->gate_dptr,
+	                                             2 * op->u.stream.seq + 1);
 }
 
 /* Queue round k of an async write on the default stream. The copy can wait
@@ -390,18 +393,19 @@ async_write_enqueue_round(struct io_worker *w, struct file_op *op, uint32_t k)
 	int rc;
 
 	write_round(wr, d->cfg.write_buf_nbytes, k, &rs, &rl, &ds, &n);
-	rc = ds_accel->copy_from_dev_async((uint8_t *)wr->buf->host + (ds - rs),
-	                                   wr->src + (ds - wr->head), n, NULL);
+	rc = opends_accel->copy_from_dev_async(
+	        (uint8_t *)wr->buf->host + (ds - rs), wr->src + (ds - wr->head),
+	        n, NULL);
 	if (rc != 0) {
 		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 		return;
 	}
 	wr->copies = k + 1;
 	if (d->cfg.assume_aligned_only) {
-		rc = ds_accel->launch_host_func(NULL, stage_mark_cb, op);
+		rc = opends_accel->launch_host_func(NULL, stage_mark_cb, op);
 	} else {
-		rc = ds_accel->stream_write_value32(NULL, wr->landed_dptr,
-		                                    k + 1);
+		rc = opends_accel->stream_write_value32(NULL, wr->landed_dptr,
+		                                        k + 1);
 	}
 	if (rc != 0) {
 		op->err = OPENDS_DEVICE_DRIVER_ERROR;
@@ -469,7 +473,7 @@ write_abort(struct file_op *op)
 		if (wr->copies && !has_last) {
 			/* an empty last round: the kernel copies nothing and
 			 * exits */
-			struct ds_stage_copy *desc = wr->desc;
+			struct opends_stage_copy *desc = wr->desc;
 
 			wr->rounds = wr->granted + 1;
 			wr->enqueued = wr->rounds;
@@ -501,7 +505,7 @@ write_complete(struct driver *d, struct file_op *op)
 		/* a copy with no signal behind it may still land: keep the
 		 * buffer out of the pool */
 		if (wr->deferred || wr->copies == wr->enqueued) {
-			ds_write_buf_put(d, wr->buf);
+			opends_write_buf_put(d, wr->buf);
 		} else {
 			pthread_mutex_lock(&d->write_buf_lock);
 			d->write_buf_live--;
@@ -509,7 +513,7 @@ write_complete(struct driver *d, struct file_op *op)
 		}
 		wr->buf = NULL;
 	}
-	for (int b = 0; b < DS_STAGE_BLOCKS; b++) {
+	for (int b = 0; b < OPENDS_STAGE_BLOCKS; b++) {
 		wr->landed[b] = 0;
 	}
 	*wr->turn = 0;
@@ -517,7 +521,7 @@ write_complete(struct driver *d, struct file_op *op)
 		*op->u.stream.bytes_read_p = n;
 		release_gate(op->u.stream.opends_stream, op->u.stream.seq);
 	} else {
-		ds_aisio_future_complete(op->u.async.future, n);
+		opends_aisio_future_complete(op->u.async.future, n);
 	}
 	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
@@ -525,7 +529,7 @@ write_complete(struct driver *d, struct file_op *op)
 /* Service a write in flight: pwrite each round that has landed, let the
  * next one in, and complete after the last. Never waits. */
 void
-ds_write_poll(struct io_worker *w, struct file_op *op)
+opends_write_poll(struct io_worker *w, struct file_op *op)
 {
 	struct file_op_write *wr = &op->wr;
 	uint32_t landed = write_landed(wr);
@@ -556,7 +560,7 @@ ds_write_poll(struct io_worker *w, struct file_op *op)
 /* Start a PENDING write. Returns true when it has to stay pending: an async
  * write with no free buffer. */
 bool
-ds_dispatch_write(struct io_worker *w, struct file_op *op)
+opends_dispatch_write(struct io_worker *w, struct file_op *op)
 {
 	struct driver *d = w->drv;
 	struct file_op_write *wr = &op->wr;
@@ -569,13 +573,13 @@ ds_dispatch_write(struct io_worker *w, struct file_op *op)
 		wr->buf_offset = *op->u.stream.buf_offset_p;
 		wr->src = (const uint8_t *)op->buf_base + wr->buf_offset;
 		if (!op->err && wr->size &&
-		    !ds_aisio_range_registered(d, wr->src, wr->size)) {
+		    !opends_aisio_range_registered(d, wr->src, wr->size)) {
 			op->err = OPENDS_MEMORY_NOT_REGISTERED;
 		}
 		if (!op->err) {
 			/* a write of nothing has no span */
 			if (wr->size) {
-				ds_write_geometry(d, wr);
+				opends_write_geometry(d, wr);
 			}
 			if (wr->rounds == 0) {
 				wr->rounds = 1;
@@ -593,16 +597,16 @@ ds_dispatch_write(struct io_worker *w, struct file_op *op)
 			op->err = OPENDS_INVALID_VALUE;
 		}
 	} else if (wr->size) {
-		if (!ds_aisio_range_registered(d, wr->src, wr->size)) {
+		if (!opends_aisio_range_registered(d, wr->src, wr->size)) {
 			op->err = OPENDS_MEMORY_NOT_REGISTERED;
 		} else if (!wr->buf) {
-			wr->buf = ds_write_buf_take(d);
+			wr->buf = opends_write_buf_take(d);
 			if (!wr->buf) {
 				return true;
 			}
 		}
 		if (!op->err) {
-			ds_write_geometry(d, wr);
+			opends_write_geometry(d, wr);
 		}
 	}
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
@@ -618,7 +622,7 @@ ds_dispatch_write(struct io_worker *w, struct file_op *op)
 			write_abort(op);
 		}
 	}
-	ds_write_poll(w, op);
+	opends_write_poll(w, op);
 	return false;
 }
 
@@ -627,16 +631,19 @@ ds_dispatch_write(struct io_worker *w, struct file_op *op)
 /* The turn and landed words of worker idx's op slots, behind the stream
  * gates and the kernel read words, and the stage descriptors. */
 int
-ds_write_words_setup(struct driver *d, struct io_worker *w, int idx)
+opends_write_words_setup(struct driver *d, struct io_worker *w, int idx)
 {
 	uint32_t *words = (uint32_t *)d->stream_words_host;
-	size_t base = MAX_STREAMS + (size_t)d->cfg.n_io_threads +
-	              (size_t)idx * FILE_OP_QUEUE_SIZE * (1 + DS_STAGE_BLOCKS);
-	size_t descs_bytes = FILE_OP_QUEUE_SIZE * sizeof(struct ds_stage_copy);
+	size_t base =
+	        MAX_STREAMS + (size_t)d->cfg.n_io_threads +
+	        (size_t)idx * FILE_OP_QUEUE_SIZE * (1 + OPENDS_STAGE_BLOCKS);
+	size_t descs_bytes =
+	        FILE_OP_QUEUE_SIZE * sizeof(struct opends_stage_copy);
 	void *host = NULL;
 	int rc;
 
-	rc = ds_accel->host_alloc_mapped(descs_bytes, &host, &w->descs_dptr);
+	rc = opends_accel->host_alloc_mapped(descs_bytes, &host,
+	                                     &w->descs_dptr);
 	if (rc != 0) {
 		return -1;
 	}
@@ -645,7 +652,7 @@ ds_write_words_setup(struct driver *d, struct io_worker *w, int idx)
 
 	for (uint32_t s = 0; s < FILE_OP_QUEUE_SIZE; s++) {
 		struct file_op_write *wr = &w->file_op_queue[s].wr;
-		size_t i = base + (size_t)s * (1 + DS_STAGE_BLOCKS);
+		size_t i = base + (size_t)s * (1 + OPENDS_STAGE_BLOCKS);
 
 		wr->turn = &words[i];
 		wr->landed = &words[i + 1];
@@ -654,7 +661,7 @@ ds_write_words_setup(struct driver *d, struct io_worker *w, int idx)
 		        d->stream_words_dptr + (i + 1) * sizeof(uint32_t);
 		wr->desc = &w->descs[s];
 		wr->desc_dptr = w->descs_dptr +
-		                (size_t)s * sizeof(struct ds_stage_copy);
+		                (size_t)s * sizeof(struct opends_stage_copy);
 	}
 	return 0;
 }

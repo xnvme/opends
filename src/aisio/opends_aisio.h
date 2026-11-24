@@ -4,8 +4,8 @@
  * files share. opends_aisio.c holds the P2P paths and the driver;
  * opends_aisio_posix.c the path through the mounted file system.
  */
-#ifndef DS_AISIO_H_
-#define DS_AISIO_H_
+#ifndef OPENDS_AISIO_H_
+#define OPENDS_AISIO_H_
 
 #include "accel/opends_accel.h"
 #include "opends_aisio_config.h"
@@ -43,7 +43,7 @@
 /* Rounds of one stream write that are queued at the call. Each is a few
  * stream commands, a stream takes a bounded number, and the I/O thread
  * cannot take a round before the call has returned. */
-#define DS_FIXED_ROUNDS_MAX 64
+#define OPENDS_FIXED_ROUNDS_MAX 64
 #define FILE_OP_QUEUE_MASK (FILE_OP_QUEUE_SIZE - 1)
 #define STREAM_MAP_SIZE (2 * MAX_STREAMS)
 #define STREAM_MAP_MASK (STREAM_MAP_SIZE - 1)
@@ -55,7 +55,7 @@ enum file_op_state {
 };
 
 /* One extent of a file: a byte range and the LBA it starts at. */
-struct ds_extent {
+struct opends_extent {
 	uint64_t file_offset;
 	uint64_t slba;
 	uint64_t length;
@@ -88,11 +88,11 @@ struct registered_file {
 
 struct opends_stream {
 	uint32_t *gate;
-	ds_accel_devptr_t gate_dptr;
+	opends_accel_devptr_t gate_dptr;
 	uint32_t next_seq;
 	void *bounce_buf;
-	struct ds_bounce_copy *bounce_desc_host;
-	ds_accel_devptr_t bounce_desc_dev;
+	struct opends_bounce_copy *bounce_desc_host;
+	opends_accel_devptr_t bounce_desc_dev;
 	bool fixed; /* registered with the three FIXED flags */
 };
 
@@ -126,7 +126,7 @@ struct bounce_slot {
 /* A pinned host buffer a write is staged through. */
 struct write_buf {
 	void *host;
-	ds_accel_devptr_t dptr;     /* the buffer as the stage kernel sees it */
+	opends_accel_devptr_t dptr; /* the buffer as the stage kernel sees it */
 	struct write_buf *next;     /* the free list */
 	struct write_buf *all_next; /* every buffer, for teardown */
 };
@@ -141,8 +141,8 @@ struct write_buf {
 struct file_op_write {
 	struct write_buf *buf;
 	bool deferred;
-	struct ds_stage_copy *desc;
-	ds_accel_devptr_t desc_dptr;
+	struct opends_stage_copy *desc;
+	opends_accel_devptr_t desc_dptr;
 	const uint8_t *src;
 	size_t size;
 	off_t file_offset;
@@ -156,10 +156,10 @@ struct file_op_write {
 	uint32_t granted;  /* rounds the kernel was given (deferred) */
 	uint32_t copies;   /* rounds whose copy is queued */
 	uint32_t enqueued; /* rounds that will land */
-	uint32_t *landed;  /* DS_STAGE_BLOCKS words */
+	uint32_t *landed;  /* OPENDS_STAGE_BLOCKS words */
 	uint32_t *turn;
-	ds_accel_devptr_t landed_dptr;
-	ds_accel_devptr_t turn_dptr;
+	opends_accel_devptr_t landed_dptr;
+	opends_accel_devptr_t turn_dptr;
 };
 
 struct file_op {
@@ -199,7 +199,7 @@ struct kernel_read {
 	void *buf;
 	size_t buf_nbytes;
 	uint32_t *word;
-	ds_accel_devptr_t word_dptr;
+	opends_accel_devptr_t word_dptr;
 	uint32_t seq;
 	struct file_op *op;
 	uint8_t *dst;
@@ -214,8 +214,8 @@ struct io_worker {
 	struct xnvme_queue *queue;
 	struct kernel_read kread;
 	void *edge_buf; /* one block, for the edges of a staged write */
-	struct ds_stage_copy *descs; /* one for each op slot */
-	ds_accel_devptr_t descs_dptr;
+	struct opends_stage_copy *descs; /* one for each op slot */
+	opends_accel_devptr_t descs_dptr;
 	struct file_op file_op_queue[FILE_OP_QUEUE_SIZE];
 	uint32_t queue_head;
 	uint32_t queue_tail;
@@ -240,14 +240,14 @@ struct driver {
 	int run_count;
 
 	bool workers_ready;
-	ds_accel_ctx_t accel_ctx;
+	opends_accel_ctx_t accel_ctx;
 
 	struct opends_stream streams[MAX_STREAMS];
 	int n_streams;
 	void *stream_words_host;
-	ds_accel_devptr_t stream_words_dptr;
+	opends_accel_devptr_t stream_words_dptr;
 
-	struct ds_stream_map_entry stream_map[STREAM_MAP_SIZE];
+	struct opends_stream_map_entry stream_map[STREAM_MAP_SIZE];
 
 	struct write_buf *write_bufs_free;
 	struct write_buf *write_bufs_all;
@@ -266,7 +266,7 @@ struct driver {
 
 /* Shared between the backend's source files, hidden from the library's
  * users. */
-#define DS_HIDDEN __attribute__((visibility("hidden")))
+#define OPENDS_HIDDEN __attribute__((visibility("hidden")))
 
 static inline void
 release_gate(struct opends_stream *s, uint32_t seq)
@@ -275,29 +275,33 @@ release_gate(struct opends_stream *s, uint32_t seq)
 }
 
 /* opends_aisio.c */
-DS_HIDDEN bool ds_aisio_range_registered(struct driver *d, const void *ptr,
-                                         size_t size);
-DS_HIDDEN void ds_aisio_future_complete(opends_async_future_t *fut,
-                                        ssize_t result);
+OPENDS_HIDDEN bool opends_aisio_range_registered(struct driver *d,
+                                                 const void *ptr, size_t size);
+OPENDS_HIDDEN void opends_aisio_future_complete(opends_async_future_t *fut,
+                                                ssize_t result);
 
 /* opends_aisio_posix.c: writes through the file system, staged in pinned
  * buffers an I/O thread only polls for. */
-DS_HIDDEN struct write_buf *ds_write_buf_take(struct driver *d);
-DS_HIDDEN int ds_write_buf_take_or_grow(struct driver *d,
-                                        struct write_buf **out);
-DS_HIDDEN void ds_write_buf_put(struct driver *d, struct write_buf *s);
-DS_HIDDEN void ds_write_buf_teardown(struct driver *d);
-DS_HIDDEN int ds_write_words_setup(struct driver *d, struct io_worker *w,
-                                   int idx);
-DS_HIDDEN void ds_write_init(struct file_op_write *wr, const uint8_t *src,
-                             size_t size, off_t file_offset, off_t buf_offset);
-DS_HIDDEN void ds_write_geometry(struct driver *d, struct file_op_write *wr);
-DS_HIDDEN int ds_stream_write_enqueue(struct driver *d, struct file_op *op,
-                                      ds_accel_stream_t cus);
-DS_HIDDEN int ds_stream_write_enqueue_deferred(struct driver *d,
-                                               struct file_op *op,
-                                               ds_accel_stream_t cus);
-DS_HIDDEN bool ds_dispatch_write(struct io_worker *w, struct file_op *op);
-DS_HIDDEN void ds_write_poll(struct io_worker *w, struct file_op *op);
+OPENDS_HIDDEN struct write_buf *opends_write_buf_take(struct driver *d);
+OPENDS_HIDDEN int opends_write_buf_take_or_grow(struct driver *d,
+                                                struct write_buf **out);
+OPENDS_HIDDEN void opends_write_buf_put(struct driver *d, struct write_buf *s);
+OPENDS_HIDDEN void opends_write_buf_teardown(struct driver *d);
+OPENDS_HIDDEN int opends_write_words_setup(struct driver *d,
+                                           struct io_worker *w, int idx);
+OPENDS_HIDDEN void opends_write_init(struct file_op_write *wr,
+                                     const uint8_t *src, size_t size,
+                                     off_t file_offset, off_t buf_offset);
+OPENDS_HIDDEN void opends_write_geometry(struct driver *d,
+                                         struct file_op_write *wr);
+OPENDS_HIDDEN int opends_stream_write_enqueue(struct driver *d,
+                                              struct file_op *op,
+                                              opends_accel_stream_t cus);
+OPENDS_HIDDEN int
+opends_stream_write_enqueue_deferred(struct driver *d, struct file_op *op,
+                                     opends_accel_stream_t cus);
+OPENDS_HIDDEN bool opends_dispatch_write(struct io_worker *w,
+                                         struct file_op *op);
+OPENDS_HIDDEN void opends_write_poll(struct io_worker *w, struct file_op *op);
 
-#endif /* DS_AISIO_H_ */
+#endif /* OPENDS_AISIO_H_ */

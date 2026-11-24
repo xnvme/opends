@@ -4,8 +4,8 @@
  * open. The driver consumes the values and never reads the environment
  * itself.
  */
-#ifndef DS_AISIO_CONFIG_H_
-#define DS_AISIO_CONFIG_H_
+#ifndef OPENDS_AISIO_CONFIG_H_
+#define OPENDS_AISIO_CONFIG_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -32,6 +32,6 @@ struct aisio_config {
 };
 
 /* Returns 0, or -EINVAL after a message on stderr. */
-int aisio_config_read(struct aisio_config *cfg);
+int opends_aisio_config_read(struct aisio_config *cfg);
 
-#endif /* DS_AISIO_CONFIG_H_ */
+#endif /* OPENDS_AISIO_CONFIG_H_ */

@@ -24,14 +24,14 @@
 
 #include <stdint.h>
 
-struct ds_stream_map_entry {
-	ds_accel_stream_t key;
+struct opends_stream_map_entry {
+	opends_accel_stream_t key;
 	int idx;
 	int used;
 };
 
 static inline uint32_t
-ds_stream_map_hash(ds_accel_stream_t s, uint32_t mask)
+opends_stream_map_hash(opends_accel_stream_t s, uint32_t mask)
 {
 	uintptr_t v = (uintptr_t)s;
 	v *= 0x9E3779B97F4A7C15ULL;
@@ -39,7 +39,7 @@ ds_stream_map_hash(ds_accel_stream_t s, uint32_t mask)
 }
 
 /* Returns idx on hit, -1 on miss. Lock-free against concurrent
- * ds_stream_map_put on a different key: a reader for K1 only walks
+ * opends_stream_map_put on a different key: a reader for K1 only walks
  * slots [hash(K1), K1's_slot], and those were all non-empty at K1's
  * registration (else K1 would have stopped sooner). The table is
  * grow-only, so a slot in that range cannot later become empty or
@@ -47,13 +47,13 @@ ds_stream_map_hash(ds_accel_stream_t s, uint32_t mask)
  * with release and loaded with acquire, so an observed slot publishes
  * its key, its idx and everything the caller wrote before the put. */
 static inline int
-ds_stream_map_get(const struct ds_stream_map_entry *e, uint32_t mask,
-                  ds_accel_stream_t stream)
+opends_stream_map_get(const struct opends_stream_map_entry *e, uint32_t mask,
+                      opends_accel_stream_t stream)
 {
-	uint32_t h = ds_stream_map_hash(stream, mask);
+	uint32_t h = opends_stream_map_hash(stream, mask);
 	uint32_t cap = mask + 1;
 	for (uint32_t p = 0; p < cap; p++) {
-		const struct ds_stream_map_entry *s = &e[(h + p) & mask];
+		const struct opends_stream_map_entry *s = &e[(h + p) & mask];
 		if (!__atomic_load_n(&s->used, __ATOMIC_ACQUIRE)) {
 			return -1;
 		}
@@ -66,16 +66,16 @@ ds_stream_map_get(const struct ds_stream_map_entry *e, uint32_t mask,
 
 /* Insert, returning 0 on success and -1 if full. Caller must
  * serialize inserts (in opends_aisio.c, reg_lock) and keep the load
- * factor below 50%. See ds_stream_map_get for the lock-free reader
+ * factor below 50%. See opends_stream_map_get for the lock-free reader
  * invariant. */
 static inline int
-ds_stream_map_put(struct ds_stream_map_entry *e, uint32_t mask,
-                  ds_accel_stream_t stream, int idx)
+opends_stream_map_put(struct opends_stream_map_entry *e, uint32_t mask,
+                      opends_accel_stream_t stream, int idx)
 {
-	uint32_t h = ds_stream_map_hash(stream, mask);
+	uint32_t h = opends_stream_map_hash(stream, mask);
 	uint32_t cap = mask + 1;
 	for (uint32_t p = 0; p < cap; p++) {
-		struct ds_stream_map_entry *s = &e[(h + p) & mask];
+		struct opends_stream_map_entry *s = &e[(h + p) & mask];
 		if (!s->used) {
 			s->key = stream;
 			s->idx = idx;

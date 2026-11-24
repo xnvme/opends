@@ -136,7 +136,7 @@ buf_remove(struct driver *d, struct buf_entry *e)
 /* A chunk mapping also covers neighbouring allocations, which xnvme then
  * cannot refuse, so every op is checked against the table it came from. */
 bool
-ds_aisio_range_registered(struct driver *d, const void *ptr, size_t size)
+opends_aisio_range_registered(struct driver *d, const void *ptr, size_t size)
 {
 	bool ok;
 
@@ -314,7 +314,7 @@ buf_free_locked(struct driver *d, void *p)
 /* ------------------------------------------------------------------ */
 
 void
-ds_aisio_future_complete(opends_async_future_t *fut, ssize_t result)
+opends_aisio_future_complete(opends_async_future_t *fut, ssize_t result)
 {
 	fut->result = result;
 	__atomic_store_n(&fut->done, 1, __ATOMIC_RELEASE);
@@ -336,22 +336,22 @@ stream_bounce_alloc(struct opends_stream *s, struct driver *d)
 	 * kernel reads it on the GPU. Zero-init keeps a bounce-free op
 	 * (n_bytes == 0) kernel-safe. */
 	void *desc_host = NULL;
-	ds_accel_devptr_t desc_dev = 0;
-	int rc = ds_accel->host_alloc_mapped(sizeof(struct ds_bounce_copy),
-	                                     &desc_host, &desc_dev);
+	opends_accel_devptr_t desc_dev = 0;
+	int rc = opends_accel->host_alloc_mapped(
+	        sizeof(struct opends_bounce_copy), &desc_host, &desc_dev);
 	if (rc != 0)
 		return rc;
-	memset(desc_host, 0, sizeof(struct ds_bounce_copy));
+	memset(desc_host, 0, sizeof(struct opends_bounce_copy));
 
 	/* One slot suffices: at most one bounce per op, and the per-stream gate
 	 * serialises ops. */
 	void *buf = buf_alloc_locked(d, d->lba_size);
 	if (!buf) {
-		ds_accel->host_free(desc_host);
+		opends_accel->host_free(desc_host);
 		return -1;
 	}
 
-	s->bounce_desc_host = (struct ds_bounce_copy *)desc_host;
+	s->bounce_desc_host = (struct opends_bounce_copy *)desc_host;
 	s->bounce_desc_dev = desc_dev;
 	s->bounce_buf = buf;
 	return 0;
@@ -365,7 +365,7 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 		s->bounce_buf = NULL;
 	}
 	if (s->bounce_desc_host) {
-		ds_accel->host_free(s->bounce_desc_host);
+		opends_accel->host_free(s->bounce_desc_host);
 		s->bounce_desc_host = NULL;
 	}
 	s->bounce_desc_dev = 0;
@@ -393,12 +393,12 @@ snapshot_held(struct xal *xal, int seq)
  * the shared pools in place, concurrent with this read, so validate the
  * snapshot before trusting anything read from them. -ESTALE means retry. */
 static int
-extents_snapshot(struct driver *d, char *path, struct ds_extent **out,
+extents_snapshot(struct driver *d, char *path, struct opends_extent **out,
                  uint32_t *out_n)
 {
 	struct xal *xal = d->xal;
 	struct xal_extents *xe = NULL;
-	struct ds_extent *ex = NULL;
+	struct opends_extent *ex = NULL;
 	uint32_t n = 0, base;
 	bool held;
 	int seq, rc;
@@ -462,7 +462,7 @@ out:
 }
 
 static int
-resolve_extents(struct driver *d, int fd, struct ds_extent **out,
+resolve_extents(struct driver *d, int fd, struct opends_extent **out,
                 uint32_t *out_n)
 {
 	char fdpath[64], path[PATH_MAX];
@@ -539,13 +539,14 @@ kernel_read_chunk(struct io_worker *w)
 		k->last = true;
 	}
 
-	err = ds_accel->copy_to_dev_async(k->dst, (uint8_t *)k->buf + head, n);
+	err = opends_accel->copy_to_dev_async(k->dst, (uint8_t *)k->buf + head,
+	                                      n);
 	if (err != 0) {
 		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 		goto done;
 	}
 	k->seq++;
-	err = ds_accel->stream_write_value32(NULL, k->word_dptr, k->seq);
+	err = opends_accel->stream_write_value32(NULL, k->word_dptr, k->seq);
 	if (err != 0) {
 		/* nothing tells when the queued copy has run, so the buffer
 		 * cannot be used again */
@@ -608,7 +609,7 @@ kernel_read_setup(struct driver *d, struct io_worker *w)
 		k->buf = NULL;
 		return -1;
 	}
-	err = ds_accel->host_pin(k->buf, k->buf_nbytes, NULL);
+	err = opends_accel->host_pin(k->buf, k->buf_nbytes, NULL);
 	if (err != 0) {
 		free(k->buf);
 		k->buf = NULL;
@@ -623,7 +624,7 @@ kernel_read_teardown(struct io_worker *w)
 	if (!w->kread.buf) {
 		return;
 	}
-	ds_accel->host_unpin(w->kread.buf);
+	opends_accel->host_unpin(w->kread.buf);
 	free(w->kread.buf);
 	w->kread.buf = NULL;
 }
@@ -637,7 +638,7 @@ open_device(struct driver *d)
 	 * homi_id 1 by convention unless overridden. */
 	struct xnvme_opts opts = {0};
 	xnvme_opts_set_defaults(&opts);
-	opts.be = ds_accel->xnvme_be;
+	opts.be = opends_accel->xnvme_be;
 	opts.homi_id = d->cfg.homi_id;
 	opts.host_heap_size = d->cfg.host_heap_nbytes;
 	opts.device_heap_size = d->cfg.device_heap_nbytes;
@@ -887,17 +888,18 @@ zero_fill(struct io_worker *w, struct file_op *op, uint8_t *dst, size_t nbytes)
 	struct kernel_read *k = &w->kread;
 	int err;
 
-	if (op->mode == FILE_OP_STREAM || !ds_accel->fill_dev_async ||
-	    !ds_accel->stream_write_value32) {
+	if (op->mode == FILE_OP_STREAM || !opends_accel->fill_dev_async ||
+	    !opends_accel->stream_write_value32) {
 		op->err = OPENDS_INVALID_VALUE;
 		return -1;
 	}
-	err = ds_accel->fill_dev_async(dst, nbytes);
+	err = opends_accel->fill_dev_async(dst, nbytes);
 	if (err != 0) {
 		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 		return -1;
 	}
-	err = ds_accel->stream_write_value32(NULL, k->word_dptr, k->seq + 1);
+	err = opends_accel->stream_write_value32(NULL, k->word_dptr,
+	                                         k->seq + 1);
 	if (err != 0) {
 		op->err = OPENDS_DEVICE_DRIVER_ERROR;
 		return -1;
@@ -922,7 +924,7 @@ fill_landed(const struct io_worker *w, const struct file_op *op)
 }
 
 /* Reads of any handle and writes of a raw handle; a write to a file takes
- * ds_dispatch_write. */
+ * opends_dispatch_write. */
 static void
 start_io_op(struct io_worker *w, struct file_op *op)
 {
@@ -949,7 +951,7 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		req_start = (uint64_t)op->u.async.file_offset;
 		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	}
-	if (!ds_aisio_range_registered(w->drv, dst_base, size)) {
+	if (!opends_aisio_range_registered(w->drv, dst_base, size)) {
 		op->err = OPENDS_MEMORY_NOT_REGISTERED;
 		return;
 	}
@@ -988,8 +990,8 @@ start_io_op(struct io_worker *w, struct file_op *op)
 	uint64_t req_end = req_start + size;
 
 	/* A raw handle is one extent spanning the namespace. */
-	struct ds_extent raw_ext = {0, 0, d->ns_nbytes};
-	struct ds_extent *extents = &raw_ext;
+	struct opends_extent raw_ext = {0, 0, d->ns_nbytes};
+	struct opends_extent *extents = &raw_ext;
 	uint32_t extent_count = 1;
 	if (!op->h->raw && !__atomic_load_n(&d->xal, __ATOMIC_ACQUIRE)) {
 		op->err = OPENDS_FS_SETUP_ERROR;
@@ -1008,7 +1010,7 @@ start_io_op(struct io_worker *w, struct file_op *op)
 	struct stat st;
 
 	for (uint32_t i = 0; i < extent_count; i++) {
-		const struct ds_extent *e = &extents[i];
+		const struct opends_extent *e = &extents[i];
 		uint64_t ext_start = e->file_offset;
 		uint64_t ext_end = ext_start + e->length;
 		if (ext_start >= req_end)
@@ -1100,8 +1102,8 @@ static int
 run_bounce_copies(struct file_op *op)
 {
 	for (int i = 0; i < op->n_bounces; i++) {
-		if (ds_accel->copy(op->bounces[i].dst, op->bounces[i].src,
-		                   op->bounces[i].nbytes) != 0)
+		if (opends_accel->copy(op->bounces[i].dst, op->bounces[i].src,
+		                       op->bounces[i].nbytes) != 0)
 			return -1;
 	}
 	return 0;
@@ -1128,7 +1130,7 @@ complete_read_op(struct file_op *op)
 	if (!op->err && run_bounce_copies(op) < 0)
 		n = -(ssize_t)OPENDS_DEVICE_DRIVER_ERROR;
 
-	ds_aisio_future_complete(op->u.async.future, n);
+	opends_aisio_future_complete(op->u.async.future, n);
 	__atomic_store_n(&op->state, FILE_OP_FREE, __ATOMIC_RELEASE);
 }
 
@@ -1149,7 +1151,7 @@ static bool
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
 	if (write_is_staged(op->is_write, op->h)) {
-		return ds_dispatch_write(w, op);
+		return opends_dispatch_write(w, op);
 	}
 	op->chunks_remaining = 0;
 	op->bounces_outstanding = 0;
@@ -1166,7 +1168,7 @@ static void
 reap_in_flight(struct io_worker *w, struct file_op *op)
 {
 	if (write_is_staged(op->is_write, op->h)) {
-		ds_write_poll(w, op);
+		opends_write_poll(w, op);
 		return;
 	}
 	if (w->kread.op == op) {
@@ -1212,7 +1214,7 @@ io_thread_main(void *arg)
 	bool busy_spin = d->cfg.busy_spin;
 	bool stay_hot = true;
 
-	ds_accel->ctx_set(d->accel_ctx);
+	opends_accel->ctx_set(d->accel_ctx);
 
 	for (;;) {
 		bool busy = false;
@@ -1295,13 +1297,13 @@ mask_nth_cpu(uint64_t mask, int n)
 static int
 workers_setup(struct driver *d)
 {
-	int rc = ds_accel->ctx_get(&d->accel_ctx);
+	int rc = opends_accel->ctx_get(&d->accel_ctx);
 	if (rc != 0)
 		return rc;
-	rc = ds_accel->load();
+	rc = opends_accel->load();
 	if (rc != 0)
 		return rc;
-	rc = ds_accel->alloc_granularity(&d->chunk_nbytes);
+	rc = opends_accel->alloc_granularity(&d->chunk_nbytes);
 	if (rc != 0)
 		return rc;
 	if (!d->chunk_nbytes || (d->chunk_nbytes & (d->chunk_nbytes - 1)))
@@ -1310,14 +1312,15 @@ workers_setup(struct driver *d)
 	/* Mapped so the device-side gate can address the word; the host
 	 * callback path uses the host view only. */
 	void *host = NULL;
-	ds_accel_devptr_t dptr = 0;
+	opends_accel_devptr_t dptr = 0;
 	/* one more word for the kernel reads of each worker, then for each
 	 * op slot a write's turn and the landed word of every stage block */
 	size_t words_bytes = STREAM_WORDS_BYTES +
 	                     (size_t)d->cfg.n_io_threads * sizeof(uint32_t) +
 	                     (size_t)d->cfg.n_io_threads * FILE_OP_QUEUE_SIZE *
-	                             (1 + DS_STAGE_BLOCKS) * sizeof(uint32_t);
-	rc = ds_accel->host_alloc_mapped(words_bytes, &host, &dptr);
+	                             (1 + OPENDS_STAGE_BLOCKS) *
+	                             sizeof(uint32_t);
+	rc = opends_accel->host_alloc_mapped(words_bytes, &host, &dptr);
 	if (rc != 0)
 		return rc;
 	memset(host, 0, words_bytes);
@@ -1334,7 +1337,7 @@ workers_setup(struct driver *d)
 	for (int i = 0; i < d->cfg.n_io_threads; i++) {
 		struct io_worker *w = &d->workers[i];
 		w->drv = d;
-		if (ds_write_words_setup(d, w, i) < 0)
+		if (opends_write_words_setup(d, w, i) < 0)
 			goto fail;
 		if (posix_memalign(&w->edge_buf, OPENDS_DIRECT_ALIGN,
 		                   OPENDS_DIRECT_ALIGN) != 0) {
@@ -1389,12 +1392,12 @@ fail:
 		kernel_read_teardown(w);
 		free(w->edge_buf);
 		if (w->descs)
-			ds_accel->host_free(w->descs);
+			opends_accel->host_free(w->descs);
 	}
 	free(d->workers);
 	d->workers = NULL;
 fail_words:
-	ds_accel->host_free(d->stream_words_host);
+	opends_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
 	return -1;
 }
@@ -1430,24 +1433,24 @@ workers_teardown(struct driver *d)
 		free(w->edge_buf);
 		w->edge_buf = NULL;
 		if (w->descs) {
-			ds_accel->host_free(w->descs);
+			opends_accel->host_free(w->descs);
 			w->descs = NULL;
 		}
 	}
 	free(d->workers);
 	d->workers = NULL;
-	ds_write_buf_teardown(d);
+	opends_write_buf_teardown(d);
 
-	ds_accel->host_free(d->stream_words_host);
+	opends_accel->host_free(d->stream_words_host);
 	d->stream_words_host = NULL;
 
 	d->workers_ready = false;
 }
 
 static struct opends_stream *
-opends_stream_get(struct driver *d, ds_accel_stream_t stream)
+opends_stream_get(struct driver *d, opends_accel_stream_t stream)
 {
-	int idx = ds_stream_map_get(d->stream_map, STREAM_MAP_MASK, stream);
+	int idx = opends_stream_map_get(d->stream_map, STREAM_MAP_MASK, stream);
 	if (idx < 0)
 		return NULL;
 	return &d->streams[idx];
@@ -1577,7 +1580,7 @@ opends_driver_open(void)
 	if (!d)
 		return opends_err(OPENDS_INTERNAL_ERROR);
 
-	if (aisio_config_read(&d->cfg) < 0) {
+	if (opends_aisio_config_read(&d->cfg) < 0) {
 		free(d);
 		return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1919,7 +1922,7 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	bool staged = write_is_staged(is_write, fh);
 	struct write_buf *buf = NULL;
 	if (staged && size) {
-		int buf_rc = ds_write_buf_take_or_grow(d, &buf);
+		int buf_rc = opends_write_buf_take_or_grow(d, &buf);
 
 		if (buf_rc != 0) {
 			return opends_err_dev(OPENDS_INTERNAL_ERROR, buf_rc);
@@ -1937,8 +1940,9 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->buf_base = buf_base;
 	op->err = 0;
 	if (staged) {
-		ds_write_init(&op->wr, (const uint8_t *)buf_base + buf_offset,
-		              size, file_offset, buf_offset);
+		opends_write_init(&op->wr,
+		                  (const uint8_t *)buf_base + buf_offset, size,
+		                  file_offset, buf_offset);
 		op->wr.buf = buf;
 	}
 	op->u.async.size = size;
@@ -1989,9 +1993,9 @@ opends_async_await(opends_async_future_t *future)
 static opends_error_t
 classify_accel_failure(struct driver *d, int accel_rc)
 {
-	ds_accel_ctx_t cur;
+	opends_accel_ctx_t cur;
 
-	if (ds_accel->ctx_get(&cur) != 0 || cur != d->accel_ctx)
+	if (opends_accel->ctx_get(&cur) != 0 || cur != d->accel_ctx)
 		return opends_err_dev(OPENDS_CONTEXT_MISMATCH, accel_rc);
 	return opends_err_dev(OPENDS_INTERNAL_ERROR, accel_rc);
 }
@@ -2000,21 +2004,21 @@ classify_accel_failure(struct driver *d, int accel_rc)
  * publishes 2*seq on arrival and parks the stream until the I/O thread's
  * release. */
 static int
-gate_enqueue(struct driver *d, struct file_op *op, ds_accel_stream_t cus)
+gate_enqueue(struct driver *d, struct file_op *op, opends_accel_stream_t cus)
 {
 	struct opends_stream *s = op->u.stream.opends_stream;
 	uint32_t seq = op->u.stream.seq;
 	int rc;
 
 	if (d->cfg.assume_aligned_only) {
-		return ds_accel->launch_host_func(cus, park_gate_cb, op);
+		return opends_accel->launch_host_func(cus, park_gate_cb, op);
 	}
-	rc = ds_accel->stream_write_value32(cus, s->gate_dptr, 2 * seq);
+	rc = opends_accel->stream_write_value32(cus, s->gate_dptr, 2 * seq);
 	if (rc != 0) {
 		return rc;
 	}
-	return ds_accel->stream_wait_value32_geq(cus, s->gate_dptr,
-	                                         2 * seq + 1);
+	return opends_accel->stream_wait_value32_geq(cus, s->gate_dptr,
+	                                             2 * seq + 1);
 }
 
 static opends_error_t
@@ -2030,7 +2034,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
-	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
+	opends_accel_stream_t cus = (opends_accel_stream_t)stream;
 	struct opends_stream *opends_stream = opends_stream_get(d, cus);
 	if (!opends_stream)
 		return opends_err(OPENDS_INTERNAL_ERROR);
@@ -2053,26 +2057,26 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 		 * the resident kernel, which reads the same values later */
 		opends_direct_span(*file_offset_p, *size_p, &geom);
 		deferred = geom.span >
-		           DS_FIXED_ROUNDS_MAX * d->cfg.write_buf_nbytes;
+		           OPENDS_FIXED_ROUNDS_MAX * d->cfg.write_buf_nbytes;
 	}
 	if (deferred) {
-		buf_rc = ds_write_buf_take_or_grow(d, &buf);
+		buf_rc = opends_write_buf_take_or_grow(d, &buf);
 		while (buf_rc == 0 && !buf) {
 			sched_yield();
-			buf = ds_write_buf_take(d);
+			buf = opends_write_buf_take(d);
 		}
 	} else if (staged) {
 		wsize = *size_p;
 		wfoff = *file_offset_p;
 		wboff = *buf_offset_p;
-		if (wsize && !ds_aisio_range_registered(
+		if (wsize && !opends_aisio_range_registered(
 		                     d, (uint8_t *)buf_base + wboff, wsize)) {
 			werr = OPENDS_MEMORY_NOT_REGISTERED;
 		} else if (wsize) {
-			buf_rc = ds_write_buf_take_or_grow(d, &buf);
+			buf_rc = opends_write_buf_take_or_grow(d, &buf);
 			while (buf_rc == 0 && !buf) {
 				sched_yield();
-				buf = ds_write_buf_take(d);
+				buf = opends_write_buf_take(d);
 			}
 		}
 	}
@@ -2097,12 +2101,12 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.stream.opends_stream = opends_stream;
 	op->u.stream.seq = seq;
 	if (staged) {
-		ds_write_init(&op->wr, (const uint8_t *)buf_base + wboff, wsize,
-		              wfoff, wboff);
+		opends_write_init(&op->wr, (const uint8_t *)buf_base + wboff,
+		                  wsize, wfoff, wboff);
 		op->wr.deferred = deferred;
 		op->wr.buf = buf;
 		if (buf && !deferred) {
-			ds_write_geometry(d, &op->wr);
+			opends_write_geometry(d, &op->wr);
 		}
 	}
 
@@ -2129,10 +2133,10 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * stalls all submission. */
 	int accel_rc;
 	if (deferred) {
-		accel_rc = ds_stream_write_enqueue_deferred(d, op, cus);
+		accel_rc = opends_stream_write_enqueue_deferred(d, op, cus);
 		if (accel_rc != 0 && !op->wr.copies) {
 			/* no kernel runs: nothing to drain */
-			ds_write_buf_put(d, buf);
+			opends_write_buf_put(d, buf);
 			pthread_mutex_unlock(&d->submit_lock);
 			return classify_accel_failure(d, accel_rc);
 		}
@@ -2140,7 +2144,7 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 			op->err = OPENDS_INTERNAL_ERROR;
 		}
 	} else if (staged && op->wr.rounds) {
-		accel_rc = ds_stream_write_enqueue(d, op, cus);
+		accel_rc = opends_stream_write_enqueue(d, op, cus);
 		if (accel_rc != 0) {
 			/* the rounds already queued run: the I/O thread drains
 			 * them and returns the buffer */
@@ -2166,8 +2170,8 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	 * failed enqueue is still drained by the I/O thread (which releases the
 	 * gate); only this read is lost. */
 	if (!d->cfg.assume_aligned_only && !is_write) {
-		accel_rc = ds_accel->copy_stream(opends_stream->bounce_desc_dev,
-		                                 cus);
+		accel_rc = opends_accel->copy_stream(
+		        opends_stream->bounce_desc_dev, cus);
 		if (accel_rc != 0)
 			return classify_accel_failure(d, accel_rc);
 	}
@@ -2206,10 +2210,10 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 	if (!drv->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
-	ds_accel_stream_t cus = (ds_accel_stream_t)stream;
+	opends_accel_stream_t cus = (opends_accel_stream_t)stream;
 
 	pthread_mutex_lock(&drv->reg_lock);
-	int idx = ds_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus);
+	int idx = opends_stream_map_get(drv->stream_map, STREAM_MAP_MASK, cus);
 	if (idx >= 0) {
 		/* The entry outlives a deregistration, and the runtime hands
 		 * out a destroyed stream's handle again, so the flags of the
@@ -2239,7 +2243,8 @@ opends_stream_register(opends_stream_t stream, unsigned flags)
 		return opends_err_dev(OPENDS_INTERNAL_ERROR, rc);
 	}
 
-	if (ds_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) < 0) {
+	if (opends_stream_map_put(drv->stream_map, STREAM_MAP_MASK, cus, n) <
+	    0) {
 		stream_bounce_free(opends_stream, drv);
 		pthread_mutex_unlock(&drv->reg_lock);
 		return opends_err(OPENDS_INTERNAL_ERROR);

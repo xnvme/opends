@@ -3,32 +3,33 @@
  * opends_accel.h - vendor-neutral accelerator runtime interface for the aisio
  * backend.
  *
- * A vendor supports the backend by defining one struct ds_accel_ops instance
- * and binding the active-ops pointer ds_accel to it (see opends_accel_cuda.c).
- * The NVMe and extent code calls only through ds_accel, never a vendor symbol.
+ * A vendor supports the backend by defining one struct opends_accel_ops
+ * instance and binding the active-ops pointer opends_accel to it (see
+ * opends_accel_cuda.c). The NVMe and extent code calls only through
+ * opends_accel, never a vendor symbol.
  *
  * Interface types are vendor-uniform so the ops ABI is fixed:
- *   - ds_accel_devptr_t is a 64-bit device address.
- *   - ds_accel_ctx_t and ds_accel_stream_t are opaque handles (void *).
+ *   - opends_accel_devptr_t is a 64-bit device address.
+ *   - opends_accel_ctx_t and opends_accel_stream_t are opaque handles (void *).
  * Each vendor converts to and from its native pointer at the boundary (identity
  * for CUDA's CUdeviceptr; a cast for HIP's void *).
  */
-#ifndef DS_ACCEL_H
-#define DS_ACCEL_H
+#ifndef OPENDS_ACCEL_H
+#define OPENDS_ACCEL_H
 
 #include <stddef.h>
 #include <stdint.h>
 
-typedef uint64_t ds_accel_devptr_t;
-typedef void *ds_accel_ctx_t;
-typedef void *ds_accel_stream_t;
+typedef uint64_t opends_accel_devptr_t;
+typedef void *opends_accel_ctx_t;
+typedef void *opends_accel_stream_t;
 
 /* The interface an accelerator vendor implements. Each int-returning method
  * returns 0 on success and a nonzero vendor error code on failure (CUDA: a
  * driver or runtime API error code). The code is opaque to the core, reported
  * through dev_err but never interpreted; -1 serves where no vendor code
  * applies. */
-struct ds_accel_ops {
+struct opends_accel_ops {
 	/* xNVMe P2P backend string for this vendor (e.g. "upcie-cuda"). */
 	const char *xnvme_be;
 
@@ -39,10 +40,10 @@ struct ds_accel_ops {
 	int (*load)(void);
 	/* Capture the caller's current context (fails if there is none).
 	 * Captured values compare equal iff they name the same context. */
-	int (*ctx_get)(ds_accel_ctx_t *out);
+	int (*ctx_get)(opends_accel_ctx_t *out);
 	/* Make this thread's accelerator work target the captured context
 	 * (CUDA: cuCtxSetCurrent; HIP: hipSetDevice). */
-	void (*ctx_set)(ds_accel_ctx_t ctx);
+	void (*ctx_set)(opends_accel_ctx_t ctx);
 	/* Granularity of the runtime's device allocations. A dma-buf export
 	 * of the whole chunk around any device pointer is backed, so buffer
 	 * registrations round to it (CUDA: cuMemGetAllocationGranularity). */
@@ -50,12 +51,12 @@ struct ds_accel_ops {
 
 	/* Host pinned memory the accelerator can read by device pointer. */
 	int (*host_alloc_mapped)(size_t bytes, void **host,
-	                         ds_accel_devptr_t *dptr);
+	                         opends_accel_devptr_t *dptr);
 	/* Free a host_alloc_mapped allocation. */
 	void (*host_free)(void *host);
 	/* Pin host memory the caller owns, for the async copies below, and map
 	 * it for the device (dptr may be NULL when no kernel will touch it). */
-	int (*host_pin)(void *host, size_t bytes, ds_accel_devptr_t *dptr);
+	int (*host_pin)(void *host, size_t bytes, opends_accel_devptr_t *dptr);
 	void (*host_unpin)(void *host);
 
 	/* Host/device bulk copy (direction inferred from the pointers). the
@@ -77,36 +78,40 @@ struct ds_accel_ops {
 	 * until a stream_write_value32 or a launch_host_func queued behind it
 	 * on the same stream tells that the copy has run. */
 	int (*copy_from_dev_async)(void *dst, const void *src, size_t bytes,
-	                           ds_accel_stream_t s);
+	                           opends_accel_stream_t s);
 
 	/* Per-stream gate, required only when assume_aligned_only is off:
 	 * write a gate word in stream order. */
-	int (*stream_write_value32)(ds_accel_stream_t s, ds_accel_devptr_t addr,
-	                            uint32_t value);
+	int (*stream_write_value32)(opends_accel_stream_t s,
+	                            opends_accel_devptr_t addr, uint32_t value);
 	/* Hold the stream until the gate word reaches value (>=). */
-	int (*stream_wait_value32_geq)(ds_accel_stream_t s,
-	                               ds_accel_devptr_t addr, uint32_t value);
+	int (*stream_wait_value32_geq)(opends_accel_stream_t s,
+	                               opends_accel_devptr_t addr,
+	                               uint32_t value);
 
 	/* Run fn(arg) on a host thread in stream order, holding the stream
 	 * until it returns. fn must not call accelerator APIs. Required only
 	 * when assume_aligned_only is on. */
-	int (*launch_host_func)(ds_accel_stream_t s, void (*fn)(void *),
+	int (*launch_host_func)(opends_accel_stream_t s, void (*fn)(void *),
 	                        void *arg);
 
-	/* Execute the copy described at desc (a ds_bounce_copy; n_bytes == 0
-	 * no-ops), ordered on the stream. The mechanism (a copy kernel or a
+	/* Execute the copy described at desc (a opends_bounce_copy; n_bytes ==
+	 * 0 no-ops), ordered on the stream. The mechanism (a copy kernel or a
 	 * stream-ordered memcpy) is the vendor's choice. */
-	int (*copy_stream)(ds_accel_devptr_t desc, ds_accel_stream_t stream);
+	int (*copy_stream)(opends_accel_devptr_t desc,
+	                   opends_accel_stream_t stream);
 	/* Start the resident copy of a stream write whose parameters are read
-	 * late (a ds_stage_copy at desc, the turn word, DS_STAGE_BLOCKS landed
-	 * words), ordered on the stream. It must hold the stream until it has
-	 * copied the round marked last; see opends_bounce_kernel.h. */
-	int (*stage_stream)(ds_accel_devptr_t desc, ds_accel_devptr_t turn,
-	                    ds_accel_devptr_t landed, ds_accel_stream_t stream);
+	 * late (a opends_stage_copy at desc, the turn word, OPENDS_STAGE_BLOCKS
+	 * landed words), ordered on the stream. It must hold the stream until
+	 * it has copied the round marked last; see opends_bounce_kernel.h. */
+	int (*stage_stream)(opends_accel_devptr_t desc,
+	                    opends_accel_devptr_t turn,
+	                    opends_accel_devptr_t landed,
+	                    opends_accel_stream_t stream);
 };
 
 /* The active vendor, bound at link time by the one opends_accel_<vendor>.c
  * compiled into the backend. */
-extern const struct ds_accel_ops *const ds_accel;
+extern const struct opends_accel_ops *const opends_accel;
 
-#endif /* DS_ACCEL_H */
+#endif /* OPENDS_ACCEL_H */
