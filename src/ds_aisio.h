@@ -12,7 +12,6 @@
 #include "ds_stream_map.h"
 #include "ds_bounce_kernel.h"
 #include "opends_internal.h"
-#include "ds_extent.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -53,6 +52,13 @@ enum file_op_state {
 	FILE_OP_FREE = 0,
 	FILE_OP_PENDING = 1,
 	FILE_OP_IN_FLIGHT = 2,
+};
+
+/* One extent of a file: a byte range and the LBA it starts at. */
+struct ds_extent {
+	uint64_t file_offset;
+	uint64_t slba;
+	uint64_t length;
 };
 
 struct buf_entry {

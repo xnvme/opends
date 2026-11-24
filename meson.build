@@ -144,12 +144,6 @@ if aisio_enabled
     link_with : libopends_aisio,
   )
 
-  # Consumer-facing header: the file-to-LBA extent record external
-  # benchmarks deserialize from the test-prep tool.
-  install_headers(
-    'src/ds_extent.h',
-  )
-
   pkg.generate(libopends_aisio,
     name : 'opends_aisio',
     description : 'OpenDS aisio backend (raw NVMe via xNVMe upcie P2P)',
