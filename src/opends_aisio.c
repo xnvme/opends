@@ -634,7 +634,8 @@ open_device(struct driver *d)
 	 * wins the role election, so a homi_id the server does not serve would
 	 * silently make this process the controller owner; both sides use
 	 * homi_id 1 by convention unless overridden. */
-	struct xnvme_opts opts = xnvme_opts_default();
+	struct xnvme_opts opts = {0};
+	xnvme_opts_set_defaults(&opts);
 	opts.be = ds_accel->xnvme_be;
 	opts.homi_id = d->cfg.homi_id;
 	opts.host_heap_size = d->cfg.host_heap_nbytes;
