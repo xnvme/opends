@@ -77,12 +77,12 @@ fresh Ubuntu installation.
 
 ### Build
 
-xNVMe (for-aisio-02112026), xal (v0.3.4) and OpenDS:
+xNVMe (v0.8.0), xal (v0.3.4) and OpenDS:
 
 ```sh
 git clone https://github.com/xnvme/xnvme
 cd xnvme
-git checkout for-aisio-02112026
+git checkout v0.8.0
 git submodule update --init --recursive
 meson setup build
 meson compile -C build

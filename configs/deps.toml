@@ -2,7 +2,7 @@
 
 [xnvme.repository]
 remote = "https://github.com/xnvme/xnvme"
-ref = "for-aisio-02112026"
+ref = "v0.8.0"
 
 [xal.repository]
 remote = "https://github.com/xnvme/xal"
