@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Bring up the upstream HOMI/qublk/xal-server stack so the aisio backend can
 # join it and read files on a mounted filesystem. Hands the NVMe controller to
-# userspace (homi serve), exposes it as a ublk block device (qublk), mounts
+# userspace (xnvme homi serve), exposes it as a ublk block device (qublk), mounts
 # the existing XFS over it at MOUNT, and publishes the mount's extent index
 # over shared memory (xal-server). The same XFS is what the ref/cufile phases
 # mounted via the kernel driver, so any file written there (e.g. the sync-read
@@ -56,23 +56,23 @@ ulimit -c unlimited 2>/dev/null || true
 # The server's host heap is the pool every secondary draws from; the aisio
 # driver alone asks for 256 MiB by default.
 echo "starting homi"
-setsid homi serve "$BDF" --homi-id "$HOMI_ID" --be upcie \
+setsid xnvme homi serve "$BDF" --homi-id "$HOMI_ID" --be upcie \
 	--host-heap-size $((512 * 1024 * 1024)) \
 	< /dev/null > /run/homi/homi.log 2>&1 &
-# 'homi status' exits non-zero until the server is up and its devices ready.
+# 'xnvme homi status' exits non-zero until the server is up and its devices ready.
 for _ in $(seq 1 120); do
-	homi status --homi-id "$HOMI_ID" > /dev/null 2>&1 && break
-	if ! pgrep -x homi > /dev/null; then
+	xnvme homi status --homi-id "$HOMI_ID" > /dev/null 2>&1 && break
+	if ! pgrep -x xnvme-homi > /dev/null; then
 		die "homi exited during startup" /run/homi/homi.log
 	fi
 	sleep 0.5
 done
-if ! homi status --homi-id "$HOMI_ID" > /dev/null 2>&1; then
+if ! xnvme homi status --homi-id "$HOMI_ID" > /dev/null 2>&1; then
 	die "homi did not become ready" /run/homi/homi.log
 fi
 
 echo "starting qublk"
-setsid qublk serve "$BDF" --be upcie --homi-id "$HOMI_ID" --nqueues 1 \
+setsid xnvme qublk serve "$BDF" --be upcie --homi-id "$HOMI_ID" --nqueues 1 \
 	< /dev/null > /run/homi/qublk.log 2>&1 &
 UBLK=""
 for _ in $(seq 1 60); do

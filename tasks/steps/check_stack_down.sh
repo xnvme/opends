@@ -14,7 +14,7 @@ fi
 BDF=$1
 busy=0
 
-for name in homid homi qublk xal-server; do
+for name in homid xnvme-homi xnvme-qublk xal-server; do
 	if pids=$(pgrep -d, -x "$name"); then
 		echo "error: $name is running (pid $pids)" >&2
 		busy=1

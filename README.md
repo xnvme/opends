@@ -140,14 +140,14 @@ Start `homi`, which holds the controller, and wait until it prints
 
 ```sh
 # 512 MiB of host memory: room for qublk and for OpenDS
-homi serve $BDF --homi-id 1 --be upcie --host-heap-size $((512 * 1024 * 1024)) &
+xnvme homi serve $BDF --homi-id 1 --be upcie --host-heap-size $((512 * 1024 * 1024)) &
 ```
 
 Start `qublk`, which exports the drive as a block device for the file system,
 and wait until it prints `/dev/ublkb0 ... ready`:
 
 ```sh
-qublk serve $BDF --homi-id 1 --be upcie --nqueues 1 &
+xnvme qublk serve $BDF --homi-id 1 --be upcie --nqueues 1 &
 ```
 
 `xal-server` publishes where the files are on the drive. Create its
@@ -318,10 +318,10 @@ again. A read that needs the index, through a file handle kept across
 `opends_driver_close()` and `opends_driver_open()`, fails with
 `OPENDS_FS_SETUP_ERROR` until a regular file is registered again.
 
-A raw handle needs no index, so the stack for raw block mode is `homi serve`
-alone: no qublk, no file system and no xal-server. This is the uGDS-style use,
-a KV cache for instance, where the process owns the drive and lays it out
-itself. `test_raw_block_aisio` runs that way in the test suite.
+A raw handle needs no index, so the stack for raw block mode is
+`xnvme homi serve` alone: no qublk, no file system and no xal-server. This is
+the uGDS-style use, a KV cache for instance, where the process owns the drive
+and lays it out itself. `test_raw_block_aisio` runs that way in the test suite.
 
 - Reads and writes go between GPU memory and the NVMe as P2P DMA, and are
   short when they cross the end of the namespace.
