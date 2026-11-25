@@ -64,7 +64,9 @@ runs the `bench` leg and, before it, the same datasets through NVIDIA
 cuFile, so its report has the cuFile-vs-OpenDS table.
 `bench-model-load-llama-cpp` runs the benchmark in
 `benchmarks/model-load-llama-cpp`, which builds llama.cpp and downloads its
-model on first use. Every job uploads its cijoe output as a workflow
+model on first use. `bench-kv-cache-lmcache` runs the benchmark in
+`benchmarks/kv-cache-lmcache`, which installs LMCache into a venv on first
+use. Every job uploads its cijoe output as a workflow
 artifact on the run. A bench job that ran its legs also uploads
 `results-<job>`: `results.json` with the run's provenance, every
 record, the raw filperf logs and the report, and `report.md` beside it,
@@ -79,11 +81,13 @@ crashes it.
 One-time GitHub configuration on the repository the workflow runs in:
 
 1. Create the `test-full`, `bench`, `bench-cufile`, `bench-sweep`,
-   `bench-full-sweep` and `bench-model-load-llama-cpp` labels.
-2. Add the six checks, `test-full / nvme-cuda`, `bench / nvme-cuda`,
+   `bench-full-sweep`, `bench-model-load-llama-cpp` and
+   `bench-kv-cache-lmcache` labels.
+2. Add the seven checks, `test-full / nvme-cuda`, `bench / nvme-cuda`,
    `bench-cufile / nvme-cuda`, `bench-sweep / nvme-cuda`,
-   `bench-full-sweep / nvme-cuda` and
-   `bench-model-load-llama-cpp / nvme-cuda`, to the
+   `bench-full-sweep / nvme-cuda`,
+   `bench-model-load-llama-cpp / nvme-cuda` and
+   `bench-kv-cache-lmcache / nvme-cuda`, to the
    required status checks. A skipped check satisfies the requirement,
    so unlabeled PRs are unaffected.
 
