@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+[lmcache.repository]
+remote = "https://github.com/fmma/LMCache"
+ref = "4c0111d6401019027143a5cb2d71da0fe23dcabb"
+
+[lmcache.torch]
+version = "2.11.0"
+index = "https://download.pytorch.org/whl/cu128"
