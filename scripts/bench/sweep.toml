@@ -28,7 +28,47 @@ mode = ["sync", "stream", "async"]
 
 [[config]]
 io_threads = 1
+queue_depth = 8
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 1
 queue_depth = 16
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 32
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 64
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 128
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 1
+queue_depth = 256
 assume_aligned_only = 0
 idle_spin = 200
 datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
@@ -71,6 +111,38 @@ io_threads = 2
 queue_depth = 16
 assume_aligned_only = 0
 idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 32
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 64
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 128
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+mode = ["sync", "stream", "async"]
+
+[[config]]
+io_threads = 2
+queue_depth = 256
+assume_aligned_only = 0
+idle_spin = 200
 datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
 mode = ["sync", "stream", "async"]
 
@@ -79,7 +151,7 @@ io_threads = 2
 queue_depth = 512
 assume_aligned_only = 0
 idle_spin = 200
-datasets = ["filesize8gib", "tiktokish", "lmcacheish"]
+datasets = ["filesize8gib", "tiktokish", "imagenetish", "lmcacheish"]
 mode = ["sync", "stream", "async"]
 
 [[config]]
@@ -142,12 +214,30 @@ name = "t1_q4_imagenetish"
 
 [[config]]
 io_threads = 1
-queue_depth = 8
+queue_depth = 64
 assume_aligned_only = 0
 idle_spin = 200
 datasets = ["imagenetish"]
 mode = ["stream", "async"]
-name = "t1_q8_imagenetish"
+name = "t1_q64_imagenetish"
+
+[[config]]
+io_threads = 1
+queue_depth = 128
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["stream", "async"]
+name = "t1_q128_imagenetish"
+
+[[config]]
+io_threads = 1
+queue_depth = 256
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["stream", "async"]
+name = "t1_q256_imagenetish"
 
 [[config]]
 io_threads = 2
@@ -157,6 +247,33 @@ idle_spin = 200
 datasets = ["imagenetish"]
 mode = ["stream", "async"]
 name = "t2_q1_imagenetish"
+
+[[config]]
+io_threads = 2
+queue_depth = 64
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["stream", "async"]
+name = "t2_q64_imagenetish"
+
+[[config]]
+io_threads = 2
+queue_depth = 128
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["stream", "async"]
+name = "t2_q128_imagenetish"
+
+[[config]]
+io_threads = 2
+queue_depth = 256
+assume_aligned_only = 0
+idle_spin = 200
+datasets = ["imagenetish"]
+mode = ["stream", "async"]
+name = "t2_q256_imagenetish"
 
 [[config]]
 io_threads = 4
