@@ -5,8 +5,8 @@ remote = "https://github.com/xnvme/xnvme"
 ref = "v0.8.0"
 
 [xal.repository]
-remote = "https://github.com/xnvme/xal"
-ref = "v0.4.0"
+remote = "https://github.com/Daejun7Park/xal"
+ref = "551c2d0d2c309e44b440b26f002d8c7503626ee8"
 
 [fil.repository]
 remote = "https://github.com/xnvme/fil"

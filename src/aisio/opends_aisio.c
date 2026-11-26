@@ -6,9 +6,9 @@
  * backend (PCIe P2P DMA). The HOMI server ("xnvme homi serve") is the
  * primary of an xNVMe multi-process group and holds the controller up. This
  * driver joins the same group as a secondary and allocates its own I/O
- * queues. A registered file's extents come from a xal index that xal-server
- * publishes over POSIX shared memory. The index is in byte units, and this
- * driver converts to LBAs with its own device geometry.
+ * queues. A registered file's extents come from xal, which maps the file
+ * under a lease held on the registered descriptor. They are in byte units,
+ * and this driver converts to LBAs with its own device geometry.
  *
  * Requires: libxnvme and the CUDA toolkit. The NVMe kernel driver must be
  * unbound from the target device before opends_driver_open runs.
@@ -25,8 +25,11 @@
 
 #include <linux/nvme_ioctl.h>
 
+#define NO_WAITER UINT64_MAX
+
 static struct driver *drv;
 static long use_count;
+static unsigned long open_count;
 
 static inline uint64_t
 max_u64(uint64_t a, uint64_t b)
@@ -366,119 +369,70 @@ stream_bounce_free(struct opends_stream *s, struct driver *d)
 	s->bounce_desc_dev = 0;
 }
 
-#define ESTALE_RETRIES 100 /* times ESTALE_BACKOFF_US: five seconds */
-#define ESTALE_BACKOFF_US 50000
-
-/* True while the seqlock snapshot taken at `seq` is still valid: the server
- * is not rewriting the shared pools, they did not move since `seq` was read,
- * and the filesystem is not dirty (changed but not yet re-indexed). */
-static bool
-snapshot_held(struct xal *xal, int seq)
-{
-	int cur;
-	bool dirty;
-
-	atomic_thread_fence(memory_order_acquire);
-	cur = xal_get_seq_lock(xal);
-	dirty = xal_is_dirty(xal);
-	return !(seq & 1) && cur == seq && !dirty;
-}
-
-/* Copy the extents for `path` out of the shared index. The server rewrites
- * the shared pools in place, concurrent with this read, so validate the
- * snapshot before trusting anything read from them. -ESTALE means retry. */
+/* The extents of a registered file, from the lease taken at registration.
+ * xal counts the caller as a reader until the matching release, which is
+ * what keeps a writer's open() or truncate() waiting until the DMA is done.
+ * An extent without an address cannot be read raw. The handle carries no
+ * LBA size, so convert with our own geometry. -EAGAIN: the old map is being
+ * recalled, try again later. */
 static int
-extents_snapshot(struct driver *d, char *path, struct opends_extent **out,
-                 uint32_t *out_n)
+lease_extents(struct driver *d, struct registered_file *h,
+              struct opends_extent **out, uint32_t *out_n)
 {
-	struct xal *xal = d->xal;
-	struct xal_extents *xe = NULL;
-	struct opends_extent *ex = NULL;
-	uint32_t n = 0, base;
-	bool held;
-	int seq, rc;
+	struct xal_extents *xe;
+	struct opends_extent *ex;
+	int rc;
 
-	seq = xal_get_seq_lock(xal);
-	held = snapshot_held(xal, seq);
-	if (!held)
-		return -ESTALE;
-
-	rc = xal_get_extents(xal, path, &xe);
+	/* A write through the descriptor leaves the map behind. A release
+	 * finds that, and the acquire after it maps the file again; the lock
+	 * keeps another acquire from taking the old map meanwhile. */
+	pthread_mutex_lock(&h->lock);
+	if (__atomic_exchange_n(&h->remap, false, __ATOMIC_ACQ_REL)) {
+		rc = xal_extents_acquire(d->xal, h->lease, &xe);
+		if (rc == 0) {
+			xal_extents_release(d->xal, h->lease);
+		} else {
+			__atomic_store_n(&h->remap, true, __ATOMIC_RELEASE);
+		}
+	}
+	rc = xal_extents_acquire(d->xal, h->lease, &xe);
+	pthread_mutex_unlock(&h->lock);
 	if (rc < 0)
-		goto out;
+		return rc;
 
-	/* xe points into the shared inode pool, so count/extent_idx may be
-	 * torn. Capture them, then validate before using them as allocation
-	 * size and pool indices. */
-	n = xe->count;
-	base = xe->extent_idx;
-	held = snapshot_held(xal, seq);
-	if (!held)
-		return -ESTALE;
-
-	ex = calloc(n ? n : 1, sizeof(*ex));
-	if (!ex)
-		return -ENOMEM;
-
-	for (uint32_t i = 0; i < n; i++) {
-		struct xal_extent *e = xal_extent_at(xal, base + i);
+	ex = calloc(xe->count ? xe->count : 1, sizeof(*ex));
+	if (!ex) {
+		rc = -ENOMEM;
+		goto err;
+	}
+	for (uint32_t i = 0; i < xe->count; i++) {
+		struct xal_extent *e =
+		        xal_extent_at(d->xal, xe->extent_idx + i);
 		struct xal_extent_converted b = {0};
 
-		rc = xal_extent_in_bytes(xal, e, &b);
+		if (!e || (e->flag & XAL_EXTENT_NOADDR)) {
+			rc = -ENOENT;
+			goto err;
+		}
+		rc = xal_extent_in_bytes(d->xal, e, &b);
 		if (rc < 0)
-			goto out;
-		/* xal-server never opens the device, so its index carries no
-		 * LBA size; convert with our own geometry. */
+			goto err;
 		if (b.start_block & (uint64_t)(d->lba_size - 1)) {
 			rc = -EIO;
-			goto out;
+			goto err;
 		}
 		ex[i].file_offset = b.start_offset;
 		ex[i].slba = b.start_block >> d->lba_shift;
 		ex[i].length = b.size;
-	}
-
-out:
-	/* A torn read during a rewrite can surface as a spurious error, and a
-	 * clean result may hold torn extents; only trust either if the
-	 * snapshot held. */
-	held = snapshot_held(xal, seq);
-	if (!held) {
-		free(ex);
-		return -ESTALE;
-	}
-	if (rc < 0) {
-		free(ex);
-		return rc;
+		ex[i].flag = e->flag;
 	}
 	*out = ex;
-	*out_n = n;
+	*out_n = xe->count;
 	return 0;
-}
 
-static int
-resolve_extents(struct driver *d, int fd, struct opends_extent **out,
-                uint32_t *out_n)
-{
-	char fdpath[64], path[PATH_MAX];
-	ssize_t plen;
-	int rc;
-
-	snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", fd);
-	plen = readlink(fdpath, path, sizeof(path) - 1);
-	if (plen < 0)
-		return -errno;
-	path[plen] = '\0';
-
-	/* The index is dirty while xal-server rebuilds it, and for good once
-	 * its server exits. Retry a few seconds, then fail. */
-	rc = -ESTALE;
-	for (int attempt = 0; attempt < ESTALE_RETRIES; attempt++) {
-		rc = extents_snapshot(d, path, out, out_n);
-		if (rc != -ESTALE)
-			break;
-		usleep(ESTALE_BACKOFF_US);
-	}
+err:
+	free(ex);
+	xal_extents_release(d->xal, h->lease);
 	return rc;
 }
 
@@ -793,13 +747,19 @@ fill_landed(const struct io_worker *w, const struct file_op *op)
 	return (int32_t)(word - op->fill_seq) >= 0;
 }
 
-/* Reads of any handle and writes of a raw handle; a write to a file takes
- * opends_dispatch_write. */
+/* Resolve where a read of any handle, or a write of a raw handle, lands on
+ * the drive; a write to a file takes opends_dispatch_write. Sets op->err on
+ * failure, and clears op->planned while the map is being recalled. */
 static void
-start_io_op(struct io_worker *w, struct file_op *op)
+plan_io_op(struct io_worker *w, struct file_op *op)
 {
 	struct driver *d = w->drv;
+	struct io_plan *p = &op->plan;
+	uint32_t lba_mask = d->lba_size - 1;
+	size_t size;
+	int err = 0;
 
+	memset(p, 0, sizeof(*p));
 	if (d->lba_size == 0) {
 		op->err = OPENDS_INTERNAL_ERROR;
 		return;
@@ -809,70 +769,157 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		return;
 	}
 
-	size_t size;
-	uint64_t req_start;
-	uint8_t *dst_base;
 	if (op->mode == FILE_OP_STREAM) {
 		size = *op->u.stream.size_p;
-		req_start = (uint64_t)*op->u.stream.file_offset_p;
-		dst_base = (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
+		p->req_start = (uint64_t)*op->u.stream.file_offset_p;
+		p->dst_base =
+		        (uint8_t *)op->buf_base + *op->u.stream.buf_offset_p;
 	} else {
 		size = op->u.async.size;
-		req_start = (uint64_t)op->u.async.file_offset;
-		dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
+		p->req_start = (uint64_t)op->u.async.file_offset;
+		p->dst_base = (uint8_t *)op->buf_base + op->u.async.buf_offset;
 	}
-	if (!opends_aisio_range_registered(w->drv, dst_base, size)) {
+	if (!opends_aisio_range_registered(d, p->dst_base, size)) {
 		op->err = OPENDS_MEMORY_NOT_REGISTERED;
 		return;
 	}
-	if (size > UINT64_MAX - req_start) {
+	if (size > UINT64_MAX - p->req_start) {
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
+	p->req_end = p->req_start + size;
 	if (op->is_write ? !op->h->writable : !op->h->readable) {
 		op->err = OPENDS_INVALID_FILE_OPEN_FLAG;
 		return;
 	}
-	if (op->is_write && !raw_write_allowed(d, dst_base, size, req_start)) {
+	if (op->is_write &&
+	    !raw_write_allowed(d, p->dst_base, size, p->req_start)) {
 		op->err = OPENDS_INVALID_VALUE;
 		return;
 	}
-	if (!op->is_write && needs_kernel_read(d, dst_base, size, req_start)) {
+	if (!op->is_write &&
+	    needs_kernel_read(d, p->dst_base, size, p->req_start)) {
 		/* a raw handle has no kernel read path */
 		if (d->cfg.assume_aligned_only || op->mode == FILE_OP_STREAM ||
 		    op->h->raw) {
 			op->err = OPENDS_INVALID_VALUE;
 			return;
 		}
-		if (w->kread.broken) {
-			op->err = OPENDS_DEVICE_DRIVER_ERROR;
-			return;
-		}
-		if (w->kread.op) {
-			/* the buffer is in use: stay pending */
-			__atomic_store_n(&op->state, FILE_OP_PENDING,
-			                 __ATOMIC_RELEASE);
-			return;
-		}
-		opends_kernel_read_start(w, op, dst_base, size, req_start);
-		return;
-	}
-	uint64_t req_end = req_start + size;
-
-	/* A raw handle is one extent spanning the namespace. */
-	struct opends_extent raw_ext = {0, 0, d->ns_nbytes};
-	struct opends_extent *extents = &raw_ext;
-	uint32_t extent_count = 1;
-	if (!op->h->raw && !__atomic_load_n(&d->xal, __ATOMIC_ACQUIRE)) {
-		op->err = OPENDS_FS_SETUP_ERROR;
-		return;
-	}
-	if (!op->h->raw &&
-	    resolve_extents(d, op->h->fd, &extents, &extent_count) < 0) {
-		op->err = OPENDS_FS_SETUP_ERROR;
+		/* read by the kernel: no commands, so not admitted */
+		p->kernel = true;
 		return;
 	}
 
+	if (op->h->raw) {
+		/* A raw handle is one extent spanning the namespace. */
+		p->raw = (struct opends_extent){0, 0, d->ns_nbytes, 0};
+		p->extents = &p->raw;
+		p->extent_count = 1;
+	} else {
+		err = lease_extents(d, op->h, &p->extents, &p->extent_count);
+	}
+	if (err == -EAGAIN) {
+		/* the old map is being recalled: plan again on a later pass */
+		op->planned = false;
+		return;
+	}
+	if (err < 0) {
+		op->err = OPENDS_FS_SETUP_ERROR;
+		return;
+	}
+	op->held = !op->h->raw;
+
+	for (uint32_t i = 0; i < p->extent_count; i++) {
+		const struct opends_extent *e = &p->extents[i];
+		uint64_t ext_start = e->file_offset;
+		uint64_t span_start = max_u64(p->req_start, ext_start);
+		uint64_t span_end =
+		        XNVME_MIN_U64(p->req_end, ext_start + e->length);
+
+		if (ext_start >= p->req_end) {
+			break;
+		}
+		/* an unwritten extent is filled, not read */
+		if (span_start >= span_end ||
+		    (e->flag & XAL_EXTENT_UNWRITTEN)) {
+			continue;
+		}
+		if (!p->spans) {
+			p->first_lba = e->slba + ((span_start - ext_start) >>
+			                          d->lba_shift);
+		}
+		p->end_lba = e->slba + ((span_end - ext_start + lba_mask) >>
+		                        d->lba_shift);
+		p->spans++;
+	}
+}
+
+/* Whether the drive should take this read now.
+ *
+ * A read of several commands that starts away from where the last one ended
+ * is slow while other commands are in flight, so it waits for the drive to
+ * drain. A read that continues the last one, or fits in one command, does not
+ * wait. The oldest refused read goes first and holds back younger ones, so a
+ * flow of small reads cannot starve a waiting one.
+ *
+ * At queue depth 1 no read waits: a read alone then has one command in flight,
+ * which is slower than the reads of several I/O threads side by side. */
+static bool
+admit_read(struct driver *d, struct file_op *op)
+{
+	const struct io_plan *p = &op->plan;
+	bool one_cmd =
+	        p->spans == 1 && p->req_end - p->req_start <= d->mdts_nbytes;
+	bool admit;
+
+	if (d->cfg.queue_depth == 1) {
+		return true;
+	}
+
+	pthread_mutex_lock(&d->admit_lock);
+	if (d->active_reads == 0) {
+		admit = op->ticket <= d->waiting_ticket;
+	} else {
+		admit = (one_cmd || p->first_lba == d->next_lba) &&
+		        op->ticket < d->waiting_ticket;
+	}
+	if (admit) {
+		op->admitted = true;
+		d->active_reads++;
+		d->next_lba = p->end_lba;
+		if (d->waiting_ticket == op->ticket) {
+			d->waiting_ticket = NO_WAITER;
+		}
+	} else if (op->ticket < d->waiting_ticket) {
+		d->waiting_ticket = op->ticket;
+	}
+	pthread_mutex_unlock(&d->admit_lock);
+
+	return admit;
+}
+
+static void
+retire_read(struct driver *d, struct file_op *op)
+{
+	if (!op->admitted) {
+		return;
+	}
+	op->admitted = false;
+	pthread_mutex_lock(&d->admit_lock);
+	d->active_reads--;
+	pthread_mutex_unlock(&d->admit_lock);
+}
+
+static void
+submit_io_op(struct io_worker *w, struct file_op *op)
+{
+	struct driver *d = w->drv;
+	struct io_plan *p = &op->plan;
+	uint64_t req_start = p->req_start;
+	uint64_t req_end = p->req_end;
+	uint8_t *dst_base = p->dst_base;
+	struct opends_extent *extents = p->extents;
+	uint32_t extent_count = p->extent_count;
 	uint32_t lba_shift = d->lba_shift;
 	uint32_t lba_mask = d->lba_size - 1;
 	uint64_t covered = req_start;
@@ -901,6 +948,12 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		uint8_t *abs_dst = dst_base + buf_off;
 		uint64_t cur_slba = e->slba + (off_in_ext >> lba_shift);
 		size_t remaining = span_end - span_start;
+
+		if (e->flag & XAL_EXTENT_UNWRITTEN) {
+			if (zero_fill(w, op, abs_dst, remaining) < 0)
+				goto out;
+			continue;
+		}
 
 		size_t head_off = off_in_ext & lba_mask;
 		if (head_off) {
@@ -950,8 +1003,9 @@ start_io_op(struct io_worker *w, struct file_op *op)
 		}
 	}
 out:
-	if (extents != &raw_ext)
+	if (extents != &p->raw)
 		free(extents);
+	p->extents = NULL;
 }
 
 static void
@@ -979,10 +1033,29 @@ run_bounce_copies(struct file_op *op)
 	return 0;
 }
 
+/* Count the op out as a reader once its DMA is done. xal says -ESTALE when a
+ * writer got past the lease meanwhile; the data may then not be the file's. */
+static void
+release_extents(struct file_op *op)
+{
+	int rc;
+
+	if (!op->held)
+		return;
+	rc = xal_extents_release(drv->xal, op->h->lease);
+	op->held = false;
+	if (rc < 0 && !op->err)
+		op->err = OPENDS_FS_SETUP_ERROR;
+}
+
 static void
 complete_read_op(struct file_op *op)
 {
+	release_extents(op);
+
 	ssize_t n = op->err ? -(ssize_t)op->err : (ssize_t)op->bytes_acc;
+
+	retire_read(drv, op);
 
 	if (op->mode == FILE_OP_STREAM) {
 		struct opends_stream *s = op->u.stream.opends_stream;
@@ -1016,21 +1089,52 @@ write_is_staged(bool is_write, const struct registered_file *h)
 	return is_write && !h->raw;
 }
 
-/* Start a PENDING op. Returns true when it has to stay pending. */
+/* Start a PENDING op. Returns true when it has to stay pending: a write
+ * that waits for a buffer, or a read that waits for its map, for the kernel
+ * read buffer or to be admitted. */
 static bool
 dispatch_pending(struct io_worker *w, struct file_op *op)
 {
 	if (write_is_staged(op->is_write, op->h)) {
 		return opends_dispatch_write(w, op);
 	}
-	op->chunks_remaining = 0;
-	op->bounces_outstanding = 0;
-	op->bytes_acc = 0;
-	op->err = 0;
-	op->n_bounces = 0;
-	op->fill = false;
+	if (!op->planned) {
+		op->chunks_remaining = 0;
+		op->bounces_outstanding = 0;
+		op->bytes_acc = 0;
+		op->err = 0;
+		op->n_bounces = 0;
+		op->fill = false;
+		op->held = false;
+		op->planned = true;
+		plan_io_op(w, op);
+		if (!op->planned) {
+			return true;
+		}
+	}
+	if (!op->err && op->plan.kernel) {
+		if (w->kread.broken) {
+			op->err = OPENDS_DEVICE_DRIVER_ERROR;
+		} else if (w->kread.op) {
+			/* the buffer is in use: stay pending */
+			return true;
+		}
+	}
+	if (!op->err && !op->is_write && op->plan.spans &&
+	    !admit_read(w->drv, op)) {
+		return true;
+	}
 	__atomic_store_n(&op->state, FILE_OP_IN_FLIGHT, __ATOMIC_RELEASE);
-	start_io_op(w, op);
+	if (op->err) {
+		return false;
+	}
+	if (op->plan.kernel) {
+		opends_kernel_read_start(w, op, op->plan.dst_base,
+		                         op->plan.req_end - op->plan.req_start,
+		                         op->plan.req_start);
+	} else {
+		submit_io_op(w, op);
+	}
 	return false;
 }
 
@@ -1050,12 +1154,13 @@ reap_in_flight(struct io_worker *w, struct file_op *op)
 }
 
 /* Service a PENDING stream op: dispatch it once its stream has reached it,
- * otherwise leave it for a later pass. Returns true while still gated. A
- * read, and a write that stages nothing, publish 2*seq on the gate on
- * arrival; a staged write has reached the stream when its first round has
- * landed. The gate is a free-running counter (an arrival publish and this
- * thread's release each tick it), so compare with serial/cyclic arithmetic
- * to match the device-side GEQ wait, keeping the sequence wrap-safe. */
+ * otherwise leave it for a later pass. Returns true while it is still gated
+ * or has to stay pending. A read, and a write that stages nothing, publish
+ * 2*seq on the gate on arrival; a staged write has reached the stream when
+ * its first round has landed. The gate is a free-running counter (an arrival
+ * publish and this thread's release each tick it), so compare with
+ * serial/cyclic arithmetic to match the device-side GEQ wait, keeping the
+ * sequence wrap-safe. */
 static bool
 poll_stream_pending(struct io_worker *w, struct file_op *op)
 {
@@ -1360,47 +1465,44 @@ claim_slot_locked(struct driver *d, struct io_worker **wp, uint32_t *headp)
 #define ATTACH_RETRIES 1200
 #define ATTACH_BACKOFF_US 50000
 
-/*
- * Attach to the index xal-server publishes. -ENOENT (not yet published),
- * -EAGAIN (still being set up) and -ESTALE (first index not finished) all
- * mean "not yet" for a server starting alongside us, so retry on them. An I/O
- * thread may test d->xal meanwhile, so it is published whole.
- */
+/* Open xal on the mount in the read-lease mode: the driver maps a registered
+ * file itself, under a lease on its descriptor, and reads no index. */
 static int
-xal_attach(struct driver *d)
+xal_open_lease(struct driver *d)
 {
-	const char *shm = d->cfg.xal_shm;
+	struct xal_opts opts = {0};
 	struct xal *xal = NULL;
+	int rc;
 
-	int rc = -ENOENT;
-	for (int i = 0; i < ATTACH_RETRIES; i++) {
-		rc = xal_from_shm(shm, &xal);
-		if (rc != -ENOENT && rc != -EAGAIN && rc != -ESTALE)
-			break;
-		usleep(ATTACH_BACKOFF_US);
+	if (!d->cfg.mount[0]) {
+		fprintf(stderr, "aisio: a file needs OPENDS_HOMI_MNT\n");
+		return -EINVAL;
 	}
+	opts.watch_mode = XAL_WATCHMODE_READ_LEASE;
+	opts.mountpoint = d->cfg.mount;
+	rc = xal_open_from_uri(d->cfg.mount, &xal, &opts);
 	if (rc < 0) {
-		fprintf(stderr, "aisio: xal_from_shm(%s) failed; err(%d)\n",
-		        shm, rc);
+		fprintf(stderr,
+		        "aisio: xal_open_from_uri(%s) failed; err(%d)\n",
+		        d->cfg.mount, rc);
 		return rc;
 	}
 	__atomic_store_n(&d->xal, xal, __ATOMIC_RELEASE);
 	return 0;
 }
 
-/* Attach to the extent index, once. In raw block mode that is at the first
- * registration of a regular file, since a raw handle needs no index; otherwise
- * at driver open. It has its own lock because xal_attach can wait a minute for
- * xal-server, and every op takes reg_lock. A failed attach is final until the
- * driver is reopened. */
+/* Open xal, once. In raw block mode that is at the first registration of a
+ * regular file, since a raw handle needs no extents; otherwise at driver
+ * open. Two registrations may get here together, hence the lock. A failed
+ * open is final until the driver is reopened. */
 static int
-index_attach(struct driver *d)
+xal_attach(struct driver *d)
 {
 	int rc;
 
 	pthread_mutex_lock(&d->attach_lock);
 	if (!d->xal && !d->attach_rc)
-		d->attach_rc = xal_attach(d);
+		d->attach_rc = xal_open_lease(d);
 	rc = d->attach_rc;
 	pthread_mutex_unlock(&d->attach_lock);
 	return rc;
@@ -1459,16 +1561,20 @@ opends_driver_open(void)
 		free(d);
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
+	d->open_seq = ++open_count;
 	pthread_mutex_init(&d->submit_lock, NULL);
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
 	pthread_mutex_init(&d->write_buf_lock, NULL);
 	pthread_mutex_init(&d->attach_lock, NULL);
+	pthread_mutex_init(&d->admit_lock, NULL);
+	d->waiting_ticket = NO_WAITER;
 
 	int rc = 0;
 	if (!d->cfg.raw_block_enabled)
-		rc = index_attach(d);
+		rc = xal_attach(d);
 	if (rc < 0) {
+		pthread_mutex_destroy(&d->admit_lock);
 		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
@@ -1484,6 +1590,7 @@ opends_driver_open(void)
 	if (orc < 0) {
 		if (d->xal)
 			xal_close(d->xal);
+		pthread_mutex_destroy(&d->admit_lock);
 		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
@@ -1499,6 +1606,7 @@ opends_driver_open(void)
 		xnvme_dev_close(d->xdev);
 		if (d->xal)
 			xal_close(d->xal);
+		pthread_mutex_destroy(&d->admit_lock);
 		pthread_mutex_destroy(&d->attach_lock);
 		pthread_mutex_destroy(&d->write_buf_lock);
 		pthread_mutex_destroy(&d->alloc_lock);
@@ -1533,6 +1641,7 @@ opends_driver_close(void)
 	if (drv->xal)
 		xal_close(drv->xal);
 
+	pthread_mutex_destroy(&drv->admit_lock);
 	pthread_mutex_destroy(&drv->attach_lock);
 	pthread_mutex_destroy(&drv->write_buf_lock);
 	pthread_mutex_destroy(&drv->alloc_lock);
@@ -1587,6 +1696,14 @@ opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 /*  Handle registration                                               */
 /* ------------------------------------------------------------------ */
 
+/* Closing the driver ends every registration, so a handle is good for the
+ * driver open that registered it. */
+static inline bool
+handle_registered(const struct driver *d, const struct registered_file *h)
+{
+	return h->open_seq == d->open_seq;
+}
+
 /* True when fd is a character device that answers for the controller this
  * driver opened, as homi's /dev/xnvme/<bdf> does: its NVMe identify returns
  * that controller's serial number. */
@@ -1632,7 +1749,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 		/* a character device has no page cache to bypass */
 		if (!(oflags & O_DIRECT))
 			return opends_err(OPENDS_DIO_NOT_SET);
-		int rc = index_attach(drv);
+		int rc = xal_attach(drv);
 		if (rc < 0)
 			return opends_err(OPENDS_FS_SETUP_ERROR);
 	}
@@ -1645,6 +1762,29 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	h->readable = (oflags & O_ACCMODE) != O_WRONLY;
 	h->writable = (oflags & O_ACCMODE) != O_RDONLY;
 	h->raw = raw;
+	h->open_seq = drv->open_seq;
+	pthread_mutex_init(&h->lock, NULL);
+
+	/* A read lease for a read-only descriptor, a write lease otherwise.
+	 * -EAGAIN: the file is open elsewhere. -EXDEV: it is not on the mount.
+	 * -EBUSY: its open file is registered already. */
+	int rc = raw ? 0 : xal_extents_attach_fd(drv->xal, NULL, fd, &h->lease);
+	if (rc < 0) {
+		fprintf(stderr,
+		        "aisio: xal_extents_attach_fd(fd=%d) failed; "
+		        "err(%d)%s\n",
+		        fd, rc,
+		        rc == -EAGAIN ? " (the file is open elsewhere)" : "");
+		pthread_mutex_destroy(&h->lock);
+		free(h);
+		switch (rc) {
+		case -EXDEV: return opends_err(OPENDS_DEVICE_NOT_FOUND);
+		case -EBUSY:
+			return opends_err(OPENDS_HANDLE_ALREADY_REGISTERED);
+		case -EACCES: return opends_err(OPENDS_PERMISSION_DENIED);
+		default: return opends_err(OPENDS_FS_SETUP_ERROR);
+		}
+	}
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
@@ -1654,9 +1794,15 @@ opends_handle_register(opends_handle_t *fh, int fd)
 void
 opends_handle_deregister(opends_handle_t fh)
 {
-	if (!fh)
+	struct registered_file *h = fh;
+
+	if (!h)
 		return;
-	free(fh);
+	/* the lease of a handle from an earlier open went with that driver */
+	if (drv && handle_registered(drv, h) && h->lease)
+		xal_extents_detach_fd(drv->xal, h->lease);
+	pthread_mutex_destroy(&h->lock);
+	free(h);
 	__atomic_fetch_sub(&use_count, 1, __ATOMIC_RELAXED);
 }
 
@@ -1781,6 +1927,8 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!fh || !buf_base || !future)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (!handle_registered(d, fh))
+		return opends_err(OPENDS_HANDLE_NOT_REGISTERED);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
@@ -1820,6 +1968,9 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 	op->u.async.file_offset = file_offset;
 	op->u.async.buf_offset = buf_offset;
 	op->u.async.future = future;
+	op->ticket = d->next_ticket++;
+	op->planned = false;
+	op->admitted = false;
 	__atomic_store_n(&op->state, FILE_OP_PENDING, __ATOMIC_RELEASE);
 	__atomic_store_n(&w->queue_head, head + 1, __ATOMIC_RELEASE);
 	pthread_mutex_unlock(&d->submit_lock);
@@ -1902,6 +2053,8 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!fh || !buf_base || !size_p || !file_offset_p || !buf_offset_p ||
 	    !bytes_p)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (!handle_registered(d, fh))
+		return opends_err(OPENDS_HANDLE_NOT_REGISTERED);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
@@ -1980,6 +2133,9 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 			opends_write_geometry(d, &op->wr);
 		}
 	}
+	op->ticket = d->next_ticket++;
+	op->planned = false;
+	op->admitted = false;
 
 	/* Order the I/O thread against the user's stream through a per-stream
 	 * gate word (strictly monotonic, two phases per op): the submitter

@@ -11,13 +11,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define AISIO_CONFIG_XAL_SHM_MAXLEN 128
+#define AISIO_CONFIG_MOUNT_MAXLEN 256
 
 struct aisio_config {
 	/* multi-process group the HOMI server is primary of */
 	uint32_t homi_id;
-	/* index xal-server publishes */
-	char xal_shm[AISIO_CONFIG_XAL_SHM_MAXLEN];
+	/* mountpoint of the filesystem on the group's device, or empty */
+	char mount[AISIO_CONFIG_MOUNT_MAXLEN];
 	int n_io_threads;
 	uint32_t queue_depth;
 	uint32_t idle_spin_us;

@@ -19,7 +19,7 @@ TESTS_BY_BACKEND = {
     "ref":   ["smoke", "sync_read", "mt_read", "async_read", "batch_read"],
     "cufile": ["sync_read"],
     "aisio": ["sync_read", "sync_read_raw_mode", "mt_read", "register_large",
-              "coherency", "sparse_read", "async_read",
+              "coherency", "sparse_read", "lease", "async_read",
               "async_read_busy_spin", "batch_read",
               "stream_read", "stream_read_busy_spin", "sync_write",
               "stream_write", "python", "raw_block"],

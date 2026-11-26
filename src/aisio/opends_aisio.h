@@ -59,6 +59,8 @@ struct opends_extent {
 	uint64_t file_offset;
 	uint64_t slba;
 	uint64_t length;
+	/* bits of enum xal_extent_flag; 0 holds the file's data */
+	uint8_t flag;
 };
 
 struct buf_entry {
@@ -84,6 +86,10 @@ struct registered_file {
 	bool readable;
 	bool writable;
 	bool raw;
+	unsigned long open_seq;  /* the driver open that registered it */
+	struct xal_inode *lease; /* the file as attached to xal; NULL if raw */
+	bool remap; /* a write through fd since the map: map the file again */
+	pthread_mutex_t lock; /* orders the map again against acquires */
 };
 
 struct opends_stream {
@@ -162,6 +168,20 @@ struct file_op_write {
 	opends_accel_devptr_t turn_dptr;
 };
 
+/* Where an op lands on the drive, resolved once before it is admitted. */
+struct io_plan {
+	struct opends_extent *extents;
+	uint32_t extent_count;
+	struct opends_extent raw; /* the one extent of a raw handle */
+	uint64_t req_start;
+	uint64_t req_end;
+	uint8_t *dst_base;
+	bool kernel;        /* whole LBAs land off a dword: a kernel read */
+	uint32_t spans;     /* extents it sends commands for */
+	uint64_t first_lba; /* first LBA of those */
+	uint64_t end_lba;   /* one past the last LBA of those */
+};
+
 struct file_op {
 	enum file_op_mode mode;
 	bool is_write;
@@ -177,7 +197,13 @@ struct file_op {
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
 	void *bounce_buf;
+	/* counted as a reader of the file's extents until released */
+	bool held;
 	struct file_op_write wr;
+	uint64_t ticket; /* submission order */
+	bool planned;
+	bool admitted;
+	struct io_plan plan;
 	union {
 		struct file_op_stream stream;
 		struct file_op_async async;
@@ -226,8 +252,10 @@ struct driver {
 	/* NVMe device the HOMI server owns */
 	char dev_uri[XNVME_IDENT_URI_LEN];
 	struct aisio_config cfg; /* from the environment at open */
-	struct xal *xal; /* the index xal-server publishes (index_attach) */
-	int attach_rc;   /* why the attach failed; it is tried only once */
+	unsigned long open_seq;  /* which open of the driver this is */
+	/* opened on the mount in the read-lease mode (xal_attach) */
+	struct xal *xal;
+	int attach_rc; /* why the attach failed; it is tried only once */
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
@@ -258,11 +286,18 @@ struct driver {
 
 	struct io_worker *workers;
 	uint32_t rr_next;
+	uint64_t next_ticket; /* under submit_lock */
 	pthread_mutex_t submit_lock;
 	pthread_mutex_t reg_lock;
 	pthread_mutex_t alloc_lock;
 	pthread_mutex_t attach_lock;
 	bool stop;
+
+	/* Read admission, see admit_read(). Under admit_lock. */
+	pthread_mutex_t admit_lock;
+	uint32_t active_reads;   /* admitted and not yet complete */
+	uint64_t next_lba;       /* where the last admitted read ends */
+	uint64_t waiting_ticket; /* oldest read refused, NO_WAITER if none */
 };
 
 /* Shared between the backend's source files, hidden from the library's

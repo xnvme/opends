@@ -7,7 +7,7 @@ stream and batch families and checks every byte against a kernel read. The
 file must have existed when xal-server indexed the mount; see the README on
 writes.
 
-    OPENDS_XAL_SHM=/xal_dev0 OPENDS_HOMI_MNT=/mnt/datasets \\
+    OPENDS_HOMI_MNT=/mnt/datasets \\
         python3 examples/python_demo.py <file-on-opends-mount>
 """
 

@@ -7,6 +7,7 @@
 
 #include <cuda.h>
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -80,8 +81,12 @@ main(int argc, char **argv)
 	}
 
 	/* A read goes to the device without passing the kernel, so the driver
-	 * has to honour the access mode of the fd itself. */
-	int wo_fd = open(argv[1], O_WRONLY | O_DIRECT);
+	 * has to honour the access mode of the fd itself. The fd is of a file
+	 * of its own, since a file is registered once. */
+	char wo_path[PATH_MAX];
+	snprintf(wo_path, sizeof(wo_path), "%s.wo", argv[1]);
+	int wo_fd =
+	        open(wo_path, O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT, 0644);
 	opends_handle_t wo_fh = NULL;
 	void *wo_buf = cuda_alloc_acquire(PAGE);
 	if (wo_fd < 0 || !wo_buf ||
@@ -97,8 +102,10 @@ main(int argc, char **argv)
 		opends_handle_deregister(wo_fh);
 	if (wo_buf)
 		cuda_alloc_release(wo_buf);
-	if (wo_fd >= 0)
+	if (wo_fd >= 0) {
 		close(wo_fd);
+		unlink(wo_path);
+	}
 
 	/* homi's character device is a raw handle in raw block mode, and no
 	 * handle at all without it: it is not opened with O_DIRECT. */
@@ -122,9 +129,8 @@ main(int argc, char **argv)
 			close(cfd);
 	}
 
-	/* A handle outlives the driver. In raw block mode the reopened driver
-	 * has no extent index until a regular file is registered: a read
-	 * through the kept handle fails before that and works after it. */
+	/* Closing the driver ends every registration: after a reopen the kept
+	 * handle is refused, and the file registers again. */
 	opends_driver_close();
 	opends_error_t err = opends_driver_open();
 	if (err.err != OPENDS_SUCCESS) {
@@ -133,32 +139,31 @@ main(int argc, char **argv)
 		failed++;
 	} else {
 		void *buf = cuda_alloc_acquire(PAGE);
-		int bad = !buf;
-		if (buf && raw_mode) {
-			int fd2 = open(argv[1], O_RDONLY | O_DIRECT);
-			opends_handle_t fh2 = NULL;
+		int fd2 = open(argv[1], O_RDONLY | O_DIRECT);
+		opends_handle_t fh2 = NULL;
+		struct test_env env_again = env_alloc;
+		bool refused =
+		        buf && opends_sync_read(a.fh, buf, PAGE, 0, 0) ==
+		                       -(ssize_t)OPENDS_HANDLE_NOT_REGISTERED;
+		bool again =
+		        buf && fd2 >= 0 &&
+		        opends_handle_register(&fh2, fd2).err == OPENDS_SUCCESS;
 
-			bad = opends_sync_read(a.fh, buf, PAGE, 0, 0) !=
-			              -(ssize_t)OPENDS_FS_SETUP_ERROR ||
-			      fd2 < 0 ||
-			      opends_handle_register(&fh2, fd2).err !=
-			              OPENDS_SUCCESS;
-			fprintf(stderr,
-			        "%s: no index after a driver reopen until a "
-			        "file is registered\n",
-			        bad ? "FAIL" : "PASS");
-			if (fh2)
-				opends_handle_deregister(fh2);
-			if (fd2 >= 0)
-				close(fd2);
-		}
-		bad = bad || verify_read(&env_alloc, buf, PAGE, PAGE, 0, 0,
-		                         "read after driver reopen");
+		env_again.fh = fh2;
+		again = again && !verify_read(&env_again, buf, PAGE, PAGE, 0, 0,
+		                              "read after driver reopen");
 		fprintf(stderr,
-		        "%s: read through a handle kept across a "
-		        "driver reopen\n",
-		        bad ? "FAIL" : "PASS");
-		failed += bad;
+		        "%s: a handle from before a driver reopen is refused\n",
+		        refused ? "PASS" : "FAIL");
+		fprintf(stderr,
+		        "%s: read through a handle registered after a driver "
+		        "reopen\n",
+		        again ? "PASS" : "FAIL");
+		failed += !refused + !again;
+		if (fh2)
+			opends_handle_deregister(fh2);
+		if (fd2 >= 0)
+			close(fd2);
 		if (buf)
 			cuda_alloc_release(buf);
 	}
