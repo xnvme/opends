@@ -84,6 +84,7 @@ struct registered_file {
 	bool readable;
 	bool writable;
 	bool raw;
+	unsigned long open_seq; /* the driver open that registered it */
 };
 
 struct opends_stream {
@@ -226,6 +227,7 @@ struct driver {
 	/* NVMe device the HOMI server owns */
 	char dev_uri[XNVME_IDENT_URI_LEN];
 	struct aisio_config cfg; /* from the environment at open */
+	unsigned long open_seq;  /* which open of the driver this is */
 	struct xal *xal; /* the index xal-server publishes (index_attach) */
 	int attach_rc;   /* why the attach failed; it is tried only once */
 	struct xnvme_dev *xdev;

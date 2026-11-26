@@ -27,6 +27,7 @@
 
 static struct driver *drv;
 static long use_count;
+static unsigned long open_count;
 
 static inline uint64_t
 max_u64(uint64_t a, uint64_t b)
@@ -1459,6 +1460,7 @@ opends_driver_open(void)
 		free(d);
 		return opends_err(OPENDS_DEVICE_NOT_FOUND);
 	}
+	d->open_seq = ++open_count;
 	pthread_mutex_init(&d->submit_lock, NULL);
 	pthread_mutex_init(&d->reg_lock, NULL);
 	pthread_mutex_init(&d->alloc_lock, NULL);
@@ -1587,6 +1589,14 @@ opends_get_version(unsigned *major, unsigned *minor, unsigned *patch)
 /*  Handle registration                                               */
 /* ------------------------------------------------------------------ */
 
+/* Closing the driver ends every registration, so a handle is good for the
+ * driver open that registered it. */
+static inline bool
+handle_registered(const struct driver *d, const struct registered_file *h)
+{
+	return h->open_seq == d->open_seq;
+}
+
 /* True when fd is a character device that answers for the controller this
  * driver opened, as homi's /dev/xnvme/<bdf> does: its NVMe identify returns
  * that controller's serial number. */
@@ -1645,6 +1655,7 @@ opends_handle_register(opends_handle_t *fh, int fd)
 	h->readable = (oflags & O_ACCMODE) != O_WRONLY;
 	h->writable = (oflags & O_ACCMODE) != O_RDONLY;
 	h->raw = raw;
+	h->open_seq = drv->open_seq;
 
 	*fh = h;
 	__atomic_fetch_add(&use_count, 1, __ATOMIC_RELAXED);
@@ -1781,6 +1792,8 @@ submit_async_op(struct driver *d, bool is_write, opends_handle_t fh,
 		return opends_err(OPENDS_DRIVER_NOT_INITIALIZED);
 	if (!fh || !buf_base || !future)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (!handle_registered(d, fh))
+		return opends_err(OPENDS_HANDLE_NOT_REGISTERED);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 
@@ -1902,6 +1915,8 @@ submit_stream_op(struct driver *d, bool is_write, opends_handle_t fh,
 	if (!fh || !buf_base || !size_p || !file_offset_p || !buf_offset_p ||
 	    !bytes_p)
 		return opends_err(OPENDS_INVALID_VALUE);
+	if (!handle_registered(d, fh))
+		return opends_err(OPENDS_HANDLE_NOT_REGISTERED);
 	if (!d->workers_ready)
 		return opends_err(OPENDS_DEVICE_DRIVER_ERROR);
 

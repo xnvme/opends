@@ -151,7 +151,10 @@ typedef void *opends_handle_t;
 /*
  * Driver lifecycle. Call opends_driver_open() once before any other
  * opends operation. Call opends_driver_close() to release all
- * resources when done.
+ * resources when done. Closing the driver ends every registration: after
+ * a new opends_driver_open, register the files again. The aisio backend
+ * fails a call that passes a handle from before the close with
+ * OPENDS_HANDLE_NOT_REGISTERED; opends_handle_deregister still takes it.
  *
  * Backends bound to an accelerator context (e.g. aisio) capture the
  * context current at opends_driver_open. Every thread that submits
