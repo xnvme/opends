@@ -1,0 +1,702 @@
+{
+ "schema_version": 1,
+ "job": "bench-cufile",
+ "generated": "2026-11-23T10:48:14+00:00",
+ "records_schema_version": 3,
+ "opends": {
+  "sha": "4778411a688b8ea38cf829709c2d292f54c484fc",
+  "dirty": false
+ },
+ "deps": {
+  "xnvme": {
+   "sha": "6c3f7886b49485ae33edad868dc52e416e356664",
+   "ref": "for-aisio-02112026",
+   "dirty": false
+  },
+  "xal": {
+   "sha": "67f9453c81ed2fd9446b4f03fd7408f906bcb1f4",
+   "ref": "v0.3.4",
+   "dirty": false
+  },
+  "fil": {
+   "sha": "dd6527ef5543da533bd82bfe016ba1048a5ca3f1",
+   "ref": "v0.5.0",
+   "dirty": false
+  }
+ },
+ "env": {
+  "hostname": "swissknife",
+  "kernel": "6.8.0-117-generic",
+  "kernel_cmdline": "BOOT_IMAGE=/vmlinuz-6.8.0-117-generic root=/dev/mapper/ubuntu--vg-ubuntu--lv ro iommu=pt",
+  "cpu_model": "AMD Ryzen 5 5600X 6-Core Processor",
+  "cpu_governor": "schedutil",
+  "cuda": "12.8",
+  "nvme_bdf": "0000:01:00.0",
+  "nvme_model": "Samsung S4LV008[Pascal]",
+  "nvme_link": "16GT/s x4",
+  "fs": {
+   "meta-data": {
+    "meta-data": "/dev/nvme0n1",
+    "isize": "512",
+    "agcount": "4",
+    "agsize": "61047662",
+    "sectsz": "512",
+    "attr": "2",
+    "projid32bit": "1",
+    "crc": "1",
+    "finobt": "1",
+    "sparse": "1",
+    "rmapbt": "1",
+    "reflink": "1",
+    "bigtime": "1",
+    "inobtcount": "1",
+    "nrext64": "0"
+   },
+   "data": {
+    "bsize": "4096",
+    "blocks": "244190646",
+    "imaxpct": "25",
+    "sunit": "0",
+    "swidth": "0"
+   },
+   "naming": {
+    "bsize": "4096",
+    "ascii-ci": "0",
+    "ftype": "1"
+   },
+   "log": {
+    "bsize": "4096",
+    "blocks": "119233",
+    "version": "2",
+    "sectsz": "512",
+    "sunit": "0",
+    "lazy-count": "1"
+   },
+   "realtime": {
+    "extsz": "4096",
+    "blocks": "0",
+    "rtextents": "0"
+   }
+  },
+  "gpu_model": "NVIDIA RTX 2000 Ada Generation",
+  "hugepages_2m": 1024
+ },
+ "ci": {
+  "provider": "github",
+  "repository": "xnvme/opends",
+  "workflow": "ci",
+  "event": "pull_request",
+  "run_id": 45151000664,
+  "run_attempt": 1,
+  "job": "bench-cufile",
+  "pr": 70,
+  "head_sha": "c9aa1b9c29a395624d52ce24c80af78e5450b0d9",
+  "base_sha": "930b0e7ceb8147f08c069bf9444db903d73ecbeb",
+  "url": "https://github.com/xnvme/opends/actions/runs/45151000664/attempts/1"
+ },
+ "records": [
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "filesize8gib",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 1,
+    "batch_size": 1,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 1.264641,
+    "prep_time_s": 0.005671,
+    "io_time_s": 1.258959,
+    "files_per_s": 0.790739,
+    "mib_s": 6477.730181,
+    "iops": 0.790739,
+    "num_ios": 1
+   },
+   "raw_log": "cufile_filesize8gib_sync.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "filesize8gib",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 1,
+    "batch_size": 1,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 4.823277,
+    "prep_time_s": 4.807329,
+    "io_time_s": 0.015931,
+    "files_per_s": 0.207328,
+    "mib_s": 1698.430426,
+    "iops": 0.207328,
+    "num_ios": 1
+   },
+   "raw_log": "cufile_filesize8gib_stream.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "tiktokish",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 200,
+    "batch_size": 26,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 13.175014,
+    "prep_time_s": 0.098776,
+    "io_time_s": 13.066294,
+    "files_per_s": 394.686492,
+    "mib_s": 2955.364839,
+    "iops": 394.686492,
+    "num_ios": 5200
+   },
+   "raw_log": "cufile_tiktokish_sync.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "tiktokish",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 200,
+    "batch_size": 26,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 7.51185,
+    "prep_time_s": 3.61096,
+    "io_time_s": 3.890711,
+    "files_per_s": 692.23958,
+    "mib_s": 5183.074692,
+    "iops": 692.23958,
+    "num_ios": 5200
+   },
+   "raw_log": "cufile_tiktokish_stream.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "imagenetish",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 300,
+    "batch_size": 4096,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 207.717381,
+    "prep_time_s": 21.444975,
+    "io_time_s": 184.058473,
+    "files_per_s": 5915.730278,
+    "mib_s": 634.673658,
+    "iops": 5915.730278,
+    "num_ios": 1228800
+   },
+   "raw_log": "cufile_imagenetish_sync.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "imagenetish",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 300,
+    "batch_size": 4096,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 148.766565,
+    "prep_time_s": 144.837702,
+    "io_time_s": 0.708256,
+    "files_per_s": 8259.920475,
+    "mib_s": 886.159927,
+    "iops": 8259.920475,
+    "num_ios": 1228800
+   },
+   "raw_log": "cufile_imagenetish_stream.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "lmcacheish",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 70,
+    "batch_size": 26,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 5.916484,
+    "prep_time_s": 0.043031,
+    "io_time_s": 5.869671,
+    "files_per_s": 307.615149,
+    "mib_s": 4307.813707,
+    "iops": 307.615149,
+    "num_ios": 1820
+   },
+   "raw_log": "cufile_lmcacheish_sync.log"
+  },
+  {
+   "leg": "cufile",
+   "run_timestamp": "2026-11-23T10:33:13+00:00",
+   "config": {
+    "backend": "cufile",
+    "dataset": "lmcacheish",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 70,
+    "batch_size": 26,
+    "io_threads": null,
+    "queue_depth": null,
+    "cpu_mask": null,
+    "assume_aligned_only": null,
+    "idle_spin_us": null,
+    "busy_spin": null,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 5.107109,
+    "prep_time_s": 3.809135,
+    "io_time_s": 1.293456,
+    "files_per_s": 356.365969,
+    "mib_s": 4990.515614,
+    "iops": 356.365969,
+    "num_ios": 1820
+   },
+   "raw_log": "cufile_lmcacheish_stream.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "filesize8gib",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 1,
+    "batch_size": 1,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 1.165044,
+    "prep_time_s": 0.001524,
+    "io_time_s": 1.163509,
+    "files_per_s": 0.858337,
+    "mib_s": 7031.495556,
+    "iops": 0.858337,
+    "num_ios": 1
+   },
+   "raw_log": "opends_filesize8gib_sync.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "filesize8gib",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 1,
+    "batch_size": 1,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 1.16085,
+    "prep_time_s": 0.001943,
+    "io_time_s": 1.158896,
+    "files_per_s": 0.861438,
+    "mib_s": 7056.899519,
+    "iops": 0.861438,
+    "num_ios": 1
+   },
+   "raw_log": "opends_filesize8gib_stream.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "filesize8gib",
+    "mode": "async",
+    "cold_cache": true,
+    "batches": 1,
+    "batch_size": 1,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 1.155901,
+    "prep_time_s": 0.000889,
+    "io_time_s": 1.154996,
+    "files_per_s": 0.865126,
+    "mib_s": 7087.110777,
+    "iops": 0.865126,
+    "num_ios": 1
+   },
+   "raw_log": "opends_filesize8gib_async.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "tiktokish",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 200,
+    "batch_size": 26,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 6.703115,
+    "prep_time_s": 0.025875,
+    "io_time_s": 6.6722,
+    "files_per_s": 775.758738,
+    "mib_s": 5807.980732,
+    "iops": 775.758738,
+    "num_ios": 5200
+   },
+   "raw_log": "opends_tiktokish_sync.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "tiktokish",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 200,
+    "batch_size": 26,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 7.835364,
+    "prep_time_s": 0.130044,
+    "io_time_s": 7.701161,
+    "files_per_s": 663.657751,
+    "mib_s": 4969.404632,
+    "iops": 663.657751,
+    "num_ios": 5200
+   },
+   "raw_log": "opends_tiktokish_stream.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "tiktokish",
+    "mode": "async",
+    "cold_cache": true,
+    "batches": 200,
+    "batch_size": 26,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 7.879405,
+    "prep_time_s": 0.092881,
+    "io_time_s": 7.782504,
+    "files_per_s": 659.9483,
+    "mib_s": 4942.750017,
+    "iops": 659.9483,
+    "num_ios": 5200
+   },
+   "raw_log": "opends_tiktokish_async.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "lmcacheish",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 70,
+    "batch_size": 26,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 4.126181,
+    "prep_time_s": 0.02447,
+    "io_time_s": 4.099464,
+    "files_per_s": 441.085831,
+    "mib_s": 6176.92462,
+    "iops": 441.085831,
+    "num_ios": 1820
+   },
+   "raw_log": "opends_lmcacheish_sync.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "lmcacheish",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 70,
+    "batch_size": 26,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 4.568118,
+    "prep_time_s": 0.229068,
+    "io_time_s": 4.33721,
+    "files_per_s": 398.413565,
+    "mib_s": 5579.346215,
+    "iops": 398.413565,
+    "num_ios": 1820
+   },
+   "raw_log": "opends_lmcacheish_stream.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "lmcacheish",
+    "mode": "async",
+    "cold_cache": true,
+    "batches": 70,
+    "batch_size": 26,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 4.66675,
+    "prep_time_s": 0.183434,
+    "io_time_s": 4.481539,
+    "files_per_s": 389.993046,
+    "mib_s": 5461.426048,
+    "iops": 389.993046,
+    "num_ios": 1820
+   },
+   "raw_log": "opends_lmcacheish_async.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "imagenetish",
+    "mode": "sync",
+    "cold_cache": true,
+    "batches": 300,
+    "batch_size": 4096,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 236.428063,
+    "prep_time_s": 17.739869,
+    "io_time_s": 217.262525,
+    "files_per_s": 5197.352565,
+    "mib_s": 557.603276,
+    "iops": 5197.352565,
+    "num_ios": 1228800
+   },
+   "raw_log": "opends_imagenetish_sync.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "imagenetish",
+    "mode": "stream",
+    "cold_cache": true,
+    "batches": 300,
+    "batch_size": 4096,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 47.106081,
+    "prep_time_s": 37.297794,
+    "io_time_s": 8.490025,
+    "files_per_s": 26085.803913,
+    "mib_s": 2798.759857,
+    "iops": 26085.803913,
+    "num_ios": 1228800
+   },
+   "raw_log": "opends_imagenetish_stream.log"
+  },
+  {
+   "leg": "opends/t2_q8",
+   "run_timestamp": "2026-11-23T10:41:33+00:00",
+   "config": {
+    "backend": "opends",
+    "dataset": "imagenetish",
+    "mode": "async",
+    "cold_cache": true,
+    "batches": 300,
+    "batch_size": 4096,
+    "io_threads": 2,
+    "queue_depth": 8,
+    "cpu_mask": null,
+    "assume_aligned_only": false,
+    "idle_spin_us": 200,
+    "busy_spin": false,
+    "n": 1
+   },
+   "result": {
+    "total_time_s": 42.703951,
+    "prep_time_s": 30.037706,
+    "io_time_s": 11.270667,
+    "files_per_s": 28774.855174,
+    "mib_s": 3087.095807,
+    "iops": 28774.855174,
+    "num_ios": 1228800
+   },
+   "raw_log": "opends_imagenetish_async.log"
+  }
+ ],
+ "logs": {
+  "cufile/cufile_filesize8gib_sync.log": "Time, Batches, IOPS, MiB/s\n1.264635, 1, 0.790742, 6477.757790\n\nIO stats:\n\tTotal time: 1.264641\n\tPrep time: 0.005671\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 1.258959\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 0.790739\n\tMiB/s: 6477.730181\n\tIOPS: 0.790739\n\tNumber of IOs: 1\nDataset stats:\n\tNumber of files in the dataset: 20\n\tMaximum size of files in the dataset (KiB): 8388608\n\tAverage size of files in the dataset (KiB): 8388608.000000\n",
+  "cufile/cufile_filesize8gib_stream.log": "Time, Batches, IOPS, MiB/s\n4.823272, 1, 0.207328, 1698.432254\n\nIO stats:\n\tTotal time: 4.823277\n\tPrep time: 4.807329\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 0.015931\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 0.207328\n\tMiB/s: 1698.430426\n\tIOPS: 0.207328\n\tNumber of IOs: 1\nDataset stats:\n\tNumber of files in the dataset: 20\n\tMaximum size of files in the dataset (KiB): 8388608\n\tAverage size of files in the dataset (KiB): 8388608.000000\n",
+  "cufile/cufile_tiktokish_sync.log": "Time, Batches, IOPS, MiB/s\n1.011273, 15, 385.652487, 2887.111162\n2.062332, 31, 395.792846, 2958.694935\n3.119124, 47, 393.645163, 2954.529959\n4.171540, 63, 395.282127, 2953.610042\n5.224190, 79, 395.194096, 2962.227144\n6.274947, 95, 395.905980, 2963.868600\n7.326211, 111, 395.715243, 2962.189403\n8.378016, 127, 395.511265, 2963.844574\n9.433743, 143, 394.043137, 2949.776425\n10.481804, 159, 396.924384, 2972.406518\n11.530806, 175, 396.568488, 2966.422296\n12.581973, 191, 395.751676, 2962.897613\n13.175014, 200, 394.578311, 2963.166761\n\nIO stats:\n\tTotal time: 13.175014\n\tPrep time: 0.098776\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 13.066294\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 394.686492\n\tMiB/s: 2955.364839\n\tIOPS: 394.686492\n\tNumber of IOs: 5200\nDataset stats:\n\tNumber of files in the dataset: 448\n\tMaximum size of files in the dataset (KiB): 8191\n\tAverage size of files in the dataset (KiB): 7668.007943\n",
+  "cufile/cufile_tiktokish_stream.log": "Time, Batches, IOPS, MiB/s\n1.025968, 26, 658.889967, 4932.614616\n2.057724, 54, 705.595891, 5284.102274\n3.076085, 82, 714.876526, 5348.874457\n4.082203, 109, 697.733165, 5227.578271\n5.087605, 136, 698.230449, 5228.468757\n6.118273, 163, 681.113584, 5099.934699\n7.125985, 190, 696.629466, 5215.026205\n7.511850, 200, 673.815467, 5045.916185\n\nIO stats:\n\tTotal time: 7.511850\n\tPrep time: 3.610960\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 3.890711\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 692.239580\n\tMiB/s: 5183.074692\n\tIOPS: 692.239580\n\tNumber of IOs: 5200\nDataset stats:\n\tNumber of files in the dataset: 448\n\tMaximum size of files in the dataset (KiB): 8191\n\tAverage size of files in the dataset (KiB): 7668.007943\n",
+  "cufile/cufile_imagenetish_sync.log": "Time, Batches, IOPS, MiB/s\n1.395921, 2, 5868.525241, 631.396408\n2.775097, 4, 5939.797428, 638.556646\n4.161267, 6, 5909.825294, 637.189771\n5.547269, 8, 5910.544282, 634.058184\n6.930283, 10, 5923.313369, 633.952969\n8.314621, 12, 5917.645772, 637.892935\n9.699763, 14, 5914.213622, 637.239941\n11.083396, 16, 5920.665185, 636.208079\n12.465222, 18, 5928.405465, 634.013414\n13.848666, 20, 5921.471860, 636.603325\n15.232320, 22, 5920.576011, 636.215171\n16.618122, 24, 5911.395976, 634.004075\n18.001667, 26, 5921.038987, 633.730328\n19.383405, 28, 5928.786042, 636.732495\n20.765506, 30, 5927.225353, 634.964433\n22.149021, 32, 5921.171616, 636.761407\n23.532961, 34, 5919.349958, 633.284362\n24.917235, 36, 5917.921376, 635.684536\n26.325093, 38, 5818.788150, 623.132441\n27.706740, 40, 5929.176229, 633.022195\n29.088925, 42, 5926.866426, 635.443654\n30.535665, 44, 5662.403617, 610.534599\n31.918219, 46, 5925.284342, 634.360369\n33.299562, 48, 5930.480543, 635.074063\n34.682189, 50, 5924.973168, 635.771816\n36.066827, 52, 5916.365599, 635.011509\n37.450720, 54, 5919.551502, 631.505860\n38.833353, 56, 5924.944457, 633.900726\n40.215508, 58, 5926.998286, 635.450416\n41.598018, 60, 5925.474936, 635.485805\n42.981628, 62, 5920.761762, 634.597211\n44.361911, 64, 5935.031920, 635.727409\n45.744671, 66, 5924.402586, 633.795787\n47.127526, 68, 5923.998762, 636.070850\n48.506888, 70, 5938.992642, 636.348302\n49.888475, 72, 5929.433938, 636.285374\n51.270025, 74, 5929.589863, 637.946002\n52.650309, 76, 5935.030759, 636.707807\n54.054117, 78, 5835.571402, 625.536626\n55.435263, 80, 5931.327686, 637.956644\n56.815131, 82, 5936.817379, 638.289090\n58.195315, 84, 5935.461031, 635.848021\n59.575751, 86, 5934.374756, 636.207312\n61.019967, 88, 5672.299850, 609.224952\n62.401191, 90, 5930.989517, 636.532064\n63.783563, 92, 5926.068355, 636.988646\n65.163989, 94, 5934.416838, 635.002105\n66.545398, 96, 5930.199475, 636.869182\n67.927989, 98, 5925.125344, 634.220843\n69.309898, 100, 5928.050337, 635.001268\n70.690158, 102, 5935.130728, 635.565313\n72.071521, 104, 5930.395541, 635.993594\n73.455868, 106, 5917.621406, 635.136641\n74.840221, 108, 5917.586230, 635.373197\n76.222231, 110, 5927.616373, 636.339197\n77.606429, 112, 5918.244380, 636.017398\n78.989969, 114, 5921.061498, 637.501732\n80.370152, 116, 5935.463353, 637.687844\n81.752955, 118, 5924.216564, 637.006674\n83.156430, 120, 5836.959911, 626.953119\n84.537723, 122, 5930.695648, 634.716735\n85.919145, 124, 5930.144397, 635.150291\n87.302214, 126, 5923.077137, 634.941670\n88.684151, 128, 5927.931127, 635.699182\n90.069539, 130, 5913.163314, 636.206037\n91.514534, 132, 5669.244363, 608.447906\n92.894009, 134, 5938.514585, 636.359510\n94.274249, 136, 5935.214369, 636.198270\n95.652629, 138, 5943.228688, 635.038669\n97.033549, 140, 5932.297249, 634.534859\n98.417758, 142, 5918.196626, 636.131012\n99.800662, 144, 5923.785341, 636.728903\n101.182223, 146, 5929.544368, 638.934109\n102.561373, 148, 5939.907210, 636.167175\n103.941169, 150, 5937.128076, 635.062504\n105.325812, 152, 5916.346328, 634.401399\n106.707372, 154, 5929.546647, 634.874786\n108.086978, 156, 5937.948795, 636.080285\n109.467256, 158, 5935.054795, 633.665291\n110.849490, 160, 5926.658934, 636.888128\n112.231908, 162, 5925.867473, 638.004429\n113.612598, 164, 5933.285045, 637.903039\n115.016317, 166, 5835.942190, 627.407103\n116.397963, 168, 5929.178589, 637.605909\n117.781364, 170, 5921.657115, 637.430545\n119.167185, 172, 5911.318896, 635.421648\n120.610036, 174, 5677.662144, 609.547874\n121.996138, 176, 5910.121191, 633.876159\n123.381598, 178, 5912.857813, 635.242302\n124.765105, 180, 5921.205422, 635.040576\n126.148301, 182, 5922.534714, 638.208397\n127.527409, 184, 5940.091123, 637.029926\n128.907637, 186, 5935.272245, 633.938357\n130.288789, 188, 5931.299089, 634.607290\n131.670752, 190, 5927.818956, 636.165070\n133.054665, 192, 5919.468781, 634.154402\n134.439397, 194, 5915.964365, 632.734780\n135.821873, 196, 5925.622461, 636.533837\n137.205162, 198, 5922.133404, 637.485609\n138.587558, 200, 5925.961741, 637.849671\n139.967402, 202, 5936.923308, 637.685810\n141.348095, 204, 5933.268801, 637.240585\n142.748431, 206, 5850.046669, 628.483785\n144.131477, 208, 5923.223134, 633.068759\n145.512144, 210, 5933.384573, 635.668988\n146.894821, 212, 5924.758949, 637.111168\n148.277682, 214, 5923.965905, 635.750948\n149.658684, 216, 5931.943025, 634.230333\n151.107033, 218, 5656.120067, 606.003473\n152.493186, 220, 5909.905533, 634.643804\n153.875627, 222, 5925.768973, 635.370097\n155.256707, 224, 5931.611485, 637.746002\n156.636849, 226, 5935.642260, 632.859099\n158.017496, 228, 5933.469407, 636.582391\n159.399995, 230, 5925.521011, 635.006480\n160.782537, 232, 5925.336881, 635.507994\n162.164310, 234, 5928.636982, 635.152849\n163.546007, 236, 5928.960165, 635.572583\n164.929762, 238, 5920.144252, 634.622815\n166.312220, 240, 5925.693228, 636.855742\n167.693010, 242, 5932.857103, 636.800484\n169.073914, 244, 5932.367059, 638.460398\n170.455782, 246, 5928.227209, 635.814633\n171.838941, 248, 5922.691560, 634.702160\n173.221735, 250, 5924.258721, 635.522569\n174.624412, 252, 5840.281227, 624.863928\n176.009145, 254, 5915.966924, 634.488760\n177.391867, 256, 5924.564035, 636.738665\n178.770848, 258, 5940.641937, 636.058595\n180.151846, 260, 5931.959266, 637.415723\n181.600344, 262, 5655.530200, 608.350973\n182.985946, 264, 5912.251078, 631.890745\n184.370253, 266, 5917.782823, 634.576199\n185.753263, 268, 5923.330544, 636.508256\n187.135721, 270, 5925.694561, 636.405998\n188.520576, 272, 5915.441350, 635.737408\n189.901612, 274, 5931.797633, 636.083544\n191.283495, 276, 5928.164275, 636.613910\n192.665143, 278, 5929.170564, 634.432608\n194.045992, 280, 5932.603521, 636.001113\n195.428593, 282, 5925.085789, 636.619881\n196.813095, 284, 5916.947621, 635.314505\n198.193649, 286, 5933.866834, 637.598374\n199.574410, 288, 5932.981668, 636.214401\n200.958909, 290, 5916.961425, 636.222062\n202.341984, 292, 5923.053194, 635.360370\n203.711244, 294, 5982.814140, 639.881540\n205.045033, 296, 6141.923845, 656.150379\n206.380415, 298, 6134.589198, 658.885138\n207.717378, 300, 6127.340105, 658.674829\n\nIO stats:\n\tTotal time: 207.717381\n\tPrep time: 21.444975\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 184.058473\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 5915.730278\n\tMiB/s: 634.673658\n\tIOPS: 5915.730278\n\tNumber of IOs: 1228800\nDataset stats:\n\tNumber of files in the dataset: 1199379\n\tMaximum size of files in the dataset (KiB): 146\n\tAverage size of files in the dataset (KiB): 109.862692\n",
+  "cufile/cufile_imagenetish_stream.log": "Time, Batches, IOPS, MiB/s\n1.166889, 2, 7020.375211, 754.338852\n2.578354, 5, 8705.874226, 935.201419\n4.090891, 8, 8124.127035, 871.087253\n5.310236, 11, 10077.578607, 1082.884660\n6.520737, 14, 10151.210660, 1089.869024\n7.767421, 17, 9856.584079, 1057.907800\n9.054149, 20, 9549.834599, 1024.991189\n10.088898, 22, 7916.930050, 848.875018\n11.126330, 24, 7896.461695, 844.255180\n12.168188, 26, 7862.907467, 843.607591\n13.512608, 29, 9140.030140, 980.897236\n14.835545, 32, 9288.459538, 994.932241\n16.105336, 35, 9677.222779, 1038.302588\n17.494132, 38, 8847.976216, 948.644095\n18.892070, 41, 8790.118535, 943.926439\n20.322587, 44, 8589.927654, 919.859737\n21.734897, 47, 8700.668166, 932.165599\n23.154763, 50, 8654.367963, 926.741124\n24.430752, 53, 9630.216852, 1030.978731\n25.762218, 56, 9228.956246, 989.895726\n27.142003, 59, 8905.765172, 957.178896\n28.550658, 62, 8723.246069, 937.204801\n29.953402, 65, 8760.000725, 937.559941\n31.380396, 68, 8611.137544, 923.576538\n32.405698, 70, 7989.874590, 856.927543\n33.441808, 72, 7906.523855, 848.125705\n34.477500, 74, 7909.729417, 851.738348\n35.509612, 76, 7937.161246, 850.996953\n36.545011, 78, 7911.956742, 850.104154\n37.580479, 80, 7911.437614, 848.463763\n38.607560, 82, 7976.036008, 855.973532\n39.945635, 85, 9183.378095, 985.924329\n40.964741, 87, 8038.455208, 864.224265\n42.295653, 90, 9232.796479, 991.930515\n43.632884, 93, 9189.174878, 984.579724\n44.901148, 96, 9688.867489, 1038.865243\n46.183068, 99, 9585.657520, 1027.911742\n47.522294, 102, 9175.478810, 984.299482\n48.871342, 105, 9108.678784, 976.369079\n50.142474, 108, 9667.006904, 1038.881693\n51.557478, 111, 8684.105697, 930.189963\n52.992870, 114, 8560.754118, 920.313782\n54.417116, 117, 8627.751031, 926.538181\n56.210525, 120, 6851.774637, 735.211233\n58.062692, 122, 4422.938561, 474.269429\n59.287078, 124, 6690.728187, 720.142413\n60.712751, 127, 8619.112736, 924.123407\n62.079262, 130, 8992.280516, 967.548422\n63.487170, 133, 8727.869024, 938.146530\n64.581081, 135, 7488.757475, 800.329839\n65.674518, 137, 7492.006648, 803.383057\n66.766376, 139, 7502.842984, 804.872134\n67.829808, 141, 7703.389829, 826.538132\n68.888893, 143, 7735.015077, 830.843605\n69.959262, 145, 7653.474531, 823.686266\n71.036645, 147, 7603.637072, 814.652521\n72.095458, 149, 7737.005142, 831.629090\n73.156363, 151, 7721.738766, 830.066565\n74.220646, 153, 7697.233572, 825.290284\n75.289334, 155, 7665.512251, 823.838118\n76.356357, 157, 7677.464138, 824.839594\n77.424490, 159, 7669.495114, 823.153440\n78.488786, 161, 7697.135069, 824.670972\n79.557287, 163, 7666.847282, 821.565261\n80.628127, 165, 7650.103617, 820.546380\n81.689606, 167, 7717.566381, 827.492142\n82.755899, 169, 7682.726677, 823.187589\n83.839200, 171, 7562.104047, 813.490464\n84.909406, 173, 7654.634493, 815.645509\n85.994530, 175, 7549.396092, 807.707316\n87.062181, 177, 7672.956015, 824.682601\n88.129944, 179, 7672.142764, 822.902857\n89.200505, 181, 7652.098693, 821.890646\n90.277722, 183, 7604.810568, 813.787942\n91.351944, 185, 7626.019547, 818.334783\n92.423633, 187, 7644.041980, 819.835558\n93.503662, 189, 7585.010695, 810.823904\n94.567471, 191, 7700.665332, 826.730218\n95.630725, 193, 7704.684173, 827.665053\n96.695171, 195, 7696.055169, 827.616601\n97.758619, 197, 7703.279143, 825.542868\n98.826037, 199, 7674.630251, 820.974618\n99.891154, 201, 7691.209910, 825.416260\n100.960333, 203, 7661.983817, 822.338189\n102.032552, 205, 7640.263142, 818.914593\n103.098372, 207, 7686.136575, 826.374972\n104.173196, 209, 7621.739457, 817.396444\n105.253464, 211, 7583.337547, 816.478700\n106.333620, 213, 7584.124988, 811.913196\n107.395619, 215, 7713.793682, 830.429751\n108.463757, 217, 7669.454761, 823.618129\n109.537070, 219, 7632.476718, 818.450554\n110.608194, 221, 7648.073245, 819.858497\n111.677821, 223, 7658.807543, 820.120501\n112.764444, 225, 7538.989608, 809.549756\n113.839852, 227, 7617.603788, 819.157640\n114.908570, 229, 7665.297072, 825.395822\n115.976553, 231, 7670.565418, 823.190532\n117.049630, 233, 7634.160374, 820.981732\n118.120192, 235, 7652.084033, 823.108112\n119.189278, 237, 7662.656939, 821.364064\n120.254924, 239, 7687.388409, 822.895250\n121.330294, 241, 7617.876654, 817.209434\n122.402125, 243, 7643.068122, 818.736048\n123.442447, 245, 7874.524255, 842.518482\n124.853986, 248, 8705.419731, 934.423392\n126.215759, 251, 9023.560835, 969.391200\n127.619968, 254, 8750.868680, 936.572913\n129.000202, 257, 8902.866376, 957.614584\n130.385737, 260, 8868.807321, 951.278306\n131.752507, 263, 8990.572011, 964.639731\n133.118165, 266, 8997.892769, 965.973414\n134.459266, 269, 9162.653417, 981.085251\n135.816526, 272, 9053.564964, 971.455736\n137.312373, 275, 8214.769380, 879.821060\n138.377172, 277, 7693.511147, 826.495129\n139.703828, 280, 9262.416993, 995.435228\n141.094832, 283, 8833.934188, 944.102867\n142.502632, 286, 8728.543865, 936.034575\n143.841800, 289, 9175.877165, 984.548406\n145.201979, 292, 9034.136958, 969.680717\n146.568266, 295, 8993.751358, 961.742016\n147.871761, 298, 9426.996294, 1009.741996\n148.766565, 300, 9155.125010, 982.159638\n\nIO stats:\n\tTotal time: 148.766565\n\tPrep time: 144.837702\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 0.708256\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 8259.920475\n\tMiB/s: 886.159927\n\tIOPS: 8259.920475\n\tNumber of IOs: 1228800\nDataset stats:\n\tNumber of files in the dataset: 1199379\n\tMaximum size of files in the dataset (KiB): 146\n\tAverage size of files in the dataset (KiB): 109.862692\n",
+  "cufile/cufile_lmcacheish_sync.log": "Time, Batches, IOPS, MiB/s\n1.037081, 12, 300.844452, 4212.997496\n2.052513, 24, 307.259515, 4302.833440\n3.065832, 36, 307.900372, 4311.807946\n4.080965, 48, 307.349680, 4304.096106\n5.086683, 60, 310.226944, 4344.389042\n5.916484, 70, 313.329369, 4387.835102\n\nIO stats:\n\tTotal time: 5.916484\n\tPrep time: 0.043031\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 5.869671\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 307.615149\n\tMiB/s: 4307.813707\n\tIOPS: 307.615149\n\tNumber of IOs: 1820\nDataset stats:\n\tNumber of files in the dataset: 1820\n\tMaximum size of files in the dataset (KiB): 14340\n\tAverage size of files in the dataset (KiB): 14340.000000\n",
+  "cufile/cufile_lmcacheish_stream.log": "Time, Batches, IOPS, MiB/s\n1.072939, 14, 339.255036, 4750.895722\n2.081387, 28, 360.952323, 5054.742495\n3.083190, 42, 363.345988, 5088.263159\n4.097615, 56, 358.825433, 5024.957723\n5.107106, 70, 360.578727, 5049.510684\n\nIO stats:\n\tTotal time: 5.107109\n\tPrep time: 3.809135\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 1.293456\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 356.365969\n\tMiB/s: 4990.515614\n\tIOPS: 356.365969\n\tNumber of IOs: 1820\nDataset stats:\n\tNumber of files in the dataset: 1820\n\tMaximum size of files in the dataset (KiB): 14340\n\tAverage size of files in the dataset (KiB): 14340.000000\n",
+  "opends/t2_q8/opends_filesize8gib_sync.log": "Time, Batches, IOPS, MiB/s\n1.165039, 1, 0.858341, 7031.526518\n\nIO stats:\n\tTotal time: 1.165044\n\tPrep time: 0.001524\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 1.163509\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 0.858337\n\tMiB/s: 7031.495556\n\tIOPS: 0.858337\n\tNumber of IOs: 1\nDataset stats:\n\tNumber of files in the dataset: 20\n\tMaximum size of files in the dataset (KiB): 8388608\n\tAverage size of files in the dataset (KiB): 8388608.000000\n",
+  "opends/t2_q8/opends_filesize8gib_stream.log": "Time, Batches, IOPS, MiB/s\n1.160846, 1, 0.861441, 7056.925477\n\nIO stats:\n\tTotal time: 1.160850\n\tPrep time: 0.001943\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 1.158896\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 0.861438\n\tMiB/s: 7056.899519\n\tIOPS: 0.861438\n\tNumber of IOs: 1\nDataset stats:\n\tNumber of files in the dataset: 20\n\tMaximum size of files in the dataset (KiB): 8388608\n\tAverage size of files in the dataset (KiB): 8388608.000000\n",
+  "opends/t2_q8/opends_filesize8gib_async.log": "Time, Batches, IOPS, MiB/s\n1.155892, 1, 0.865133, 7087.166081\n\nIO stats:\n\tTotal time: 1.155901\n\tPrep time: 0.000889\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 1.154996\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 0.865126\n\tMiB/s: 7087.110777\n\tIOPS: 0.865126\n\tNumber of IOs: 1\nDataset stats:\n\tNumber of files in the dataset: 20\n\tMaximum size of files in the dataset (KiB): 8388608\n\tAverage size of files in the dataset (KiB): 8388608.000000\n",
+  "opends/t2_q8/opends_tiktokish_sync.log": "Time, Batches, IOPS, MiB/s\n1.011874, 30, 770.847363, 5771.951739\n2.015949, 60, 776.837084, 5819.614828\n3.019404, 90, 777.315619, 5818.613039\n4.022693, 120, 777.444788, 5827.905111\n5.026877, 150, 776.751331, 5809.172097\n6.033389, 180, 774.955180, 5801.846733\n6.703115, 200, 776.439462, 5806.746610\n\nIO stats:\n\tTotal time: 6.703115\n\tPrep time: 0.025875\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 6.672200\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 775.758738\n\tMiB/s: 5807.980732\n\tIOPS: 775.758738\n\tNumber of IOs: 5200\nDataset stats:\n\tNumber of files in the dataset: 448\n\tMaximum size of files in the dataset (KiB): 8191\n\tAverage size of files in the dataset (KiB): 7668.007943\n",
+  "opends/t2_q8/opends_tiktokish_stream.log": "Time, Batches, IOPS, MiB/s\n1.006370, 26, 671.720888, 5027.644883\n2.027366, 52, 662.101501, 4955.815254\n3.057373, 78, 656.307889, 4916.498648\n4.074365, 104, 664.706171, 4977.617665\n5.095365, 130, 662.097338, 4955.186771\n6.110360, 156, 666.014020, 4993.451239\n7.129361, 182, 663.396032, 4965.511019\n7.835364, 200, 662.888567, 4963.112775\n\nIO stats:\n\tTotal time: 7.835364\n\tPrep time: 0.130044\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 7.701161\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 663.657751\n\tMiB/s: 4969.404632\n\tIOPS: 663.657751\n\tNumber of IOs: 5200\nDataset stats:\n\tNumber of files in the dataset: 448\n\tMaximum size of files in the dataset (KiB): 8191\n\tAverage size of files in the dataset (KiB): 7668.007943\n",
+  "opends/t2_q8/opends_tiktokish_async.log": "Time, Batches, IOPS, MiB/s\n1.027418, 26, 657.959983, 4925.365470\n2.030411, 51, 648.063509, 4858.502724\n3.047411, 77, 664.701445, 4973.637606\n4.060419, 103, 667.321012, 4995.352663\n5.087408, 129, 658.236105, 4932.139429\n6.108406, 155, 662.098408, 4957.257906\n7.126413, 181, 664.043968, 4978.981957\n7.879405, 200, 656.050515, 4912.124343\n\nIO stats:\n\tTotal time: 7.879405\n\tPrep time: 0.092881\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 7.782504\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 659.948300\n\tMiB/s: 4942.750017\n\tIOPS: 659.948300\n\tNumber of IOs: 5200\nDataset stats:\n\tNumber of files in the dataset: 448\n\tMaximum size of files in the dataset (KiB): 8191\n\tAverage size of files in the dataset (KiB): 7668.007943\n",
+  "opends/t2_q8/opends_lmcacheish_sync.log": "Time, Batches, IOPS, MiB/s\n1.008596, 17, 438.232835, 6136.971541\n2.013602, 34, 439.800224, 6158.921111\n3.070180, 52, 442.940211, 6202.893184\n4.126179, 70, 443.183536, 6206.300689\n\nIO stats:\n\tTotal time: 4.126181\n\tPrep time: 0.024470\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 4.099464\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 441.085831\n\tMiB/s: 6176.924620\n\tIOPS: 441.085831\n\tNumber of IOs: 1820\nDataset stats:\n\tNumber of files in the dataset: 1820\n\tMaximum size of files in the dataset (KiB): 14340\n\tAverage size of files in the dataset (KiB): 14340.000000\n",
+  "opends/t2_q8/opends_lmcacheish_stream.log": "Time, Batches, IOPS, MiB/s\n1.011677, 16, 411.198486, 5758.385052\n2.059619, 32, 396.970223, 5559.133790\n3.122975, 48, 391.215043, 5478.538788\n4.135639, 63, 385.123700, 5393.236190\n4.568118, 70, 420.832275, 5893.295728\n\nIO stats:\n\tTotal time: 4.568118\n\tPrep time: 0.229068\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 4.337210\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 398.413565\n\tMiB/s: 5579.346215\n\tIOPS: 398.413565\n\tNumber of IOs: 1820\nDataset stats:\n\tNumber of files in the dataset: 1820\n\tMaximum size of files in the dataset (KiB): 14340\n\tAverage size of files in the dataset (KiB): 14340.000000\n",
+  "opends/t2_q8/opends_lmcacheish_async.log": "Time, Batches, IOPS, MiB/s\n1.019724, 15, 382.456628, 5355.886760\n2.070775, 31, 395.795994, 5542.689992\n3.092718, 46, 381.626731, 5344.264957\n4.125740, 62, 402.702837, 5639.412769\n4.666750, 70, 384.467929, 5384.052833\n\nIO stats:\n\tTotal time: 4.666750\n\tPrep time: 0.183434\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 4.481539\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 389.993046\n\tMiB/s: 5461.426048\n\tIOPS: 389.993046\n\tNumber of IOs: 1820\nDataset stats:\n\tNumber of files in the dataset: 1820\n\tMaximum size of files in the dataset (KiB): 14340\n\tAverage size of files in the dataset (KiB): 14340.000000\n",
+  "opends/t2_q8/opends_imagenetish_sync.log": "Time, Batches, IOPS, MiB/s\n1.845299, 1, 2219.694259, 238.827236\n3.353673, 2, 2715.516588, 291.069278\n4.717586, 3, 3003.133805, 322.648670\n5.996093, 4, 3203.746782, 343.522229\n7.223627, 5, 3336.783075, 356.593664\n8.417151, 6, 3431.868575, 370.171287\n9.569298, 7, 3555.112623, 380.124363\n10.689934, 8, 3655.082908, 390.468562\n11.795121, 9, 3706.175178, 398.642337\n12.862748, 10, 3836.561448, 411.616273\n13.931846, 11, 3831.284318, 409.297249\n14.964316, 12, 3967.205118, 425.359926\n15.990253, 13, 3992.461087, 429.307577\n17.010502, 14, 4014.723678, 427.068390\n18.976438, 16, 4166.980619, 447.376438\n20.903350, 18, 4251.371801, 455.542421\n22.815135, 20, 4285.010596, 458.575217\n24.679141, 22, 4394.846659, 470.346566\n26.543731, 24, 4393.469107, 469.774710\n28.361787, 26, 4505.922385, 483.773947\n30.122556, 28, 4652.522955, 500.533804\n31.837322, 30, 4777.337727, 512.250861\n33.511245, 32, 4893.906952, 523.759076\n35.128459, 34, 5065.513858, 544.241575\n36.712338, 36, 5172.123458, 556.784816\n38.277727, 38, 5233.219300, 561.456111\n39.862876, 40, 5167.979479, 555.195014\n41.457650, 42, 5136.789726, 551.333488\n43.023920, 44, 5230.271187, 562.073893\n44.622097, 46, 5125.852144, 551.167555\n46.171617, 48, 5286.813109, 564.813686\n47.676254, 50, 5444.516004, 584.956378\n49.175821, 52, 5462.926323, 585.575010\n50.699510, 54, 5376.435199, 577.451653\n52.254055, 56, 5269.725143, 566.057646\n53.769829, 58, 5404.512369, 579.468039\n55.301262, 60, 5349.248766, 573.452562\n56.782726, 62, 5529.678769, 592.934519\n58.296377, 64, 5412.092528, 579.544960\n59.832617, 66, 5332.515830, 574.357235\n61.345978, 68, 5413.132596, 581.412628\n62.846811, 70, 5458.317318, 583.670207\n64.363550, 72, 5401.075005, 581.397579\n65.877161, 74, 5412.237301, 580.042016\n67.361220, 76, 5520.010794, 592.031632\n68.864137, 78, 5450.749783, 583.949091\n70.372541, 80, 5430.920839, 582.906449\n71.891887, 82, 5391.809242, 579.214006\n73.413175, 84, 5384.926305, 578.774391\n74.924130, 86, 5421.749182, 583.441470\n76.439089, 88, 5407.423231, 581.193902\n77.978793, 90, 5320.513943, 572.160202\n79.536051, 92, 5260.543400, 565.608879\n81.052787, 94, 5401.084940, 578.534560\n82.554171, 96, 5456.313191, 584.929846\n84.088934, 98, 5337.646833, 573.517670\n85.621633, 100, 5344.832818, 574.093783\n87.168337, 102, 5296.437597, 569.098476\n88.744856, 104, 5196.268665, 558.431370\n90.300670, 106, 5265.424742, 566.479769\n91.820290, 108, 5390.832866, 577.827379\n93.314165, 110, 5483.737193, 586.528388\n94.815024, 112, 5458.223230, 586.485644\n96.294723, 114, 5536.277943, 595.189281\n97.776464, 116, 5528.645450, 592.440019\n99.255736, 118, 5537.874939, 594.354670\n100.773793, 120, 5396.387294, 579.469068\n102.285031, 122, 5420.734529, 580.714558\n103.810636, 124, 5369.688998, 575.958263\n105.343765, 126, 5343.336905, 572.660628\n106.873612, 128, 5354.796333, 575.628407\n108.440850, 130, 5227.045915, 560.905831\n109.963231, 132, 5381.055706, 577.266552\n111.500522, 134, 5328.871694, 573.415477\n113.016985, 136, 5402.059370, 579.541548\n114.526849, 138, 5425.668648, 583.934557\n116.061814, 140, 5336.943219, 571.281965\n117.561009, 142, 5464.280949, 585.063080\n119.051761, 144, 5495.225378, 591.366313\n120.533718, 146, 5527.838881, 592.565200\n122.054444, 148, 5386.913107, 577.995700\n123.560128, 150, 5440.731337, 584.738939\n125.109850, 152, 5286.122966, 568.736910\n126.580552, 154, 5570.143752, 595.563361\n128.085505, 156, 5443.370342, 584.636591\n129.594405, 158, 5429.134990, 583.706288\n131.096226, 160, 5454.727684, 582.993217\n132.590685, 162, 5481.595628, 589.184385\n134.071916, 164, 5530.553793, 593.782825\n135.581766, 166, 5425.719604, 582.178128\n137.121481, 168, 5320.479526, 571.074866\n138.663289, 170, 5313.258656, 569.804105\n140.177297, 172, 5410.816182, 580.718239\n141.650466, 174, 5560.816485, 595.375071\n143.121970, 176, 5567.108279, 596.753921\n144.615052, 178, 5486.654441, 588.974895\n146.089736, 180, 5555.102267, 595.085028\n147.607516, 182, 5397.372120, 578.275922\n149.178904, 184, 5213.240657, 557.866161\n150.712887, 186, 5340.359713, 572.443731\n152.235048, 188, 5381.839131, 578.988472\n153.719197, 190, 5519.673117, 590.156480\n155.187961, 192, 5577.496264, 595.456633\n156.714037, 194, 5368.051310, 576.460000\n158.197954, 196, 5520.540955, 592.808083\n159.726646, 198, 5358.847336, 573.863889\n161.261174, 200, 5338.460320, 571.298865\n162.745057, 202, 5520.664582, 591.805518\n164.267868, 204, 5379.538042, 575.654263\n165.764336, 206, 5474.238420, 588.020041\n167.305010, 208, 5317.164339, 569.922947\n168.839146, 210, 5339.828856, 573.533148\n170.333564, 212, 5481.747922, 588.940344\n171.842447, 214, 5429.194431, 581.818900\n173.400854, 216, 5256.661459, 563.964882\n174.905059, 218, 5446.079431, 583.960579\n176.427239, 220, 5381.767358, 574.929560\n177.913500, 222, 5511.835300, 593.584117\n179.441704, 224, 5360.553460, 576.563963\n180.968349, 226, 5366.027638, 574.760344\n182.477985, 228, 5426.488160, 580.248692\n184.008666, 230, 5351.879781, 573.352974\n185.556211, 232, 5293.558869, 567.906490\n187.057124, 234, 5458.026530, 584.804503\n188.546951, 236, 5498.637435, 589.672029\n190.030661, 238, 5521.311268, 590.095544\n191.564438, 240, 5341.075298, 573.728028\n193.070597, 242, 5439.016306, 584.053378\n194.608765, 244, 5325.829919, 572.026037\n196.094129, 246, 5515.161939, 590.465895\n197.573246, 248, 5538.454218, 593.720541\n199.058459, 250, 5515.719133, 589.530016\n200.565106, 252, 5437.257173, 584.593226\n202.062222, 254, 5471.869645, 590.274537\n203.591043, 256, 5358.391692, 574.525049\n205.127822, 258, 5330.642338, 572.976821\n206.674937, 260, 5295.030287, 567.394587\n208.188969, 262, 5410.732949, 580.299362\n209.683356, 264, 5481.861677, 589.517139\n211.216487, 266, 5343.328785, 574.702415\n212.713122, 268, 5473.625754, 585.912495\n214.226273, 270, 5413.883134, 581.654870\n215.850796, 272, 5042.726206, 542.114341\n217.476707, 274, 5038.423725, 541.374993\n219.021106, 276, 5304.344115, 568.272754\n220.549473, 278, 5359.984383, 573.903267\n222.114622, 280, 5234.021162, 560.841919\n223.628948, 282, 5409.682439, 580.003467\n225.140556, 284, 5419.410404, 579.668528\n226.661812, 286, 5385.038336, 580.215806\n228.202310, 288, 5317.774860, 571.936645\n229.714220, 290, 5418.326669, 581.393629\n231.266047, 292, 5278.952156, 567.038911\n232.630964, 294, 6001.853181, 643.302007\n233.882618, 296, 6544.962221, 703.556923\n235.152401, 298, 6451.508013, 689.248975\n236.428060, 300, 6421.791864, 690.023599\n\nIO stats:\n\tTotal time: 236.428063\n\tPrep time: 17.739869\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 217.262525\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 5197.352565\n\tMiB/s: 557.603276\n\tIOPS: 5197.352565\n\tNumber of IOs: 1228800\nDataset stats:\n\tNumber of files in the dataset: 1199379\n\tMaximum size of files in the dataset (KiB): 146\n\tAverage size of files in the dataset (KiB): 109.862692\n",
+  "opends/t2_q8/opends_imagenetish_stream.log": "Time, Batches, IOPS, MiB/s\n1.015755, 1, 4032.467594, 432.457714\n2.240884, 3, 6686.668714, 718.016298\n3.535323, 6, 9492.950651, 1016.205577\n4.776175, 10, 13203.885270, 1417.798608\n5.941049, 15, 17581.384299, 1886.017802\n7.012272, 21, 22942.131398, 2456.238267\n8.033035, 28, 28088.928560, 3015.693534\n9.046199, 35, 28299.585743, 3033.369346\n10.048750, 42, 28599.181365, 3066.214354\n11.059908, 49, 28355.747918, 3043.522105\n12.067693, 56, 28450.654392, 3054.331590\n13.078681, 63, 28360.529212, 3043.307693\n14.080586, 70, 28617.627395, 3074.130439\n15.083839, 77, 28579.185978, 3064.300547\n16.088176, 84, 28548.324917, 3068.133736\n17.092356, 91, 28552.806026, 3065.231261\n18.103243, 98, 28363.359705, 3042.508440\n19.107742, 105, 28543.724502, 3052.988852\n20.116086, 112, 28434.917506, 3053.886415\n21.123038, 119, 28474.188333, 3050.826502\n22.125067, 126, 28614.090260, 3069.180380\n23.127586, 133, 28600.107367, 3070.451913\n24.129198, 140, 28626.005223, 3072.947070\n25.133073, 147, 28561.460294, 3061.859099\n26.133708, 154, 28653.947211, 3072.891629\n27.140181, 161, 28487.746356, 3058.824469\n28.145154, 168, 28530.259928, 3057.732339\n29.145880, 175, 28651.339004, 3074.026428\n30.289213, 183, 28660.176685, 3068.015587\n31.299351, 190, 28384.402844, 3045.681727\n32.304613, 197, 28522.052979, 3064.962468\n33.314293, 204, 28397.255868, 3038.838181\n34.317966, 211, 28567.214600, 3069.642802\n35.318167, 218, 28666.401824, 3071.898633\n36.321879, 225, 28566.094632, 3067.578249\n37.327310, 232, 28517.236927, 3062.026423\n38.330588, 239, 28578.480352, 3066.291612\n39.336685, 246, 28498.362300, 3062.055843\n40.342794, 253, 28498.039645, 3060.089364\n41.345654, 260, 28590.365672, 3065.027209\n42.349295, 267, 28568.143087, 3068.617511\n43.357514, 274, 28438.398097, 3055.012834\n44.362300, 281, 28535.585888, 3063.391374\n45.364502, 288, 28609.138599, 3071.903583\n46.386534, 295, 28054.057402, 3006.285627\n47.106081, 300, 28462.524749, 3058.308363\n\nIO stats:\n\tTotal time: 47.106081\n\tPrep time: 37.297794\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 8.490025\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 26085.803913\n\tMiB/s: 2798.759857\n\tIOPS: 26085.803913\n\tNumber of IOs: 1228800\nDataset stats:\n\tNumber of files in the dataset: 1199379\n\tMaximum size of files in the dataset (KiB): 146\n\tAverage size of files in the dataset (KiB): 109.862692\n",
+  "opends/t2_q8/opends_imagenetish_async.log": "Time, Batches, IOPS, MiB/s\n1.635605, 2, 5008.544518, 537.216839\n3.017564, 5, 8891.755393, 952.264162\n4.275568, 9, 13023.863372, 1397.970634\n5.403840, 14, 18151.736320, 1953.261158\n6.534851, 21, 25350.885607, 2716.127028\n7.576702, 29, 31451.870439, 3375.858432\n8.606707, 37, 31813.578674, 3407.138594\n9.643153, 45, 31615.866512, 3400.004801\n10.679292, 53, 31625.252372, 3393.785853\n11.719448, 61, 31503.113270, 3381.215593\n12.751512, 69, 31750.099401, 3404.780797\n13.783072, 77, 31765.625522, 3403.535173\n14.817274, 85, 31684.502127, 3389.608854\n15.848292, 93, 31782.307982, 3411.804690\n16.883493, 101, 31653.929719, 3401.506984\n17.921164, 109, 31578.558997, 3385.617394\n18.958696, 117, 31582.787248, 3390.388421\n19.989741, 125, 31781.492309, 3411.267937\n21.026138, 133, 31617.363090, 3393.941575\n22.066181, 141, 31506.519417, 3377.698074\n23.112091, 149, 31329.807086, 3365.012693\n24.150383, 157, 31559.650538, 3381.180479\n25.187564, 165, 31593.502265, 3395.422839\n26.233316, 173, 31334.531660, 3358.242245\n27.270564, 181, 31591.424041, 3387.713639\n28.307201, 189, 31610.054052, 3394.830313\n29.346504, 197, 31528.970240, 3382.713140\n30.384300, 205, 31574.756635, 3391.476801\n31.420151, 213, 31634.066968, 3395.370259\n32.455700, 221, 31643.247935, 3389.913048\n33.491368, 229, 31639.650856, 3389.322608\n34.530235, 237, 31542.178372, 3385.169901\n35.558493, 245, 31867.635194, 3420.913924\n36.594172, 253, 31639.281204, 3397.537603\n37.636189, 261, 31446.857515, 3374.751032\n38.669251, 269, 31719.470678, 3407.125614\n39.709115, 277, 31511.924723, 3378.685138\n40.744768, 285, 31640.115806, 3393.026106\n41.781305, 293, 31613.106729, 3387.468618\n42.703951, 300, 31076.004229, 3330.911605\n\nIO stats:\n\tTotal time: 42.703951\n\tPrep time: 30.037706\n\t  Prep meta: 0.000000\n\t  Prep cmds: 0.000000\n\tIO time: 11.270667\n\t  IO memcpy: 0.000000\n\t  IO sync: 0.000000\n\t    IO kernel: 0.000000\n\tFile/s: 28774.855174\n\tMiB/s: 3087.095807\n\tIOPS: 28774.855174\n\tNumber of IOs: 1228800\nDataset stats:\n\tNumber of files in the dataset: 1199379\n\tMaximum size of files in the dataset (KiB): 146\n\tAverage size of files in the dataset (KiB): 109.862692\n"
+ },
+ "report": "### filesize8gib / async (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 7087 |\n\n### filesize8gib / stream (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 7057 |\n\n### filesize8gib / sync (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 7031 |\n\n### imagenetish / async (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 3087 |\n\n### imagenetish / stream (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 2799 |\n\n### imagenetish / sync (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 558 |\n\n### lmcacheish / async (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 5461 |\n\n### lmcacheish / stream (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 5579 |\n\n### lmcacheish / sync (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 6177 |\n\n### tiktokish / async (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 4943 |\n\n### tiktokish / stream (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 4969 |\n\n### tiktokish / sync (MiB/s)\n\n| io_threads \\ queue_depth | 8 |\n|---|---|\n| 2 | 5808 |\n\n## cuFile vs OpenDS\n\n### queue_depth=8, io_threads=2\n\n| Dataset | Mode | cuFile (MiB/s) | OpenDS (MiB/s) | Speedup |\n|---|---|---|---|---|\n| filesize8gib | async | - | 7087 | - |\n| filesize8gib | stream | 1698 | 7057 | 4.15 |\n| filesize8gib | sync | 6478 | 7031 | 1.09 |\n| imagenetish | async | - | 3087 | - |\n| imagenetish | stream | 886 | 2799 | 3.16 |\n| imagenetish | sync | 635 | 558 | 0.88 |\n| lmcacheish | async | - | 5461 | - |\n| lmcacheish | stream | 4991 | 5579 | 1.12 |\n| lmcacheish | sync | 4308 | 6177 | 1.43 |\n| tiktokish | async | - | 4943 | - |\n| tiktokish | stream | 5183 | 4969 | 0.96 |\n| tiktokish | sync | 2955 | 5808 | 1.97 |\n\n"
+}

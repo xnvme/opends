@@ -12,6 +12,19 @@ filperf logs, and `report.md`, the rendered report.
 
 | snapshot | job | run |
 | --- | --- | --- |
+| [`20261126-c37f3e6-bench-kv-cache-lmcache-45789987416`](snapshots/20261126-c37f3e6-bench-kv-cache-lmcache-45789987416/report.md) | bench-kv-cache-lmcache | [45789987416](https://github.com/xnvme/opends/actions/runs/45789987416) |
+| [`20261126-c00f2fc-bench-model-load-llama-cpp-45789006541`](snapshots/20261126-c00f2fc-bench-model-load-llama-cpp-45789006541/report.md) | bench-model-load-llama-cpp | [45789006541](https://github.com/xnvme/opends/actions/runs/45789006541) |
+| [`20261126-b490bd3-bench-cufile-45795312302`](snapshots/20261126-b490bd3-bench-cufile-45795312302/report.md) | bench-cufile | [45795312302](https://github.com/xnvme/opends/actions/runs/45795312302) |
+| [`20261126-68d8287-bench-model-load-llama-cpp-45789976952`](snapshots/20261126-68d8287-bench-model-load-llama-cpp-45789976952/report.md) | bench-model-load-llama-cpp | [45789976952](https://github.com/xnvme/opends/actions/runs/45789976952) |
+| [`20261126-3cecb6f-bench-kv-cache-lmcache-45778979501`](snapshots/20261126-3cecb6f-bench-kv-cache-lmcache-45778979501/report.md) | bench-kv-cache-lmcache | [45778979501](https://github.com/xnvme/opends/actions/runs/45778979501) |
+| [`20261126-1919411-bench-cufile-45776694789`](snapshots/20261126-1919411-bench-cufile-45776694789/report.md) | bench-cufile | [45776694789](https://github.com/xnvme/opends/actions/runs/45776694789) |
+| [`20261125-5de3568-bench-model-load-llama-cpp-45615557407`](snapshots/20261125-5de3568-bench-model-load-llama-cpp-45615557407/report.md) | bench-model-load-llama-cpp | [45615557407](https://github.com/xnvme/opends/actions/runs/45615557407) |
+| [`20261125-1919411-bench-45612691946`](snapshots/20261125-1919411-bench-45612691946/report.md) | bench | [45612691946](https://github.com/xnvme/opends/actions/runs/45612691946) |
+| [`20261123-c9aa1b9-bench-cufile-45151000664`](snapshots/20261123-c9aa1b9-bench-cufile-45151000664/report.md) | bench-cufile | [45151000664](https://github.com/xnvme/opends/actions/runs/45151000664) |
+| [`20261123-993b922-bench-45154852311`](snapshots/20261123-993b922-bench-45154852311/report.md) | bench | [45154852311](https://github.com/xnvme/opends/actions/runs/45154852311) |
+| [`20261123-7c58fe7-bench-model-load-llama-cpp-45151001622`](snapshots/20261123-7c58fe7-bench-model-load-llama-cpp-45151001622/report.md) | bench-model-load-llama-cpp | [45151001622](https://github.com/xnvme/opends/actions/runs/45151001622) |
+| [`20261118-f81018d-bench-sweep-44307788698`](snapshots/20261118-f81018d-bench-sweep-44307788698/report.md) | bench-sweep | [44307788698](https://github.com/xnvme/opends/actions/runs/44307788698) |
+| [`20261117-ae44857-bench-sweep-44088929898`](snapshots/20261117-ae44857-bench-sweep-44088929898/report.md) | bench-sweep | [44088929898](https://github.com/xnvme/opends/actions/runs/44088929898) |
 | [`20261117-68132a1-bench-sweep-44071323416`](snapshots/20261117-68132a1-bench-sweep-44071323416/report.md) | bench-sweep | [44071323416](https://github.com/xnvme/opends/actions/runs/44071323416) |
 | [`20261113-7a71839-bench-43399744314`](snapshots/20261113-7a71839-bench-43399744314/report.md) | bench | [43399744314](https://github.com/xnvme/opends/actions/runs/43399744314) |
 | [`20261113-737f164-bench-43470019374`](snapshots/20261113-737f164-bench-43470019374/report.md) | bench | [43470019374](https://github.com/xnvme/opends/actions/runs/43470019374) |
