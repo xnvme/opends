@@ -3,7 +3,7 @@
  * test_raw_block_aisio - Raw block mode on the aisio backend, with homi
  * alone: no qublk, no file system, no xal-server.
  *
- * The harness (tasks/test.yaml) writes the sync-read pattern to a file while
+ * The harness (ci/tasks/test.yaml) writes the sync-read pattern to a file while
  * the file system is mounted, with room behind it for a large write, records
  * the byte range of the file's first extent on the namespace and the size of
  * the namespace, and takes the stack down to homi. The file is removed only

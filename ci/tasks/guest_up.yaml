@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-3-Clause
+doc: |
+  Boot the guest a hardware job runs in
+  =====================================
+
+  Makes the ci guest afresh from its image, or the one OPENDS_GUEST_IMAGE names, and starts it with the machine's NVMe device and GPU passed through, then authorizes the key in OPENDS_GUEST_PUBKEY for root. scripts/guest.py runs it.
+
+steps:
+  - name: guest_kill
+    uses: xnvme_devenv.rig_guest_kill
+    with:
+      guest_name: ci
+
+  - name: guest_initialize
+    uses: qemu.guest_initialize
+    with:
+      guest_name: ci
+      system_image_name: "{{ local.env.OPENDS_GUEST_IMAGE | default(config.qemu.guests.ci.system_image_name) }}"
+
+  - name: guest_start
+    uses: xnvme_devenv.rig_guest_start
+    with:
+      guest_name: ci
+
+  - name: authorize
+    run: |
+      mkdir -p /root/.ssh && chmod 700 /root/.ssh
+      echo '{{ local.env.OPENDS_GUEST_PUBKEY }}' > /root/.ssh/authorized_keys
+      chmod 600 /root/.ssh/authorized_keys
+
+  - name: devices
+    run: |
+      cat /etc/opends-guest
+      for d in /sys/bus/pci/devices/*; do case "$(cat $d/class)" in 0x0108*|0x03*) echo "${d##*/} class $(cat $d/class) vendor $(cat $d/vendor) driver $(basename "$(readlink $d/driver)")";; esac; done
+      nvidia-smi --query-gpu=name,driver_version --format=csv,noheader

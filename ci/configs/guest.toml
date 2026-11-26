@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# The guest for the hardware jobs: nosi's Debian 13 with the NVIDIA stack and upcie's modules. configs/guest-lock.toml pins what goes into its image.
+
+[cijoe]
+default_target = "root"
+
+[cijoe.workflow]
+fail_fast = true
+
+# nosi images ship with root locked and an operator account; root_unlock opens root
+[cijoe.targets.root.ssh]
+username = "root"
+password = "root"
+hostname = "localhost"
+port = 4200
+
+[cijoe.targets.odus.ssh]
+username = "odus"
+password = "odus.321"
+hostname = "localhost"
+port = 4200
+
+[qemu]
+img_bin = "qemu-img"
+
+[qemu.systems.x86_64]
+bin = "qemu-system-x86_64"
+
+# The scratch guest the image is derived in. Its disk is grown to guest.disk_size, since CUDA does not fit the base's 16 GB.
+[qemu.guests.derive]
+path = "{{ local.env.HOME }}/guests/opends-derive"
+system_label = "x86_64"
+system_image_name = "debian-13-x86_64"
+system_args.kwa = {cpu = "host", smp = 4, m = "6G", accel = "kvm"}
+system_args.raw = """\
+-M q35 \
+"""
+system_args.tcp_forward = {host = 4200, guest = 22}
+
+# The guest a job boots: room for 2 GiB of hugepages and CUDA, and a 64-bit PCI window that fits the GPU's BAR
+[qemu.guests.ci]
+path = "{{ local.env.HOME }}/guests/opends-ci"
+system_label = "x86_64"
+system_image_name = "opends-guest-x86_64"
+system_args.kwa = {cpu = "host", smp = 6, m = "16G", accel = "kvm"}
+system_args.raw = """\
+-M q35 -global q35-pcihost.pci-hole64-size=64G \
+"""
+system_args.tcp_forward = {host = 4200, guest = 22}
+
+# nosi's Debian 13, at the path xnvme's CI uses, so one cache serves both
+[system-imaging.images.debian-13-x86_64]
+system_label = "x86_64"
+disk.path = "{{ local.env.HOME }}/system_imaging/disk/debian-trixie-amd64.qcow2"
+
+# The image guest_derive.yaml exports. scripts/guest.py names the file after a key of its inputs.
+[system-imaging.images.opends-guest-x86_64]
+system_label = "x86_64"
+disk.path = "{{ local.env.HOME }}/system_imaging/disk/{{ local.env.OPENDS_GUEST_BASE | default('opends-guest-x86_64') }}.qcow2"
+
+# The same with xnvme and xal installed, an overlay made by tasks/guest_save.yaml. A job boots this one.
+[system-imaging.images.opends-deps-x86_64]
+system_label = "x86_64"
+disk.path = "{{ local.env.HOME }}/system_imaging/disk/{{ local.env.OPENDS_GUEST_DEPS | default('opends-deps-x86_64') }}.qcow2"
+
+# The machine's NVMe device and GPU, passed through by xnvme-devenv's rig scripts, each on a root port of its own: 0000:01:00.0 and 0000:02:00.0 in the guest.
+# The machine's config, layered on this one, gives each its 'host', the address on the machine.
+[rig.devices.nvme0]
+provider = "vfio-pci"
+labels = ["nvm"]
+
+[rig.devices.gpu0]
+provider = "vfio-pci"
+labels = ["gpu"]
+
+[guest]
+disk_size = "64G"
+# Where fetch_debs puts the lock's debs before they go into the guest
+debs = "/tmp/opends-guest-debs"

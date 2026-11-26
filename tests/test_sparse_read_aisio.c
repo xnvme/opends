@@ -15,8 +15,8 @@
 
 #define MIB ((size_t)1024 * 1024)
 
-/* The file tasks/test.yaml prepares: 1 MiB of data, a hole of 1 MiB, 1 MiB of
- * data, and a hole of 2 MiB up to the end. */
+/* The file ci/tasks/test.yaml prepares: 1 MiB of data, a hole of 1 MiB, 1 MiB
+ * of data, and a hole of 2 MiB up to the end. */
 static const struct {
 	const char *label;
 	off_t off;

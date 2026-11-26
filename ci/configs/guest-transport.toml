@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# The guest scripts/guest.py boots, as the suite's target. A hardware job copies this to configs/transport.toml.
+[cijoe.workflow]
+fail_fast = true
+
+[cijoe.transport.ssh]
+hostname = "localhost"
+port = 4200
+username = "root"
+key_filename = "/root/.ssh/opends-guest"
