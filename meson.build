@@ -203,6 +203,7 @@ aisio_tests = [
   'register_large',
   'coherency',
   'sparse_read',
+  'lease',
   'stream_read',
   'sync_write',
   'stream_write',
