@@ -59,6 +59,8 @@ struct opends_extent {
 	uint64_t file_offset;
 	uint64_t slba;
 	uint64_t length;
+	/* bits of enum xal_extent_flag; 0 holds the file's data */
+	uint8_t flag;
 };
 
 struct buf_entry {
@@ -84,6 +86,10 @@ struct registered_file {
 	bool readable;
 	bool writable;
 	bool raw;
+	unsigned long open_seq;  /* the driver open that registered it */
+	struct xal_inode *lease; /* the file as attached to xal; NULL if raw */
+	bool remap; /* a write through fd since the map: map the file again */
+	pthread_mutex_t lock; /* orders the map again against acquires */
 };
 
 struct opends_stream {
@@ -177,6 +183,8 @@ struct file_op {
 	struct bounce_slot bounces[BOUNCE_SLOTS];
 	int n_bounces;
 	void *bounce_buf;
+	/* counted as a reader of the file's extents until released */
+	bool held;
 	struct file_op_write wr;
 	union {
 		struct file_op_stream stream;
@@ -226,8 +234,10 @@ struct driver {
 	/* NVMe device the HOMI server owns */
 	char dev_uri[XNVME_IDENT_URI_LEN];
 	struct aisio_config cfg; /* from the environment at open */
-	struct xal *xal; /* the index xal-server publishes (index_attach) */
-	int attach_rc;   /* why the attach failed; it is tried only once */
+	unsigned long open_seq;  /* which open of the driver this is */
+	/* opened on the mount in the read-lease mode (xal_attach) */
+	struct xal *xal;
+	int attach_rc; /* why the attach failed; it is tried only once */
 	struct xnvme_dev *xdev;
 	uint32_t nsid;
 	uint32_t lba_size;
